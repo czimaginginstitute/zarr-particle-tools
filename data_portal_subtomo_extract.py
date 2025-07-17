@@ -1,3 +1,14 @@
+# NOTE: This extraction is a grossly simplified version of the RELION subtomogram extraction and is missing support for several flags & data elements. Known limitations:
+# - Does not support gamma offset
+# - Does not support spherical aberration correction
+# - Does not support subpixel shifts
+# - Does not support circle precrop
+# - Does not support grid precorrection
+# - Does not support whitening (power spectral flattening)
+# - Only supports 2d stack extraction (no 3D subvolumes)
+# - Does not support min_frames or max_dose flags
+# - Does not write any other *.mrcs files other than the 2D stacks themselves
+
 # TODO: GPU acceleration with cupy
 # TODO: incorporate alpha and beta offset parameters from AreTomo .aln file (for additional rotation) (and from CryoET Data Portal? if it exists?)
 # TODO: Write tests (using synthetic data this should be pretty easy, just compare against RELION output, serving also as a tracker for if RELION output ever changes)
@@ -31,7 +42,7 @@ def circular_soft_mask(box_size: int, falloff: float) -> np.ndarray:
     r = np.sqrt(x * x + y * y)
     mask[r < box_size / 2.0 - falloff] = 1.0
     falloff_zone = (r >= box_size / 2.0 - falloff) & (r < box_size / 2.0)
-    mask[falloff_zone] = 0.5 * (1 + np.cos(np.pi * (r[falloff_zone] - (box_size / 2.0 - falloff)) / falloff))
+    mask[falloff_zone] = 0.5 - 0.5 * np.cos(np.pi * (r[falloff_zone] - (box_size / 2.0)) / falloff)
     return mask
 
 
@@ -163,7 +174,7 @@ def process_aln_file(args):
         return
     tiltseries_df = starfile.read(tiltseries_path)
     tiltseries_mrc_file = tiltseries_df["rlnMicrographName"].iloc[0].split("@")[1]
-    box_mask = circular_mask(box_size) == 1.0
+    background_mask = circular_mask(box_size) == 0.0
     soft_mask = circular_soft_mask(box_size, falloff=5.0)
     
     output_folder = os.path.join(output_dir, "Subtomograms", particles_tomo_name)
@@ -209,8 +220,8 @@ def process_aln_file(args):
                 coordinate, projected_point = coords
                 x, y = projected_point
                 # convert back from centered angstrom to pixel coordinates
-                x_px = int((x + tiltseries_x * tiltseries_pixel_size / 2.0) / tiltseries_pixel_size)
-                y_px = int((y + tiltseries_y * tiltseries_pixel_size / 2.0) / tiltseries_pixel_size)
+                x_px = round((x + tiltseries_x * tiltseries_pixel_size / 2.0) / tiltseries_pixel_size)
+                y_px = round((y + tiltseries_y * tiltseries_pixel_size / 2.0) / tiltseries_pixel_size)
                 x_start_px = x_px - box_size // 2
                 y_start_px = y_px - box_size // 2
                 # TODO: If this ends up being the correct way to do it, clean up the code to not use the _end_px values and just use box_size
@@ -258,15 +269,20 @@ def process_aln_file(args):
                 current_tilt = tilt_data[tilt, :, :]
                 current_tilt[:] = data[section - 1, y_start_px:y_end_px, x_start_px:x_end_px]
                 
+                # TODO: look into subpixel shift?
+                # TODO: implement binning for CTF application
+                fourier_tilt = np.fft.rfft2(current_tilt)
+                # TODO: implement CTF application here
+                # TODO: look into gamma offset
+                # TODO: implement spherical aberration correction
+
+
+                current_tilt[:] = np.fft.irfft2(fourier_tilt).real
                 # invert contrast to follow RELION convention
                 current_tilt *= -1
-
-                # TODO: implement fft, ctf application, abberation correction, and ifft
-                # TODO: implement binning for CTF application
-                # TODO: look into gamma offset
                 
                 # remove noise via background subtraction and apply soft circular mask
-                background_data_mean = np.mean(current_tilt, where=box_mask)
+                background_data_mean = np.mean(current_tilt, where=background_mask)
                 current_tilt -= background_data_mean
                 current_tilt *= soft_mask
                 
@@ -432,6 +448,8 @@ def main():
         raise FileNotFoundError(f"Tiltseries star file '{args.tiltseries_starfile}' does not exist.")
     if not os.path.exists(args.aln_dir):
         raise FileNotFoundError(f"Alignment directory '{args.aln_dir}' does not exist.")
+    if args.box_size % 2 != 0:
+        raise ValueError(f"Box size must be an even number, got {args.box_size}.")
 
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
