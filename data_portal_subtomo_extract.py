@@ -18,13 +18,21 @@ from cryoet_alignment.io.cryoet_data_portal import Alignment
 
 logger = logging.getLogger(__name__)
 
-def circular_mask(box_size: int, radius: float = None) -> np.ndarray:
+def circular_mask(box_size: int) -> np.ndarray:
     """Return a centered circular mask within a square of given box size (in pixels)."""
-    if radius is None:
-        radius = box_size // 2
     y, x = np.ogrid[-box_size // 2:box_size // 2, -box_size // 2:box_size // 2]
-    mask = (x * x + y * y) <= radius * radius
+    mask = (x * x + y * y) <= (box_size // 2) ** 2
     return mask.astype(np.float32)
+
+def circular_soft_mask(box_size: int, falloff: float) -> np.ndarray:
+    """Return a centered circular soft mask within a square of given box size (in pixels) (based on RELION soft mask)."""
+    y, x = np.ogrid[-box_size // 2:box_size // 2, -box_size // 2:box_size // 2]
+    mask = np.zeros((box_size, box_size), dtype=np.float32)
+    r = np.sqrt(x * x + y * y)
+    mask[r < box_size / 2.0 - falloff] = 1.0
+    falloff_zone = (r >= box_size / 2.0 - falloff) & (r < box_size / 2.0)
+    mask[falloff_zone] = 0.5 * (1 + np.cos(np.pi * (r[falloff_zone] - (box_size / 2.0 - falloff)) / falloff))
+    return mask
 
 
 def calculate_projection_matrix(rot: float, gmag: float, tx: float, ty: float, tilt: float, radians: bool = False) -> np.ndarray:
@@ -143,7 +151,7 @@ def extract_subtomogram_from_run(run: Run, output_dir: str):
 
 
 def process_aln_file(args):
-    aln_file_path, particles_tomo_name, filtered_particles_df, box_size, particle_diameter, bin, tiltseries_dir, tiltseries_pixel_size, tiltseries_x, tiltseries_y, output_dir, debug = args
+    aln_file_path, particles_tomo_name, filtered_particles_df, box_size, bin, tiltseries_dir, tiltseries_pixel_size, tiltseries_x, tiltseries_y, output_dir, debug = args
 
     particles_to_tiltseries_coordinates = {}
     skipped_particles = set()
@@ -155,10 +163,9 @@ def process_aln_file(args):
         return
     tiltseries_df = starfile.read(tiltseries_path)
     tiltseries_mrc_file = tiltseries_df["rlnMicrographName"].iloc[0].split("@")[1]
-    box_mask = circular_mask(box_size)
-    particle_diameter_mask = circular_mask(box_size, particle_diameter / tiltseries_pixel_size / bin)
-    background_mask = (particle_diameter_mask == 0)
-
+    box_mask = circular_mask(box_size) == 1.0
+    soft_mask = circular_soft_mask(box_size, falloff=5.0)
+    
     output_folder = os.path.join(output_dir, "Subtomograms", particles_tomo_name)
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
@@ -196,6 +203,7 @@ def process_aln_file(args):
         # Do it particle by particle, so that we can write the particle mrcs in one go
         for particle_count, sections in particles_to_tiltseries_coordinates.items():
             particle_data = []
+            # individual particle entry's visible sections
             visible_sections = []
             for section, coords in sections.items():
                 coordinate, projected_point = coords
@@ -249,14 +257,19 @@ def process_aln_file(args):
                 # Section is 1 indexed in RELION, so subtract 1 for 0-indexed Python arrays
                 current_tilt = tilt_data[tilt, :, :]
                 current_tilt[:] = data[section - 1, y_start_px:y_end_px, x_start_px:x_end_px]
+                
+                # invert contrast to follow RELION convention
+                current_tilt *= -1
 
-                background_data_mean = np.mean(current_tilt, where=background_mask)
-                background_data_std = np.std(current_tilt, where=background_mask)
+                # TODO: implement fft, ctf application, abberation correction, and ifft
+                # TODO: implement binning for CTF application
+                # TODO: look into gamma offset
+                
+                # remove noise via background subtraction and apply soft circular mask
+                background_data_mean = np.mean(current_tilt, where=box_mask)
                 current_tilt -= background_data_mean
-                if background_data_std > 0:
-                    current_tilt /= background_data_std
-                # also invert contrast because RELION does the same
-                current_tilt *= -box_mask
+                current_tilt *= soft_mask
+                
 
             with mrcfile.new(os.path.join(output_folder, f"{particle_count}_stack2d.mrcs"), overwrite=True) as mrc:
                 mrc.set_data(tilt_data)
@@ -284,7 +297,6 @@ def extract_local_aln_subtomograms(
     particles_starfile: str,
     particles_tomo_name_prefix: str,
     box_size: int,
-    particle_diameter: float,
     bin: int,
     tiltseries_dir: str,
     tiltseries_starfile: str,
@@ -324,7 +336,6 @@ def extract_local_aln_subtomograms(
             particles_tomo_name,
             filtered_particles_df,
             box_size,
-            particle_diameter,
             bin,
             tiltseries_dir,
             tiltseries_pixel_size,
@@ -400,7 +411,6 @@ def main():
         help="An added prefix to the tomogram names in the particles star file. Used to properly match the particles to the tiltseries and alignment files.",
     )
     parser.add_argument("--box-size", type=int, required=True, help="Box size of the extracted subtomograms in pixels.")
-    parser.add_argument("--particle-diameter", type=float, required=True, help="Diameter of the particles in Angstroms (used for normalization).")
     parser.add_argument("--bin", type=int, default=1, help="Binning factor for the subtomograms. Default is 1 (no binning).")
     # TODO: consolidate the two to one? just find the tiltseries star file in the tiltseries dir (can be done if we restrain to just pyrelion format)
     parser.add_argument("--tiltseries-dir", type=str, required=True, help="Path to the tiltseries directory containing *.star files (individual tiltseries, with entries as individual tilts).")
@@ -423,9 +433,6 @@ def main():
     if not os.path.exists(args.aln_dir):
         raise FileNotFoundError(f"Alignment directory '{args.aln_dir}' does not exist.")
 
-    if args.box_size * args.tiltseries_pixel_size < args.particle_diameter:
-        raise ValueError(f"Box size ({args.box_size} pixels) multiplied by tiltseries pixel size ({args.tiltseries_pixel_size} Angstroms) must be greater than or equal to particle diameter ({args.particle_diameter} Angstroms).")
-
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
 
@@ -439,7 +446,6 @@ def main():
         particles_starfile=args.particles_starfile,
         particles_tomo_name_prefix=args.particles_tomo_name_prefix,
         box_size=args.box_size,
-        particle_diameter=args.particle_diameter,
         bin=args.bin,  # TODO: implement binning
         tiltseries_dir=args.tiltseries_dir,
         tiltseries_starfile=args.tiltseries_starfile,
