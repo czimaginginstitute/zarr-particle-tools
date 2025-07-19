@@ -1,3 +1,4 @@
+import pandas as pd
 import numpy as np
 from cryoet_alignment.io.aretomo3 import AreTomo3ALN
 
@@ -98,6 +99,41 @@ def calculate_projection_matrix_from_aretomo_aln(aln: AreTomo3ALN, tiltseries_pi
 
     return projection_matrices
 
+# TODO: Refactor this to take in PerSectionAlignmentParameters instead of Run?
+def calculate_projection_matrix_from_run(run: Run) -> dict[int, np.ndarray]:
+    """
+    Calculates the projection matrices for each section in the given Run object.
+
+    Args:
+        run (Run): A Run object containing the alignment parameters.
+
+    Returns:
+        dict[int, np.ndarray]: A dictionary of 4x4 projection matrices for each section. (section ID as key)
+    """
+    pass
+
+# can likely be parallelized
+def get_particles_to_tiltseries_coordinates(filtered_particles_df: pd.DataFrame, tiltseries_df: pd.DataFrame, projection_matrices: list[np.ndarray]) -> dict[int, dict[int, tuple[np.ndarray, np.ndarray]]]:
+    """
+    Maps particle indices to their 2D coordinates in each of the tilts (projected from their 3D coordinates via the projection matrices).
+    The output is a dictionary where the keys are particle indices and the values are another dictionary with tilt section indices as keys and tuples of (3D coordinate, projected 2D coordinate) as values.
+    """
+    particles_to_tiltseries_coordinates = {}
+    for _, tilt in tiltseries_df.iterrows():
+        section = int(tilt["rlnMicrographName"].split("@")[0])
+        projection_matrix = projection_matrices[section - 1]
+
+        # match 1-indexing of RELION
+        for particle_count, particle in enumerate(filtered_particles_df.itertuples(), start=1):
+            coordinate = np.array([particle.rlnCenteredCoordinateXAngst, particle.rlnCenteredCoordinateYAngst, particle.rlnCenteredCoordinateZAngst])
+            projected_point = project_3d_point_to_2d(coordinate, projection_matrix)[:2]
+
+            if particle_count not in particles_to_tiltseries_coordinates:
+                particles_to_tiltseries_coordinates[particle_count] = {}
+
+            particles_to_tiltseries_coordinates[particle_count][section] = (coordinate, projected_point)
+
+    return particles_to_tiltseries_coordinates
 
 def circular_mask(box_size: int) -> np.ndarray:
     """Return a centered circular mask within a square of given box size (in pixels)."""

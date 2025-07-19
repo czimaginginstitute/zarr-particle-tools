@@ -13,9 +13,6 @@
 # - Does not support float16
 
 # TODO: List of TODO (in order of priority):
-# TODO: Clean up code
-# TODO: - Fix path issues & reduce needed paths
-# TODO: - Modularize this code to different files
 # TODO: Determine why the extracted subtomograms are slightly different (even without)
 #       - could possibly be due to the fourier transform they do? investigate in fourier space?
 # TODO: (In tandem with above) Write tests (using synthetic data this should be pretty easy, just compare against RELION output, serving also as a tracker for if RELION output ever changes)
@@ -33,36 +30,84 @@ import numpy as np
 import pandas as pd
 import mrcfile
 import time
-from projection import project_3d_point_to_2d, calculate_projection_matrix_from_aretomo_aln, circular_mask, circular_soft_mask
-from ctf import calculate_dose_weight_image, calculate_ctf
 from tqdm import tqdm
 from multiprocessing import Pool
 from cryoet_data_portal import Client, Run
 from cryoet_alignment.io.aretomo3 import AreTomo3ALN
 from cryoet_alignment.io.cryoet_data_portal import Alignment
 
+from projection import calculate_projection_matrix_from_aretomo_aln, get_particles_to_tiltseries_coordinates, circular_mask, circular_soft_mask
+from ctf import calculate_dose_weight_image, calculate_ctf
+
 logger = logging.getLogger(__name__)
 
-
-# TODO: Refactor this to take in PerSectionAlignmentParameters instead of Run?
-def calculate_projection_matrix_from_run(run: Run) -> dict[int, np.ndarray]:
-    """
-    Calculates the projection matrices for each section in the given Run object.
-
-    Args:
-        run (Run): A Run object containing the alignment parameters.
-
-    Returns:
-        dict[int, np.ndarray]: A dictionary of 4x4 projection matrices for each section. (section ID as key)
-    """
-    pass
-
+# TODO: Implement subtomomgram extraction from a CryoET Data Portal run
 def extract_subtomogram_from_run(run: Run, output_dir: str):
     pass
 
+def get_particle_crop_and_visibility(particle_id: int, sections: list, tiltseries_x: int, tiltseries_y: int, tiltseries_pixel_size: float, box_size: int) -> tuple:
+    """
+    Process the calculated (Angstrom) 2D coordinate of the particle to pixel coordinates and perform cropping.
+    """
+    particle_data = []
+    visible_sections = []
+    
+    for section, coords in sections.items():
+        coordinate, projected_point = coords
+        x, y = projected_point
+        # convert back from centered angstrom to pixel coordinates
+        x_px = round((x + tiltseries_x * tiltseries_pixel_size / 2.0) / tiltseries_pixel_size)
+        y_px = round((y + tiltseries_y * tiltseries_pixel_size / 2.0) / tiltseries_pixel_size)
+        x_start_px = x_px - box_size // 2
+        y_start_px = y_px - box_size // 2
+        x_end_px = x_start_px + box_size
+        y_end_px = y_start_px + box_size
+        
+        if x_start_px < 0 or x_end_px > tiltseries_x or y_start_px < 0 or y_end_px > tiltseries_y:
+            visible_sections.append(0)
+            continue
 
-def process_aln_file(args):
-    aln_file_path, particles_tomo_name, filtered_particles_df, box_size, bin, tiltseries_dir, tiltseries_x, tiltseries_y, tiltseries_row_entry, optics_row, output_dir, debug = args
+        visible_sections.append(1)
+        particle_data.append(
+            {
+                "particle_id": particle_id,
+                "coordinate": coordinate,
+                "section": section,
+                "x_start_px": x_start_px,
+                "y_start_px": y_start_px,
+                "x_end_px": x_end_px,
+                "y_end_px": y_end_px,
+            }
+        )
+
+    return particle_data, visible_sections
+
+
+def update_particles_df(particles_df: pd.DataFrame, output_folder: str, all_visible_sections_column: list, skipped_particles: set) -> pd.DataFrame:
+    """Updates the particles DataFrame to include the new columns and values for RELION format."""
+    updated_particles_df = particles_df.copy()
+    updated_particles_df = updated_particles_df.drop(columns=["rlnCoordinateX", "rlnCoordinateY", "rlnCoordinateZ"], errors="ignore")
+    updated_particles_df = updated_particles_df.reset_index(drop=True)
+    updated_particles_df.index += 1 # increment index by 1 to match RELION's 1-indexing
+    updated_particles_df["rlnTomoParticleName"] = updated_particles_df["rlnTomoName"] + "/" + updated_particles_df.index.astype(str)
+    updated_particles_df["rlnImageName"] = updated_particles_df.index.to_series().apply(lambda idx: os.path.abspath(os.path.join(output_folder, f"{idx}_stack2d.mrcs")))
+    updated_particles_df = updated_particles_df.drop(index=skipped_particles, errors="ignore") # drop rows by particle_id that were skipped
+    updated_particles_df["rlnTomoVisibleFrames"] = all_visible_sections_column
+    updated_particles_df["rlnOriginXAngst"] = 0.0
+    updated_particles_df["rlnOriginYAngst"] = 0.0
+    updated_particles_df["rlnOriginZAngst"] = 0.0
+
+    return updated_particles_df
+
+def process_tiltseries(args):
+    """
+    Processes a single alignment file to extract subtomograms from the tiltseries.
+    Does projection math to map from 3D coordinates to 2D tiltseries coordinates and then applies CTF premultiplication, dose weighting, and background subtraction.
+    Writes resulting data to .mrcs files (2D stack) for each particle.
+
+    Returns the updated particles DataFrame and the number of skipped particles.
+    """
+    aln_file_path, particles_tomo_name, filtered_particles_df, box_size, bin, tiltseries_dir, tiltseries_x, tiltseries_y, tiltseries_row_entry, optics_row, output_dir = args
 
     # TODO: can also load from the tiltseries file, aln not required? but might be less reliable?
     tiltseries_file = os.path.basename(aln_file_path).replace(".aln", ".star")
@@ -81,16 +126,12 @@ def process_aln_file(args):
     tiltseries_df = starfile.read(tiltseries_path)
     tiltseries_mrc_file = tiltseries_df["rlnMicrographName"].iloc[0].split("@")[1]
 
-    # particle data
-    particles_to_tiltseries_coordinates = {}
-    skipped_particles = set()
-
     # projection-relevant variables
     background_mask = circular_mask(box_size) == 0.0
     soft_mask = circular_soft_mask(box_size, falloff=5.0)
-    tilt_angles = tiltseries_df["rlnTomoYTilt"].values
     tiltseries_pixel_size = tiltseries_row_entry["rlnTomoTiltSeriesPixelSize"].values[0]
     projection_matrices = calculate_projection_matrix_from_aretomo_aln(AreTomo3ALN.from_file(aln_file_path), tiltseries_pixel_size=tiltseries_pixel_size)
+    particles_to_tiltseries_coordinates = get_particles_to_tiltseries_coordinates(filtered_particles_df, tiltseries_df, projection_matrices)
 
     # ctf & dose-weighting parameters
     voltage = tiltseries_row_entry["rlnVoltage"].values[0]
@@ -105,68 +146,24 @@ def process_aln_file(args):
     bfactor_per_electron_dose = tiltseries_df["rlnCtfBfactorPerElectronDose"] if "rlnCtfBfactorPerElectronDose" in tiltseries_df.columns else [0.0] * len(tiltseries_df)
     dose_weights = np.stack([calculate_dose_weight_image(dose, tiltseries_pixel_size, box_size, bfactor) for dose, bfactor in zip(doses, bfactor_per_electron_dose)], dtype=np.float32)
 
-
-    # loop over each tilt in the tiltseries (idea is this outer loop so that if we do end up doing speedup, we can parallelize this)
-    for _, tilt in tiltseries_df.iterrows():
-        section = int(tilt["rlnMicrographName"].split("@")[0])
-        projection_matrix = projection_matrices[section - 1]
-
-        # match 1-indexing of RELION
-        for particle_count, particle in enumerate(filtered_particles_df.itertuples(), start=1):
-            coordinate = np.array([particle.rlnCenteredCoordinateXAngst, particle.rlnCenteredCoordinateYAngst, particle.rlnCenteredCoordinateZAngst])
-            projected_point = project_3d_point_to_2d(coordinate, projection_matrix)[:2]
-
-            if particle_count not in particles_to_tiltseries_coordinates:
-                particles_to_tiltseries_coordinates[particle_count] = {}
-
-            particles_to_tiltseries_coordinates[particle_count][section] = (coordinate, projected_point)
-
     # after mapping all particles to tiltseries coordinates for this tomogram, we can extract the subtomograms
     with mrcfile.open(tiltseries_mrc_file) as tiltseries_mrc:
         data = tiltseries_mrc.data
 
         # for rlnTomoVisibleFrames data column
         all_visible_sections_column = []
+        skipped_particles = set()
         # Do it particle by particle, so that we can write the particle mrcs in one go
-        for particle_count, sections in particles_to_tiltseries_coordinates.items():
-            particle_data = []
-            # individual particle entry's visible sections
-            visible_sections = []
-            for section, coords in sections.items():
-                coordinate, projected_point = coords
-                x, y = projected_point
-                # convert back from centered angstrom to pixel coordinates
-                x_px = round((x + tiltseries_x * tiltseries_pixel_size / 2.0) / tiltseries_pixel_size)
-                y_px = round((y + tiltseries_y * tiltseries_pixel_size / 2.0) / tiltseries_pixel_size)
-                x_start_px = x_px - box_size // 2
-                y_start_px = y_px - box_size // 2
-                x_end_px = x_start_px + box_size
-                y_end_px = y_start_px + box_size
-                
-                if x_start_px < 0 or x_end_px > tiltseries_x or y_start_px < 0 or y_end_px > tiltseries_y:
-                    visible_sections.append(0)
-                    # logger.debug(f"{particles_tomo_name} Subtomogram extraction for particle {particle_count} in section {section} at {tilt_angles[section - 1]} would exceed tiltseries bounds. x_start={x_start_px}, x_end={x_end_px}, y_start={y_start_px}, y_end={y_end_px}. Original 3D coordinates: {coordinate}. Skipping this section.")
-                    continue
-
-                visible_sections.append(1)
-                particle_data.append(
-                    {
-                        "particle_count": particle_count,
-                        "coordinate": coordinate,
-                        "section": section,
-                        "x_start_px": x_start_px,
-                        "y_start_px": y_start_px,
-                        "x_end_px": x_end_px,
-                        "y_end_px": y_end_px,
-                    }
-                )
+        for particle_id, sections in particles_to_tiltseries_coordinates.items():
+            particle_data, visible_sections = get_particle_crop_and_visibility(particle_id, sections, tiltseries_x, tiltseries_y, tiltseries_pixel_size, box_size)
 
             # RELION by default only requires one tilt to be visible, so only skip if all sections are out of bounds (and also don't append since the entry doesn't exist in the particles.star file)
             if len(particle_data) == 0:
-                # logger.debug(f"Particle {particle_count} in tomogram {particles_tomo_name} has {len(particle_data)} visible tilts. Skipping this particle.")
-                skipped_particles.add(particle_count)
+                # logger.debug(f"Particle {particle_id} in tomogram {particles_tomo_name} has {len(particle_data)} visible tilts. Skipping this particle.")
+                skipped_particles.add(particle_id)
                 continue
 
+            # modify the values to be in RELION format
             all_visible_sections_column.append(str(visible_sections).replace(" ", ""))
 
             tilt_data = np.zeros((len(particle_data), box_size, box_size), dtype=np.float32)
@@ -184,10 +181,10 @@ def process_aln_file(args):
                 current_tilt[:] = data[section - 1, y_start_px:y_end_px, x_start_px:x_end_px]
                 
                 # TODO: look into subpixel shift?
-                fourier_tilt = np.fft.rfft2(current_tilt)
                 # TODO: look into gamma offset
                 # TODO: implement spherical aberration correction
                 # TODO: implement binning for CTF application
+                fourier_tilt = np.fft.rfft2(current_tilt)
                 ctf_weights = calculate_ctf(
                     coordinate=coordinate,
                     tilt_projection_matrix=projection_matrices[section - 1],
@@ -205,7 +202,6 @@ def process_aln_file(args):
                     box_size=box_size,
                 )
                 fourier_tilt *= -1 * dose_weights[section - 1, :, :] * ctf_weights
-
                 current_tilt[:] = np.fft.irfft2(fourier_tilt).real
                 
                 # remove noise via background subtraction and apply soft circular mask
@@ -213,30 +209,44 @@ def process_aln_file(args):
                 current_tilt -= background_data_mean
                 current_tilt *= soft_mask
                 
-
-            with mrcfile.new(os.path.join(output_folder, f"{particle_count}_stack2d.mrcs"), overwrite=True) as mrc:
+            with mrcfile.new(os.path.join(output_folder, f"{particle_id}_stack2d.mrcs"), overwrite=True) as mrc:
                 mrc.set_data(tilt_data)
                 mrc.voxel_size = (tiltseries_pixel_size, tiltseries_pixel_size, 1)
 
-    # Return an updated dataframe
-    updated_filtered_particles_df = filtered_particles_df.copy()
-    updated_filtered_particles_df = updated_filtered_particles_df.drop(columns=["rlnCoordinateX", "rlnCoordinateY", "rlnCoordinateZ"], errors="ignore")
-    updated_filtered_particles_df = updated_filtered_particles_df.reset_index(drop=True)
-    updated_filtered_particles_df.index += 1 # increment index by 1 to match RELION's 1-indexing
-    updated_filtered_particles_df["rlnTomoParticleName"] = updated_filtered_particles_df["rlnTomoName"] + "/" + updated_filtered_particles_df.index.astype(str)
-    updated_filtered_particles_df["rlnImageName"] = updated_filtered_particles_df.index.to_series().apply(lambda idx: os.path.abspath(os.path.join(output_folder, f"{idx}_stack2d.mrcs")))
-    updated_filtered_particles_df = updated_filtered_particles_df.drop(index=skipped_particles, errors="ignore") # drop rows by particle_count that were skipped
-    updated_filtered_particles_df["rlnTomoVisibleFrames"] = all_visible_sections_column
-    updated_filtered_particles_df["rlnOriginXAngst"] = 0.0
-    updated_filtered_particles_df["rlnOriginYAngst"] = 0.0
-    updated_filtered_particles_df["rlnOriginZAngst"] = 0.0
+    updated_filtered_particles_df = update_particles_df(filtered_particles_df, output_folder, all_visible_sections_column, skipped_particles)
 
     logger.debug(f"Extracted subtomograms for {particles_tomo_name} with {len(particles_to_tiltseries_coordinates)} particles, skipped {len(skipped_particles)} particles due to out-of-bounds coordinates.")
 
     return updated_filtered_particles_df, len(skipped_particles)
 
+def write_starfiles(merged_particles_df: pd.DataFrame, particle_optics_df: pd.DataFrame, tiltseries_starfile: str, box_size: int, bin: int, output_dir: str):
+    """
+    Writes the updated particles and optimisation set star files, as per RELION expected format & outputs.
+    """
+    merged_particles_df["ParticleID"] = merged_particles_df["rlnTomoParticleName"].str.split("/").str[-1].astype(int)
+    merged_particles_df = merged_particles_df.sort_values(by=["rlnTomoName", "ParticleID"]).reset_index(drop=True)
+    merged_particles_df = merged_particles_df.drop(columns="ParticleID")
 
-def extract_local_aln_subtomograms(
+    updated_optics_df = particle_optics_df.copy()
+    updated_optics_df["rlnCtfDataAreCtfPremultiplied"] = 1
+    updated_optics_df["rlnImageDimensionality"] = 2
+    updated_optics_df["rlnTomoSubtomogramBinning"] = bin
+    updated_optics_df["rlnImagePixelSize"] = updated_optics_df["rlnTomoTiltSeriesPixelSize"]
+    updated_optics_df["rlnImageSize"] = box_size
+
+    general_df = pd.DataFrame({"rlnTomoSubTomosAre2DStacks": [1]})
+    starfile.write({
+        "general": general_df,
+        "optics": updated_optics_df,
+        "particles": merged_particles_df,
+    }, os.path.join(output_dir, "particles.star"))
+    optimisation_set_df = pd.DataFrame({
+        "rlnTomoParticlesFile": [os.path.abspath(os.path.join(output_dir, "particles.star"))],
+        "rlnTomoTomogramsFile": [os.path.abspath(tiltseries_starfile)],
+    })
+    starfile.write(optimisation_set_df, os.path.join(output_dir, "optimisation_set.star"), overwrite=True)
+
+def extract_local_subtomograms(
     particles_starfile: str,
     particles_tomo_name_prefix: str,
     box_size: int,
@@ -247,8 +257,12 @@ def extract_local_aln_subtomograms(
     tiltseries_y: int,
     aln_dir: str,
     output_dir: str,
-    debug: bool,
 ):
+    """
+    Extracts subtomograms from a provided particles *.star file, tiltseries *.star file, and set of *.aln files.
+    Creates new *.mrcs files for each particle in the output directory, as well as updated particles and optimisation set star files.
+    Uses multiprocessing to speed up the extraction process.
+    """
     start_time = time.time()
     particles_star_file = starfile.read(particles_starfile)
     particles_df = particles_star_file["particles"]
@@ -273,6 +287,7 @@ def extract_local_aln_subtomograms(
     tiltseries_df = starfile.read(tiltseries_starfile)
 
     def build_args(aln_file):
+        """Builds the arguments for processing a single tiltseries and its particles (to be passed into process_tiltseries)."""
         aln_file_path = os.path.join(aln_dir, aln_file)
         particles_tomo_name = f"{particles_tomo_name_prefix}{aln_file.replace('.aln', '')}"
         filtered_particles_df = particles_df[particles_df["rlnTomoName"] == particles_tomo_name]
@@ -290,57 +305,33 @@ def extract_local_aln_subtomograms(
             tiltseries_row_entry,
             optics_row,
             output_dir,
-            debug,
         )
 
     args_list = [build_args(aln_file) for aln_file in aln_files]
 
+    # do actual subtomogram extraction & .mrcs file creation here
     total_skipped_count = 0
-    merged_particles_df = pd.DataFrame()
+    particles_df_results = []
     cpu_count = min(64, os.cpu_count(), len(aln_files))
     logger.info(f"Starting extraction of subtomograms from {len(aln_files)} alignments using {cpu_count} CPU cores.")
     with Pool(processes=cpu_count) as pool:
         try:
-            for updated_filtered_particles_df, skipped_count in tqdm(pool.imap_unordered(process_aln_file, args_list, chunksize=1), total=len(args_list)):
+            for updated_filtered_particles_df, skipped_count in tqdm(pool.imap_unordered(process_tiltseries, args_list, chunksize=1), total=len(args_list)):
                 if updated_filtered_particles_df is not None and not updated_filtered_particles_df.empty:
-                    merged_particles_df = pd.concat([merged_particles_df, updated_filtered_particles_df], ignore_index=True)
+                    particles_df_results.append(updated_filtered_particles_df)
                 total_skipped_count += skipped_count
         except Exception as e:
             end_time = time.time()
             logger.error(f"Subtomogram extraction failed after {end_time - start_time:.2f} seconds.")
             pool.terminate()
             raise e
-
-    merged_particles_df["ParticleCount"] = merged_particles_df["rlnTomoParticleName"].str.split("/").str[-1].astype(int)
-    merged_particles_df = merged_particles_df.sort_values(by=["rlnTomoName", "ParticleCount"]).reset_index(drop=True)
-    merged_particles_df = merged_particles_df.drop(columns="ParticleCount")
-
-    updated_optics_df = particles_star_file["optics"].copy()
-    updated_optics_df["rlnCtfDataAreCtfPremultiplied"] = 1
-    updated_optics_df["rlnImageDimensionality"] = 2
-    updated_optics_df["rlnTomoSubtomogramBinning"] = bin
-    updated_optics_df["rlnImagePixelSize"] = updated_optics_df["rlnTomoTiltSeriesPixelSize"]
-    updated_optics_df["rlnImageSize"] = box_size
-
-    general_df = pd.DataFrame({
-        "rlnTomoSubTomosAre2DStacks": [1],
-    })
-
-    starfile.write(
-        {
-            "general": general_df,
-            "optics": updated_optics_df,
-            "particles": merged_particles_df,
-        },
-        os.path.join(output_dir, "particles.star"),
-    )
-
-    optimisation_set_df = pd.DataFrame({
-        "rlnTomoParticlesFile": [os.path.abspath(os.path.join(output_dir, "particles.star"))],
-        "rlnTomoTomogramsFile": [os.path.abspath(tiltseries_starfile)],
-    })
-
-    starfile.write(optimisation_set_df, os.path.join(output_dir, "optimisation_set.star"), overwrite=True)
+        
+    if not particles_df_results:
+        raise ValueError("No particles were extracted. Please check the input files and parameters.")
+    
+    merged_particles_df = pd.concat(particles_df_results, ignore_index=True)
+    # update all the relevant star files
+    write_starfiles(merged_particles_df, particles_star_file["optics"], tiltseries_starfile, box_size, bin, output_dir)
 
     end_time = time.time()
     logger.info(f"Subtomogram extraction completed in {end_time - start_time:.2f} seconds. Extracted {len(merged_particles_df)} particles from {len(aln_files)} alignments, skipped {total_skipped_count} particles due to out-of-bounds coordinates.")
@@ -393,7 +384,7 @@ def main():
     if args.debug:
         logger.setLevel(logging.DEBUG)
 
-    extract_local_aln_subtomograms(
+    extract_local_subtomograms(
         particles_starfile=args.particles_starfile,
         particles_tomo_name_prefix=args.particles_tomo_name_prefix,
         box_size=args.box_size,
@@ -404,7 +395,6 @@ def main():
         tiltseries_y=args.tiltseries_y,
         aln_dir=args.aln_dir,
         output_dir=args.output_dir,
-        debug=args.debug,
     )
 
 if __name__ == "__main__":

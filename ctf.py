@@ -1,6 +1,28 @@
 import numpy as np
 from projection import project_3d_point_to_2d
 
+def calculate_dose_weights(k2: np.ndarray, dose: float, bfactor: float) -> np.ndarray:
+    """
+    Calculates the dose-weighting filter in Fourier space for a single image (either B-factor or Grant & Grigorieff model).
+    
+    Args:
+        k2 (np.ndarray): Squared spatial frequencies (k² = u²).
+        dose (float): Electron dose.
+        bfactor (float): If > 0, use B-factor model; otherwise use Grant & Grigorieff model.
+
+    Returns:
+        np.ndarray of weights.
+    """
+    if bfactor > 0.0:
+        return np.exp(-bfactor * dose * k2 / 4.0)
+    else:
+        a = 0.245
+        b = -1.665
+        c = 2.81
+        k = np.sqrt(k2)
+        k[k == 0] = 1e-9
+        d0 = a * (k**b) + c
+        return np.exp(-0.5 * dose / d0)
 
 def calculate_dose_weight_image(dose: float, tiltseries_pixel_size: float, box_size: int, bfactor_per_electron_dose: float) -> np.ndarray:
     """
@@ -18,7 +40,6 @@ def calculate_dose_weight_image(dose: float, tiltseries_pixel_size: float, box_s
         np.ndarray: A 2D array (box_size, box_size // 2 + 1) with the Fourier space weights.
     """
     s = box_size
-    sh = s // 2 + 1
 
     # fourier space coordinates
     ky = np.fft.fftfreq(s, d=tiltseries_pixel_size)
@@ -26,24 +47,8 @@ def calculate_dose_weight_image(dose: float, tiltseries_pixel_size: float, box_s
     kx_grid, ky_grid = np.meshgrid(kx, ky)
     # squared spatial frequency
     k2 = kx_grid**2 + ky_grid**2
-    weights = np.zeros((s, sh), dtype=np.float32)
 
-    if bfactor_per_electron_dose > 0.0:
-        # B-factor model: W(k) = exp(B * k²)
-        bfac = -bfactor_per_electron_dose * dose / 4.0
-        weights = np.exp(bfac * k2)
-    else:
-        # Grant & Grigorieff model: W(k) = exp(-0.5 * dose / d0(k))
-        a = 0.245
-        b = -1.665
-        c = 2.81
-
-        k = np.sqrt(k2)
-        k[k == 0] = 1e-9
-        d0 = a * (k**b) + c
-        weights = np.exp(-0.5 * dose / d0)
-
-    return weights
+    return calculate_dose_weights(k2, dose, bfactor_per_electron_dose)
 
 
 def get_depth_offset(tilt_projection_matrix: np.ndarray, coordinate: np.ndarray) -> float:
@@ -126,7 +131,7 @@ def calculate_ctf(
     if (abs(defocus_u) < 1e-6 and abs(defocus_v) < 1e-6 and abs(amplitude_contrast) < 1e-6 and abs(spherical_aberration) < 1e-6):
         raise ValueError("CTF parameters are 0, please check your inputs.")
     
-    # for astimagtism correction
+    # for astigmatism correction
     Q = np.array([
         [np.cos(defocus_angle), np.sin(defocus_angle)],
         [-np.sin(defocus_angle), np.cos(defocus_angle)]
@@ -146,7 +151,6 @@ def calculate_ctf(
 
     # TODO: support gamma offset here
     s = box_size
-    sh = s // 2 + 1
 
     # fourier space coordinates
     ky = np.fft.fftfreq(s, d=tiltseries_pixel_size)
@@ -158,21 +162,10 @@ def calculate_ctf(
 
     # phase shift (gamma)
     gamma = K1 * (Axx * kx_grid**2 + 2.0 * Axy * kx_grid * ky_grid + Ayy * ky_grid**2) + K2 * u4 - K5 - K3
-    ctf = -1 * np.sin(gamma)
+    ctf = -1 * np.sin(gamma) 
 
-    if (bfactor > 0.0):
-        ctf *= np.exp(K4 * u2)
-    else:
-        # Grant & Grigorieff model: W(k) = exp(-0.5 * dose / d0(k))
-        a = 0.245
-        b = -1.665
-        c = 2.81
-
-        k = np.sqrt(u2)
-        k[k == 0] = 1e-9
-        d0 = a * (k**b) + c
-        weights = np.exp(-0.5 * dose / d0)
-        ctf *= weights
+    # dose weighting
+    ctf *= calculate_dose_weights(u2, dose, bfactor)
 
     mask = np.abs(ctf) < 1e-8
     ctf[mask] = np.sign(ctf[mask]) * 1e-8
