@@ -5,14 +5,27 @@
 # - Does not support circle precrop
 # - Does not support grid precorrection
 # - Does not support whitening (power spectral flattening)
-# - Only supports 2d stack extraction (no 3D subvolumes)
+# - Does not support 3D volume extraction
 # - Does not support min_frames or max_dose flags
 # - Does not write any other *.mrcs files other than the 2D stacks themselves
+# - Does not support defocus slope (rlnTomoDefocusSlope)
+# - Does not (currently) support binning
+# - Does not support float16
 
+# TODO: List of priorities
+# TODO: Fix path issues & reduce needed paths
+# TODO: Implement binning
+# TODO: Clean up code
+# TODO: Modularize this code to different files
+# TODO: Support multiple optics groups
 # TODO: GPU acceleration with cupy
 # TODO: incorporate alpha and beta offset parameters from AreTomo .aln file (for additional rotation) (and from CryoET Data Portal? if it exists?)
 # TODO: Write tests (using synthetic data this should be pretty easy, just compare against RELION output, serving also as a tracker for if RELION output ever changes)
 # TODO: copick picks support?
+# TODO: notify aretomo of this work and possible integration into their codebase
+# TODO: determine why the extracted subtomograms are slightly different (even without)
+#       - could possibly be due to the fourier transform they do? investigate in fourier space?
+
 import os
 import argparse
 import logging
@@ -21,6 +34,8 @@ import numpy as np
 import pandas as pd
 import mrcfile
 import time
+from projection import project_3d_point_to_2d, calculate_projection_matrix_from_aretomo_aln, circular_mask, circular_soft_mask
+from ctf import calculate_dose_weight_image, calculate_ctf
 from tqdm import tqdm
 from multiprocessing import Pool
 from cryoet_data_portal import Client, Run
@@ -28,119 +43,6 @@ from cryoet_alignment.io.aretomo3 import AreTomo3ALN
 from cryoet_alignment.io.cryoet_data_portal import Alignment
 
 logger = logging.getLogger(__name__)
-
-def circular_mask(box_size: int) -> np.ndarray:
-    """Return a centered circular mask within a square of given box size (in pixels)."""
-    y, x = np.ogrid[-box_size // 2:box_size // 2, -box_size // 2:box_size // 2]
-    mask = (x * x + y * y) <= (box_size // 2) ** 2
-    return mask.astype(np.float32)
-
-def circular_soft_mask(box_size: int, falloff: float) -> np.ndarray:
-    """Return a centered circular soft mask within a square of given box size (in pixels) (based on RELION soft mask)."""
-    y, x = np.ogrid[-box_size // 2:box_size // 2, -box_size // 2:box_size // 2]
-    mask = np.zeros((box_size, box_size), dtype=np.float32)
-    r = np.sqrt(x * x + y * y)
-    mask[r < box_size / 2.0 - falloff] = 1.0
-    falloff_zone = (r >= box_size / 2.0 - falloff) & (r < box_size / 2.0)
-    mask[falloff_zone] = 0.5 - 0.5 * np.cos(np.pi * (r[falloff_zone] - (box_size / 2.0)) / falloff)
-    return mask
-
-
-def calculate_projection_matrix(rot: float, gmag: float, tx: float, ty: float, tilt: float, radians: bool = False) -> np.ndarray:
-    """
-    Calculates a 4x4 projection matrix based on the given rotation, translation, and tilt parameters (based on AreTomo .aln file).
-    Calculations are based on affine projections in 3D space.
-
-    Args:
-        rot (float): Tilt axis rotation in radians or degrees (around the z-axis).
-        gmag (float): Magnification factor.
-        tx (float): Translation in the x direction (Angstroms).
-        ty (float): Translation in the y direction (Angstroms).
-        tilt (float): (Stage) tilt angle in radians or degrees (around the y-axis).
-        radians (bool): If input angles are in radians. Defaults to False (degrees).
-    Returns:
-        np.ndarray: A 4x4 projection matrix.
-    """
-    if not radians:
-        rot = np.radians(rot)
-        tilt = np.radians(tilt)
-
-    M_2d_translation = np.array([
-        [1, 0, 0, tx],
-        [0, 1, 0, ty],
-        [0, 0, 1, 0],
-        [0, 0, 0, 1]
-    ])
-
-    M_magnification = np.array([
-        [gmag, 0, 0, 0],
-        [0, gmag, 0, 0],
-        [0, 0, 1, 0],
-        [0, 0, 0, 1]
-    ])
-
-    M_axis_rot = np.array([
-        [np.cos(rot), -np.sin(rot), 0, 0],
-        [np.sin(rot), np.cos(rot), 0, 0],
-        [0, 0, 1, 0],
-        [0, 0, 0, 1]
-    ])
-
-    M_stage_tilt = np.array([
-        [np.cos(tilt), 0, np.sin(tilt), 0],
-        [0, 1, 0, 0],
-        [-np.sin(tilt), 0, np.cos(tilt), 0],
-        [0, 0, 0, 1]
-    ])
-
-    return M_2d_translation @ M_magnification @ M_axis_rot @ M_stage_tilt
-
-def project_3d_point_to_2d(point_3d: np.ndarray, projection_matrix: np.ndarray) -> np.ndarray:
-    """
-    Projects a 3D point to a 2D point using the provided projection matrix.
-
-    Args:
-        point_3d (np.ndarray): A 3D point as a numpy array of shape (3,).
-        projection_matrix (np.ndarray): A 4x4 projection matrix.
-
-    Returns:
-        np.ndarray: The projected 2D point as a numpy array of shape (2,).
-    """
-    if point_3d.shape != (3,):
-        raise ValueError("point_3d must be a 1D array with 3 elements.")
-
-    point_3d_homogeneous = np.append(point_3d, 1.0)
-    projected_point = projection_matrix @ point_3d_homogeneous
-
-    if projected_point[3] == 0:
-        raise ValueError("Projection resulted in a point at infinity.")
-
-    projected_point /= projected_point[3]
-    return projected_point[:2]
-
-
-def calculate_projection_matrix_from_aretomo_aln(aln: AreTomo3ALN, tiltseries_pixel_size: float = 1.0) -> dict[int, np.ndarray]:
-    """
-    Calculates the projection matrices for each section in the given AreTomo3ALN object.
-
-    Args:
-        aln (AreTomo3ALN): An AreTomo3ALN object containing alignment parameters.
-
-    Returns:
-        dict[int, np.ndarray]: A dictionary of 4x4 projection matrices for each section. (section ID as key)
-    """
-    projection_matrices = {}
-    for section in aln.GlobalAlignments:
-        rot = section.rot
-        gmag = section.gmag
-        tx = section.tx * tiltseries_pixel_size
-        ty = section.ty * tiltseries_pixel_size
-        tilt = section.tilt
-
-        projection_matrix = calculate_projection_matrix(rot, gmag, tx, ty, tilt)
-        projection_matrices[section.sec] = projection_matrix
-
-    return projection_matrices
 
 
 # TODO: Refactor this to take in PerSectionAlignmentParameters instead of Run?
@@ -156,13 +58,12 @@ def calculate_projection_matrix_from_run(run: Run) -> dict[int, np.ndarray]:
     """
     pass
 
-
 def extract_subtomogram_from_run(run: Run, output_dir: str):
     pass
 
 
 def process_aln_file(args):
-    aln_file_path, particles_tomo_name, filtered_particles_df, box_size, bin, tiltseries_dir, tiltseries_pixel_size, tiltseries_x, tiltseries_y, output_dir, debug = args
+    aln_file_path, particles_tomo_name, filtered_particles_df, box_size, bin, tiltseries_dir, tiltseries_x, tiltseries_y, tiltseries_row_entry, optics_row, output_dir, debug = args
 
     particles_to_tiltseries_coordinates = {}
     skipped_particles = set()
@@ -176,7 +77,23 @@ def process_aln_file(args):
     tiltseries_mrc_file = tiltseries_df["rlnMicrographName"].iloc[0].split("@")[1]
     background_mask = circular_mask(box_size) == 0.0
     soft_mask = circular_soft_mask(box_size, falloff=5.0)
+    tilt_angles = tiltseries_df["rlnTomoYTilt"].values
     
+    # ctf & dose-weighting parameters
+    voltage = tiltseries_row_entry["rlnVoltage"].values[0]
+    spherical_aberration = tiltseries_row_entry["rlnSphericalAberration"].values[0]
+    amplitude_contrast = tiltseries_row_entry["rlnAmplitudeContrast"].values[0]
+    handedness = tiltseries_row_entry["rlnTomoHand"].values[0]
+    tiltseries_pixel_size = tiltseries_row_entry["rlnTomoTiltSeriesPixelSize"].values[0]
+    phase_shift = tiltseries_row_entry["rlnPhaseShift"].values[0] if "rlnPhaseShift" in optics_row.columns else 0.0
+
+    defocus_u = tiltseries_df["rlnDefocusU"].values
+    defocus_v = tiltseries_df["rlnDefocusV"].values
+    defocus_angle = tiltseries_df["rlnDefocusAngle"].values
+    doses = tiltseries_df["rlnMicrographPreExposure"].values
+    bfactor_per_electron_dose = tiltseries_df["rlnCtfBfactorPerElectronDose"] if "rlnCtfBfactorPerElectronDose" in tiltseries_df.columns else [0.0] * len(tiltseries_df)
+    dose_weights = np.stack([calculate_dose_weight_image(dose, tiltseries_pixel_size, box_size, bfactor) for dose, bfactor in zip(doses, bfactor_per_electron_dose)], dtype=np.float32)
+
     output_folder = os.path.join(output_dir, "Subtomograms", particles_tomo_name)
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
@@ -190,15 +107,12 @@ def process_aln_file(args):
     # loop over each tilt in the tiltseries (idea is this outer loop so that if we do end up doing speedup, we can parallelize this)
     for _, tilt in tiltseries_df.iterrows():
         section = int(tilt["rlnMicrographName"].split("@")[0])
-        if section not in projection_matrices:
-            raise ValueError(f"Section {section} not found in projection matrices. Check the alignment file {aln_file_path}.")
-
-        projection_matrix = projection_matrices[section]
+        projection_matrix = projection_matrices[section - 1]
 
         # match 1-indexing of RELION
         for particle_count, particle in enumerate(filtered_particles_df.itertuples(), start=1):
             coordinate = np.array([particle.rlnCenteredCoordinateXAngst, particle.rlnCenteredCoordinateYAngst, particle.rlnCenteredCoordinateZAngst])
-            projected_point = project_3d_point_to_2d(coordinate, projection_matrix)
+            projected_point = project_3d_point_to_2d(coordinate, projection_matrix)[:2]
 
             if particle_count not in particles_to_tiltseries_coordinates:
                 particles_to_tiltseries_coordinates[particle_count] = {}
@@ -224,15 +138,12 @@ def process_aln_file(args):
                 y_px = round((y + tiltseries_y * tiltseries_pixel_size / 2.0) / tiltseries_pixel_size)
                 x_start_px = x_px - box_size // 2
                 y_start_px = y_px - box_size // 2
-                # TODO: If this ends up being the correct way to do it, clean up the code to not use the _end_px values and just use box_size
                 x_end_px = x_start_px + box_size
                 y_end_px = y_start_px + box_size
-                # x_end_px = int((x_end + tiltseries_x * tiltseries_pixel_size / 2.0) / tiltseries_pixel_size)
-                # y_end_px = int((y_end + tiltseries_y * tiltseries_pixel_size / 2.0) / tiltseries_pixel_size)
-
+                
                 if x_start_px < 0 or x_end_px > tiltseries_x or y_start_px < 0 or y_end_px > tiltseries_y:
                     visible_sections.append(0)
-                    # logger.debug(f"{particles_tomo_name} Subtomogram extraction for particle {particle_count} in section {section} would exceed tiltseries bounds. x_start={x_start_px}, x_end={x_end_px}, y_start={y_start_px}, y_end={y_end_px}. Original 3D coordinates: {coordinate}. Skipping this section.")
+                    # logger.debug(f"{particles_tomo_name} Subtomogram extraction for particle {particle_count} in section {section} at {tilt_angles[section - 1]} would exceed tiltseries bounds. x_start={x_start_px}, x_end={x_end_px}, y_start={y_start_px}, y_end={y_end_px}. Original 3D coordinates: {coordinate}. Skipping this section.")
                     continue
 
                 visible_sections.append(1)
@@ -263,6 +174,7 @@ def process_aln_file(args):
                 x_end_px = particle_data[tilt]["x_end_px"]
                 y_start_px = particle_data[tilt]["y_start_px"]
                 y_end_px = particle_data[tilt]["y_end_px"]
+                coordinate= particle_data[tilt]["coordinate"]
 
                 # TODO: handle binning here
                 # Section is 1 indexed in RELION, so subtract 1 for 0-indexed Python arrays
@@ -270,16 +182,29 @@ def process_aln_file(args):
                 current_tilt[:] = data[section - 1, y_start_px:y_end_px, x_start_px:x_end_px]
                 
                 # TODO: look into subpixel shift?
-                # TODO: implement binning for CTF application
                 fourier_tilt = np.fft.rfft2(current_tilt)
-                # TODO: implement CTF application here
                 # TODO: look into gamma offset
                 # TODO: implement spherical aberration correction
-
+                # TODO: implement binning for CTF application
+                ctf_weights = calculate_ctf(
+                    position=coordinate,
+                    tilt_projection_matrix=projection_matrices[section - 1],
+                    voltage=voltage,
+                    spherical_aberration=spherical_aberration,
+                    amplitude_contrast=amplitude_contrast,
+                    handedness=handedness,
+                    pixel_size=tiltseries_pixel_size,
+                    phase_shift=phase_shift,
+                    defocus_u=defocus_u[section - 1],
+                    defocus_v=defocus_v[section - 1],
+                    defocus_angle=defocus_angle[section - 1],
+                    dose=doses[section - 1],
+                    bfactor=bfactor_per_electron_dose[section - 1],
+                    box_size=box_size,
+                )
+                fourier_tilt *= -1 * dose_weights[section - 1, :, :] * ctf_weights
 
                 current_tilt[:] = np.fft.irfft2(fourier_tilt).real
-                # invert contrast to follow RELION convention
-                current_tilt *= -1
                 
                 # remove noise via background subtraction and apply soft circular mask
                 background_data_mean = np.mean(current_tilt, where=background_mask)
@@ -316,7 +241,6 @@ def extract_local_aln_subtomograms(
     bin: int,
     tiltseries_dir: str,
     tiltseries_starfile: str,
-    tiltseries_pixel_size: float,
     tiltseries_x: int,
     tiltseries_y: int,
     aln_dir: str,
@@ -324,9 +248,9 @@ def extract_local_aln_subtomograms(
     debug: bool,
 ):
     start_time = time.time()
-    star_file = starfile.read(particles_starfile)
-    particles_df = star_file["particles"]
-    # TODO: make this more adaptable? Look in other common directories?
+    particles_star_file = starfile.read(particles_starfile)
+    particles_df = particles_star_file["particles"]
+    # TODO: make this more adaptable? Look in other common directories? make it based on the tiltseries file? have to figure out pathing issues though
     tiltseries_files = [f for f in os.listdir(tiltseries_dir) if f.endswith(".star")]
     aln_files = [f for f in os.listdir(aln_dir) if f.endswith(".aln")]
     if len(tiltseries_files) == 0:
@@ -343,10 +267,15 @@ def extract_local_aln_subtomograms(
     logger.debug(f"Found alignment files: {aln_files}")
     logger.debug(f"Found tiltseries files: {tiltseries_files}")
 
+    # TODO: filter list by what is in the tiltseries star file
+    tiltseries_df = starfile.read(tiltseries_starfile)
+
     def build_args(aln_file):
         aln_file_path = os.path.join(aln_dir, aln_file)
         particles_tomo_name = f"{particles_tomo_name_prefix}{aln_file.replace('.aln', '')}"
         filtered_particles_df = particles_df[particles_df["rlnTomoName"] == particles_tomo_name]
+        tiltseries_row_entry = tiltseries_df[tiltseries_df["rlnTomoName"] == particles_tomo_name]
+        optics_row = particles_star_file["optics"][particles_star_file["optics"]["rlnOpticsGroupName"] == tiltseries_row_entry["rlnOpticsGroupName"].values[0]]
         return (
             aln_file_path,
             particles_tomo_name,
@@ -354,9 +283,10 @@ def extract_local_aln_subtomograms(
             box_size,
             bin,
             tiltseries_dir,
-            tiltseries_pixel_size,
             tiltseries_x,
             tiltseries_y,
+            tiltseries_row_entry,
+            optics_row,
             output_dir,
             debug,
         )
@@ -383,11 +313,11 @@ def extract_local_aln_subtomograms(
     merged_particles_df = merged_particles_df.sort_values(by=["rlnTomoName", "ParticleCount"]).reset_index(drop=True)
     merged_particles_df = merged_particles_df.drop(columns="ParticleCount")
 
-    updated_optics_df = star_file["optics"].copy()
+    updated_optics_df = particles_star_file["optics"].copy()
     updated_optics_df["rlnCtfDataAreCtfPremultiplied"] = 1
     updated_optics_df["rlnImageDimensionality"] = 2
     updated_optics_df["rlnTomoSubtomogramBinning"] = bin
-    updated_optics_df["rlnImagePixelSize"] = tiltseries_pixel_size
+    updated_optics_df["rlnImagePixelSize"] = updated_optics_df["rlnTomoTiltSeriesPixelSize"]
     updated_optics_df["rlnImageSize"] = box_size
 
     general_df = pd.DataFrame({
@@ -431,7 +361,8 @@ def main():
     # TODO: consolidate the two to one? just find the tiltseries star file in the tiltseries dir (can be done if we restrain to just pyrelion format)
     parser.add_argument("--tiltseries-dir", type=str, required=True, help="Path to the tiltseries directory containing *.star files (individual tiltseries, with entries as individual tilts).")
     parser.add_argument("--tiltseries-starfile", type=str, required=True, help="Path to the tiltseries star file (containing all tiltseries entries, with entries as tiltseries).")
-    parser.add_argument("--tiltseries-pixel-size", type=float, required=True, help="Pixel size of the tiltseries in Angstroms.")
+    # TODO: Make this a filter for only running extraction on specific tiltseries
+    # parser.add_argument("--tiltseries-pixel-size", type=float, required=True, help="Pixel size of the tiltseries in Angstroms.")
     parser.add_argument("--tiltseries-x", type=int, required=True, help="X dimension of the tiltseries in pixels.")
     parser.add_argument("--tiltseries-y", type=int, required=True, help="Y dimension of the tiltseries in pixels.")
     parser.add_argument("--aln-dir", type=str, required=True, help="Path to the directory containing the *.aln files (should be named the same as the tiltseries).")
@@ -467,7 +398,6 @@ def main():
         bin=args.bin,  # TODO: implement binning
         tiltseries_dir=args.tiltseries_dir,
         tiltseries_starfile=args.tiltseries_starfile,
-        tiltseries_pixel_size=args.tiltseries_pixel_size,
         tiltseries_x=args.tiltseries_x,
         tiltseries_y=args.tiltseries_y,
         aln_dir=args.aln_dir,

@@ -10,6 +10,6 @@ time python /hpc/projects/group.czii/daniel.ji/cryoet-data-portal-pick-extract/p
   --aln-dir /hpc/projects/group.czii/daniel.ji/cryoet-data-portal-pick-extract/pyrelion-runs/polnet/aretomo_mock/session1/run001/ \
   --output-dir /hpc/projects/group.czii/daniel.ji/cryoet-data-portal-pick-extract/pyrelion-runs/polnet/relion_mock/Extract/mockjob001/ \
   --particles-tomo-name-prefix "session1_" \
-  --tiltseries-pixel-size 10.0 --tiltseries-x 630 --tiltseries-y 630 --box-size 64 --bin 1 --debug \
+  --tiltseries-x 630 --tiltseries-y 630 --box-size 64 --bin 1 --debug \
   &> /hpc/projects/group.czii/daniel.ji/cryoet-data-portal-pick-extract/pyrelion-runs/polnet/relion_mock/relion_extract_manual.log
 ```
