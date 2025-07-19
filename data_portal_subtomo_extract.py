@@ -12,19 +12,18 @@
 # - Does not (currently) support binning
 # - Does not support float16
 
-# TODO: List of priorities
-# TODO: Fix path issues & reduce needed paths
-# TODO: Implement binning
+# TODO: List of TODO (in order of priority):
 # TODO: Clean up code
-# TODO: Modularize this code to different files
-# TODO: Support multiple optics groups
-# TODO: GPU acceleration with cupy
-# TODO: incorporate alpha and beta offset parameters from AreTomo .aln file (for additional rotation) (and from CryoET Data Portal? if it exists?)
-# TODO: Write tests (using synthetic data this should be pretty easy, just compare against RELION output, serving also as a tracker for if RELION output ever changes)
-# TODO: copick picks support?
-# TODO: notify aretomo of this work and possible integration into their codebase
-# TODO: determine why the extracted subtomograms are slightly different (even without)
+# TODO: - Fix path issues & reduce needed paths
+# TODO: - Modularize this code to different files
+# TODO: Determine why the extracted subtomograms are slightly different (even without)
 #       - could possibly be due to the fourier transform they do? investigate in fourier space?
+# TODO: (In tandem with above) Write tests (using synthetic data this should be pretty easy, just compare against RELION output, serving also as a tracker for if RELION output ever changes)
+# TODO: Implement binning
+# TODO: Support multiple optics groups
+# TODO: Incorporate alpha and beta offset parameters from AreTomo .aln file (for additional rotation) (and from CryoET Data Portal? if it exists?)
+# TODO: Notify aretomo of this work and possible integration into their codebase
+# TODO: Data Portal, copick support 
 
 import os
 import argparse
@@ -65,28 +64,40 @@ def extract_subtomogram_from_run(run: Run, output_dir: str):
 def process_aln_file(args):
     aln_file_path, particles_tomo_name, filtered_particles_df, box_size, bin, tiltseries_dir, tiltseries_x, tiltseries_y, tiltseries_row_entry, optics_row, output_dir, debug = args
 
-    particles_to_tiltseries_coordinates = {}
-    skipped_particles = set()
     # TODO: can also load from the tiltseries file, aln not required? but might be less reliable?
     tiltseries_file = os.path.basename(aln_file_path).replace(".aln", ".star")
     tiltseries_path = os.path.join(tiltseries_dir, tiltseries_file)
     if not os.path.exists(tiltseries_path):
         logger.warning(f"Tiltseries file {tiltseries_file} not found for alignment file {aln_file_path}. Skipping.")
         return
+    
+    output_folder = os.path.join(output_dir, "Subtomograms", particles_tomo_name)
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+    logger.debug(
+        f"Extracting subtomograms for {len(filtered_particles_df)} particles (filtered by rlnTomoName: {particles_tomo_name}) from tiltseries {tiltseries_file} with alignment {os.path.basename(aln_file_path)}."
+    )
+
     tiltseries_df = starfile.read(tiltseries_path)
     tiltseries_mrc_file = tiltseries_df["rlnMicrographName"].iloc[0].split("@")[1]
+
+    # particle data
+    particles_to_tiltseries_coordinates = {}
+    skipped_particles = set()
+
+    # projection-relevant variables
     background_mask = circular_mask(box_size) == 0.0
     soft_mask = circular_soft_mask(box_size, falloff=5.0)
     tilt_angles = tiltseries_df["rlnTomoYTilt"].values
-    
+    tiltseries_pixel_size = tiltseries_row_entry["rlnTomoTiltSeriesPixelSize"].values[0]
+    projection_matrices = calculate_projection_matrix_from_aretomo_aln(AreTomo3ALN.from_file(aln_file_path), tiltseries_pixel_size=tiltseries_pixel_size)
+
     # ctf & dose-weighting parameters
     voltage = tiltseries_row_entry["rlnVoltage"].values[0]
     spherical_aberration = tiltseries_row_entry["rlnSphericalAberration"].values[0]
     amplitude_contrast = tiltseries_row_entry["rlnAmplitudeContrast"].values[0]
     handedness = tiltseries_row_entry["rlnTomoHand"].values[0]
-    tiltseries_pixel_size = tiltseries_row_entry["rlnTomoTiltSeriesPixelSize"].values[0]
     phase_shift = tiltseries_row_entry["rlnPhaseShift"].values[0] if "rlnPhaseShift" in optics_row.columns else 0.0
-
     defocus_u = tiltseries_df["rlnDefocusU"].values
     defocus_v = tiltseries_df["rlnDefocusV"].values
     defocus_angle = tiltseries_df["rlnDefocusAngle"].values
@@ -94,15 +105,6 @@ def process_aln_file(args):
     bfactor_per_electron_dose = tiltseries_df["rlnCtfBfactorPerElectronDose"] if "rlnCtfBfactorPerElectronDose" in tiltseries_df.columns else [0.0] * len(tiltseries_df)
     dose_weights = np.stack([calculate_dose_weight_image(dose, tiltseries_pixel_size, box_size, bfactor) for dose, bfactor in zip(doses, bfactor_per_electron_dose)], dtype=np.float32)
 
-    output_folder = os.path.join(output_dir, "Subtomograms", particles_tomo_name)
-    if not os.path.exists(output_folder):
-        os.makedirs(output_folder)
-
-    logger.debug(
-        f"Extracting subtomograms for {len(filtered_particles_df)} particles (filtered by rlnTomoName: {particles_tomo_name}) from tiltseries {tiltseries_file} with alignment {os.path.basename(aln_file_path)}."
-    )
-
-    projection_matrices = calculate_projection_matrix_from_aretomo_aln(AreTomo3ALN.from_file(aln_file_path), tiltseries_pixel_size=tiltseries_pixel_size)
 
     # loop over each tilt in the tiltseries (idea is this outer loop so that if we do end up doing speedup, we can parallelize this)
     for _, tilt in tiltseries_df.iterrows():
@@ -187,13 +189,13 @@ def process_aln_file(args):
                 # TODO: implement spherical aberration correction
                 # TODO: implement binning for CTF application
                 ctf_weights = calculate_ctf(
-                    position=coordinate,
+                    coordinate=coordinate,
                     tilt_projection_matrix=projection_matrices[section - 1],
                     voltage=voltage,
                     spherical_aberration=spherical_aberration,
                     amplitude_contrast=amplitude_contrast,
                     handedness=handedness,
-                    pixel_size=tiltseries_pixel_size,
+                    tiltseries_pixel_size=tiltseries_pixel_size,
                     phase_shift=phase_shift,
                     defocus_u=defocus_u[section - 1],
                     defocus_v=defocus_v[section - 1],

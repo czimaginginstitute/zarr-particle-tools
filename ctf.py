@@ -46,21 +46,21 @@ def calculate_dose_weight_image(dose: float, tiltseries_pixel_size: float, box_s
     return weights
 
 
-def get_depth_offset(tilt_projection_matrix: np.ndarray, position: np.ndarray) -> float:
-    position_projection = project_3d_point_to_2d(position, tilt_projection_matrix)
-    origin_projection = project_3d_point_to_2d(np.array([0, 0, 0]), tilt_projection_matrix)
-    return position_projection[2] - origin_projection[2]
+def get_depth_offset(tilt_projection_matrix: np.ndarray, coordinate: np.ndarray) -> float:
+    projected_point = project_3d_point_to_2d(coordinate, tilt_projection_matrix)
+    projected_origin = project_3d_point_to_2d(np.array([0, 0, 0]), tilt_projection_matrix)
+    return projected_point[2] - projected_origin[2] # z coordinate in the projected space
 
 # TODO: cache re-used values (origin_projection, etc.) and even the projected point itself - only should be computed once per particle & tilt
 # TODO: cache / reuse across different particles?
 def calculate_ctf(
-    position: np.ndarray,
+    coordinate: np.ndarray,
     tilt_projection_matrix: np.ndarray,
     voltage: float,
     spherical_aberration: float,
     amplitude_contrast: float,
     handedness: int,
-    pixel_size: float,
+    tiltseries_pixel_size: float,
     phase_shift: float,
     defocus_u: float,
     defocus_v: float,
@@ -74,13 +74,13 @@ def calculate_ctf(
     Based on the RELION implementation in Tomogram::getCtf, Tomogram::getDepthOffset, CTF::initialise, CTF::draw, CTF::getCtf.
 
     Args:
-        position (np.ndarray): The 3D position of the particle in Angstroms, as a numpy array of shape (3,).
+        coordinate (np.ndarray): The 3D coordinates of the particle in Angstroms, as a numpy array of shape (3,).
         tilt_projection_matrix (np.ndarray): The projection matrix for the tilt, a 4x4 numpy array (3D affine transformation matrix).
         voltage (float): The accelerating voltage in kV.
         spherical_aberration (float): The spherical aberration in mm.
         amplitude_contrast (float): The amplitude contrast in percent.
         handedness (int): The handedness of the tomogram, either 1 or -1.
-        pixel_size (float): The pixel size in Angstroms.
+        tiltseries_pixel_size (float): The tiltseries pixel size in Angstroms.
         phase_shift (float): The phase shift in degrees.
         defocus_u (float): The defocus in the u direction in Angstroms.
         defocus_v (float): The defocus in the v direction in Angstroms.
@@ -97,7 +97,7 @@ def calculate_ctf(
     spherical_aberration *= 1e7 # mm to Angstroms
     defocus_angle = np.deg2rad(defocus_angle)
 
-    depth_offset = get_depth_offset(tilt_projection_matrix, position)
+    depth_offset = get_depth_offset(tilt_projection_matrix, coordinate)
     # TODO: implement defocus slope (rlnTomoDefocusSlope), for now just assume 1
     defocus_offset = handedness * depth_offset
 
@@ -149,8 +149,8 @@ def calculate_ctf(
     sh = s // 2 + 1
 
     # fourier space coordinates
-    ky = np.fft.fftfreq(s, d=pixel_size)
-    kx = np.fft.rfftfreq(s, d=pixel_size)
+    ky = np.fft.fftfreq(s, d=tiltseries_pixel_size)
+    kx = np.fft.rfftfreq(s, d=tiltseries_pixel_size)
     kx_grid, ky_grid = np.meshgrid(kx, ky)
 
     u2 = kx_grid**2 + ky_grid**2
