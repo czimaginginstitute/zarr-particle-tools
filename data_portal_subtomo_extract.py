@@ -1,27 +1,3 @@
-# NOTE: This extraction is a grossly simplified version of the RELION subtomogram extraction and is missing support for several flags & data elements. Known limitations:
-# - Does not support gamma offset
-# - Does not support spherical aberration correction
-# - Does not support subpixel shifts
-# - Does not support circle precrop
-# - Does not support grid precorrection
-# - Does not support whitening (power spectral flattening)
-# - Does not support 3D volume extraction
-# - Does not support min_frames or max_dose flags
-# - Does not write any other *.mrcs files other than the 2D stacks themselves
-# - Does not support defocus slope (rlnTomoDefocusSlope)
-# - Does not (currently) support binning
-# - Does not support float16
-
-# TODO: List of TODO (in order of priority):
-# TODO: Determine why the extracted subtomograms are slightly different (even without)
-#       - could possibly be due to the fourier transform they do? investigate in fourier space?
-# TODO: (In tandem with above) Write tests (using synthetic data this should be pretty easy, just compare against RELION output, serving also as a tracker for if RELION output ever changes)
-# TODO: Implement binning
-# TODO: Support multiple optics groups
-# TODO: Incorporate alpha and beta offset parameters from AreTomo .aln file (for additional rotation) (and from CryoET Data Portal? if it exists?)
-# TODO: Notify aretomo of this work and possible integration into their codebase
-# TODO: Data Portal, copick support 
-
 import os
 import argparse
 import logging
