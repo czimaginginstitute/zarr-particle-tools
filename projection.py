@@ -1,7 +1,12 @@
+"""
+Helper functions for calculating projection matrices, projecting 3D points to 2D coordinates, and creating masks.
+"""
+
 import pandas as pd
 import numpy as np
 from cryoet_alignment.io.aretomo3 import AreTomo3ALN
 from cryoet_data_portal import Client, Run
+
 
 def calculate_projection_matrix(rot: float, gmag: float, tx: float, ty: float, tilt: float, radians: bool = False) -> np.ndarray:
     """
@@ -52,6 +57,7 @@ def calculate_projection_matrix(rot: float, gmag: float, tx: float, ty: float, t
 
     return M_2d_translation @ M_magnification @ M_axis_rot @ M_stage_tilt
 
+
 def project_3d_point_to_2d(point_3d: np.ndarray, projection_matrix: np.ndarray) -> np.ndarray:
     """
     Projects a 3D point to a 2D point using the provided projection matrix.
@@ -99,6 +105,7 @@ def calculate_projection_matrix_from_aretomo_aln(aln: AreTomo3ALN, tiltseries_pi
 
     return projection_matrices
 
+
 # TODO: Refactor this to take in PerSectionAlignmentParameters instead of Run?
 def calculate_projection_matrix_from_run(run: Run) -> dict[int, np.ndarray]:
     """
@@ -112,8 +119,11 @@ def calculate_projection_matrix_from_run(run: Run) -> dict[int, np.ndarray]:
     """
     pass
 
+
 # can likely be parallelized
-def get_particles_to_tiltseries_coordinates(filtered_particles_df: pd.DataFrame, tiltseries_df: pd.DataFrame, projection_matrices: list[np.ndarray]) -> dict[int, dict[int, tuple[np.ndarray, np.ndarray]]]:
+def get_particles_to_tiltseries_coordinates(
+    filtered_particles_df: pd.DataFrame, tiltseries_df: pd.DataFrame, projection_matrices: list[np.ndarray]
+) -> dict[int, dict[int, tuple[np.ndarray, np.ndarray]]]:
     """
     Maps particle indices to their 2D coordinates in each of the tilts (projected from their 3D coordinates via the projection matrices).
     The output is a dictionary where the keys are particle indices and the values are another dictionary with tilt section indices as keys and tuples of (3D coordinate, projected 2D coordinate) as values.
@@ -135,19 +145,40 @@ def get_particles_to_tiltseries_coordinates(filtered_particles_df: pd.DataFrame,
 
     return particles_to_tiltseries_coordinates
 
+
 def circular_mask(box_size: int) -> np.ndarray:
     """Return a centered circular mask within a square of given box size (in pixels)."""
-    y, x = np.ogrid[-box_size // 2:box_size // 2, -box_size // 2:box_size // 2]
+    y, x = np.ogrid[-box_size // 2 : box_size // 2, -box_size // 2 : box_size // 2]
     mask = (x * x + y * y) <= (box_size // 2) ** 2
     return mask.astype(np.float32)
 
 
 def circular_soft_mask(box_size: int, falloff: float) -> np.ndarray:
     """Return a centered circular soft mask within a square of given box size (in pixels) (based on RELION soft mask)."""
-    y, x = np.ogrid[-box_size // 2:box_size // 2, -box_size // 2:box_size // 2]
+    y, x = np.ogrid[-box_size // 2 : box_size // 2, -box_size // 2 : box_size // 2]
     mask = np.zeros((box_size, box_size), dtype=np.float32)
     r = np.sqrt(x * x + y * y)
     mask[r < box_size / 2.0 - falloff] = 1.0
     falloff_zone = (r >= box_size / 2.0 - falloff) & (r < box_size / 2.0)
-    mask[falloff_zone] = 0.5 - 0.5 * np.cos(np.pi * (r[falloff_zone] - (box_size / 2.0)) / falloff)
+    mask[falloff_zone] = 0.5 - 0.5 * np.cos(np.pi * ((box_size / 2.0) - r[falloff_zone]) / falloff)
+    return mask
+
+
+def nyquist_filter_mask(box_size):
+    """
+    Return a circular low-pass mask based on a physical resolution cutoff (in Fourier space).
+
+    Args:
+        box_size (int): The dimension of the square image in pixels.
+
+    Returns:
+        numpy.ndarray: A 2D array representing the circular filter mask.
+    """
+    ky, kx = np.fft.fftfreq(box_size), np.fft.fftfreq(box_size)
+    kx_grid, ky_grid = np.meshgrid(kx, ky)
+    freq_radius_pix = np.sqrt(kx_grid**2 + ky_grid**2)
+    # nyquist is at 2 * pixel_size in Angstroms, in pixels it's pixel_size / (2 * pixel_size) = 0.5
+    freq_cutoff_pix = 0.5
+    mask = (freq_radius_pix < freq_cutoff_pix).astype(np.float32)
+    
     return mask

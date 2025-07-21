@@ -1,10 +1,14 @@
+"""
+Helper functions for calculating the CTF and dose-weighting filters in Fourier space.
+"""
 import numpy as np
 from projection import project_3d_point_to_2d
+
 
 def calculate_dose_weights(k2: np.ndarray, dose: float, bfactor: float) -> np.ndarray:
     """
     Calculates the dose-weighting filter in Fourier space for a single image (either B-factor or Grant & Grigorieff model).
-    
+
     Args:
         k2 (np.ndarray): Squared spatial frequencies (k² = u²).
         dose (float): Electron dose.
@@ -24,6 +28,7 @@ def calculate_dose_weights(k2: np.ndarray, dose: float, bfactor: float) -> np.nd
         d0 = a * (k**b) + c
         return np.exp(-0.5 * dose / d0)
 
+
 def calculate_dose_weight_image(dose: float, tiltseries_pixel_size: float, box_size: int, bfactor_per_electron_dose: float) -> np.ndarray:
     """
     Calculates a 2D dose-weighting filter in Fourier space for a single image. Based on the RELION implementation in Damage::weightImage.
@@ -37,13 +42,13 @@ def calculate_dose_weight_image(dose: float, tiltseries_pixel_size: float, box_s
                                            Otherwise, the Grant & Grigorieff model is used.
 
     Returns:
-        np.ndarray: A 2D array (box_size, box_size // 2 + 1) with the Fourier space weights.
+        np.ndarray: A 2D array (box_size, box_size) representing the dose-weighting filter in Fourier space.
     """
     s = box_size
 
     # fourier space coordinates
     ky = np.fft.fftfreq(s, d=tiltseries_pixel_size)
-    kx = np.fft.rfftfreq(s, d=tiltseries_pixel_size)
+    kx = np.fft.fftfreq(s, d=tiltseries_pixel_size)
     kx_grid, ky_grid = np.meshgrid(kx, ky)
     # squared spatial frequency
     k2 = kx_grid**2 + ky_grid**2
@@ -54,7 +59,8 @@ def calculate_dose_weight_image(dose: float, tiltseries_pixel_size: float, box_s
 def get_depth_offset(tilt_projection_matrix: np.ndarray, coordinate: np.ndarray) -> float:
     projected_point = project_3d_point_to_2d(coordinate, tilt_projection_matrix)
     projected_origin = project_3d_point_to_2d(np.array([0, 0, 0]), tilt_projection_matrix)
-    return projected_point[2] - projected_origin[2] # z coordinate in the projected space
+    return projected_point[2] - projected_origin[2]  # z coordinate in the projected space
+
 
 # TODO: cache re-used values (origin_projection, etc.) and even the projected point itself - only should be computed once per particle & tilt
 # TODO: cache / reuse across different particles?
@@ -98,8 +104,8 @@ def calculate_ctf(
         np.ndarray: A 2D array representing the CTF in Fourier space.
 
     """
-    voltage *= 1000 # kV to V
-    spherical_aberration *= 1e7 # mm to Angstroms
+    voltage *= 1000  # kV to V
+    spherical_aberration *= 1e7  # mm to Angstroms
     defocus_angle = np.deg2rad(defocus_angle)
 
     depth_offset = get_depth_offset(tilt_projection_matrix, coordinate)
@@ -114,7 +120,7 @@ def calculate_ctf(
     # defocus_difference = -1 * (defocus_u_corrected - defocus_v_corrected) / 2.0
 
     wavelength = 12.2643247 / np.sqrt(voltage * (1 + voltage * 0.978466e-6))
-    
+
     # constants, based on RELION's CTF::initialise
     # K1 and K2: https://en.wikipedia.org/wiki/High-resolution_transmission_electron_microscopy#:~:text=transfer%20function.-,The%20phase%20contrast%20transfer%20function,-%5Bedit%5D
     K1 = np.pi * wavelength
@@ -124,13 +130,13 @@ def calculate_ctf(
     K4 = -1 * bfactor / 4.0
     K5 = np.deg2rad(phase_shift)
 
-    if (amplitude_contrast < 0.0 or amplitude_contrast > 1.0):
+    if amplitude_contrast < 0.0 or amplitude_contrast > 1.0:
         raise ValueError("Amplitude contrast must be between 0 and 1.")
-    if (handedness != 1 and handedness != -1):
+    if handedness != 1 and handedness != -1:
         raise ValueError("Handedness must be either 1 or -1.")
-    if (abs(defocus_u) < 1e-6 and abs(defocus_v) < 1e-6 and abs(amplitude_contrast) < 1e-6 and abs(spherical_aberration) < 1e-6):
+    if abs(defocus_u) < 1e-6 and abs(defocus_v) < 1e-6 and abs(amplitude_contrast) < 1e-6 and abs(spherical_aberration) < 1e-6:
         raise ValueError("CTF parameters are 0, please check your inputs.")
-    
+
     # for astigmatism correction
     Q = np.array([
         [np.cos(defocus_angle), np.sin(defocus_angle)],
@@ -154,7 +160,7 @@ def calculate_ctf(
 
     # fourier space coordinates
     ky = np.fft.fftfreq(s, d=tiltseries_pixel_size)
-    kx = np.fft.rfftfreq(s, d=tiltseries_pixel_size)
+    kx = np.fft.fftfreq(s, d=tiltseries_pixel_size)
     kx_grid, ky_grid = np.meshgrid(kx, ky)
 
     u2 = kx_grid**2 + ky_grid**2
@@ -162,7 +168,7 @@ def calculate_ctf(
 
     # phase shift (gamma)
     gamma = K1 * (Axx * kx_grid**2 + 2.0 * Axy * kx_grid * ky_grid + Ayy * ky_grid**2) + K2 * u4 - K5 - K3
-    ctf = -1 * np.sin(gamma) 
+    ctf = -1 * np.sin(gamma)
 
     # dose weighting
     ctf *= calculate_dose_weights(u2, dose, bfactor)
