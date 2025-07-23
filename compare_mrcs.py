@@ -18,6 +18,7 @@ import mrcfile
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+# from projection import nyquist_filter_mask
 from pathlib import Path
 
 def radial_average(spectrum: np.ndarray) -> np.ndarray:
@@ -56,26 +57,28 @@ def print_statistics(
         is_percent: If True, formats output as percentages.
     """
     median = np.median(data)
+    min = np.min(data)
+    max = np.max(data)
     p25, p75 = np.percentile(data, [25, 75])
     
     if is_percent:
-        print(f"  - {name}: Median={median:.2f}%, IQR=({p25:.2f}% to {p75:.2f}%)")
+        print(f"  - {name}: Median={median:.2f}%, IQR=({p25:.8f}% to {p75:.8f}%), Min={min:.8f}%, Max={max:.8f}%", flush=True)
     else:
-        print(f"  - {name}: Median={median:.4f}, IQR=({p25:.4f} to {p75:.4f})")
+        print(f"  - {name}: Median={median:.4f}, IQR=({p25:.8f} to {p75:.8f}), Min={min:.8f}, Max={max:.8f}", flush=True)
 
 def plot_heatmaps(
     mock_data: np.ndarray,
     relion_data: np.ndarray,
     difference: np.ndarray,
     percent_diff: np.ndarray,
+    transformed_difference: np.ndarray,
     space_name: str,
     section_num: int,
     output_dir: Path,
 ) -> None:
     """
     Generates and saves a 2x2 grid of heatmaps for comparison.
-    The color range for each heatmap is scaled from the 5th to the 95th percentile.
-
+    
     Args:
         mock_data: 2D array from the first MRC file.
         relion_data: 2D array from the second MRC file.
@@ -87,31 +90,51 @@ def plot_heatmaps(
     """
     fig, axes = plt.subplots(2, 2, figsize=(12, 11))
     fig.suptitle(
-        f'Comparison for Section {section_num} - {space_name.capitalize()} Space (5th-95th Percentile Scale)',
+        f'Comparison for Section {section_num} - {space_name.capitalize()} Space (0-100 Percentile Scale)',
         fontsize=16,
     )
+
+    print(mock_data.shape, relion_data.shape, difference.shape, percent_diff.shape)
 
     # Define common heatmap arguments
     heatmap_kwargs = {"xticklabels": False, "yticklabels": False}
 
     # Calculate percentile ranges and plot each heatmap
-    vmin_mock, vmax_mock = np.percentile(mock_data, [5, 95])
+    vmin_mock, vmax_mock = np.percentile(mock_data, [0, 100])
     sns.heatmap(mock_data, ax=axes[0, 0], cmap='viridis', vmin=vmin_mock, vmax=vmax_mock, **heatmap_kwargs).set_title('Mock Data')
+    axes[0, 0].set_aspect('equal')
 
-    vmin_relion, vmax_relion = np.percentile(relion_data, [5, 95])
+    vmin_relion, vmax_relion = np.percentile(relion_data, [0, 100])
     sns.heatmap(relion_data, ax=axes[0, 1], cmap='viridis', vmin=vmin_relion, vmax=vmax_relion, **heatmap_kwargs).set_title('RELION Data')
+    axes[0, 1].set_aspect('equal')
 
-    vmin_diff, vmax_diff = np.percentile(difference, [5, 95])
+    vmin_diff, vmax_diff = np.percentile(difference, [0, 100])
     sns.heatmap(difference, ax=axes[1, 0], cmap='hot', vmin=vmin_diff, vmax=vmax_diff, **heatmap_kwargs).set_title('Absolute Difference')
+    axes[1, 0].set_aspect('equal')
 
-    vmin_pdiff, vmax_pdiff = np.percentile(percent_diff, [5, 95])
-    sns.heatmap(percent_diff, ax=axes[1, 1], cmap='hot', vmin=vmin_pdiff, vmax=vmax_pdiff, **heatmap_kwargs).set_title('Percent Difference (%)')
+    # vmin_pdiff, vmax_pdiff = np.percentile(percent_diff, [0, 100])
+    # sns.heatmap(percent_diff, ax=axes[1, 1], cmap='hot', vmin=vmin_pdiff, vmax=vmax_pdiff, **heatmap_kwargs).set_title('Percent Difference (%)')
+    # axes[1, 1].set_aspect('equal')
 
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    vmin_transformed, vmax_transformed = np.percentile(transformed_difference, [0, 100])
+    sns.heatmap(transformed_difference, ax=axes[1, 1], cmap='hot', vmin=vmin_transformed, vmax=vmax_transformed, **heatmap_kwargs).set_title('Transformed/Inverse Transformed Difference')
+    axes[1, 1].set_aspect('equal')
+
     output_filename = output_dir / f'section_{section_num}_{space_name}_comparison.png'
     plt.savefig(output_filename)
     print(f"  - Saved heatmap to {output_filename}")
     plt.close(fig)
+
+    fig, axes = plt.subplots()
+    sns.heatmap(mock_data, ax=axes, cmap='viridis', vmin=vmin_mock, vmax=vmax_mock, **heatmap_kwargs).set_title('Mock Data')
+    plt.savefig(output_dir / f'section_{section_num}_{space_name}_mock_data.png')
+    plt.close(fig)
+
+    fig, axes = plt.subplots()
+    sns.heatmap(relion_data, ax=axes, cmap='viridis', vmin=vmin_relion, vmax=vmax_relion, **heatmap_kwargs).set_title('RELION Data')
+    plt.savefig(output_dir / f'section_{section_num}_{space_name}_relion_data.png')
+    plt.close(fig)
+
 
 
 def plot_radial_averages(
@@ -163,21 +186,42 @@ def analyze_space(
         section_num: The section number being analyzed.
         output_dir: The directory to save plots.
     """
-    print(f"\nAnalyzing {space_name.capitalize()} Space:")
-    
-    difference = np.abs(data1 - data2)
-    percent_difference = (difference / (np.abs(data2) + 1e-9)) * 100
+    print(f"\nAnalyzing {space_name.capitalize()} Space:", flush=True)
 
-    print_statistics("Difference", difference)
-    print_statistics("Percent Difference", percent_difference, is_percent=True)
-    plot_heatmaps(data1, data2, difference, percent_difference, space_name, section_num, output_dir)
+    difference = data1 - data2
+    percent_difference = (difference / (data2 + 1e-9)) * 100
     if space_name == "fourier":
-        plot_radial_averages(data1, data2, section_num, output_dir)
+        transformed_difference = np.fft.ifft2(difference)
+        data1 = np.fft.fftshift(data1)
+        data2 = np.fft.fftshift(data2)
+        difference = np.fft.fftshift(difference)
+    else:
+        transformed_difference = np.fft.fft2(difference)
+
+    plt.figure(figsize=(10, 6))
+    plt.hist(data1.ravel(), bins=100, alpha=0.5, label='Mock Data', color='blue')
+    plt.hist(data2.ravel(), bins=100, alpha=0.5, label='RELION Data', color='red')
+    plt.legend()
+    plt.title(f'Histogram Comparison - {space_name.capitalize()} Space (Section {section_num})')
+    plt.xlabel('Pixel Value')
+    plt.ylabel('Frequency')
+    plt.grid(True)
+    plt.savefig(output_dir / f'section_{section_num}_{space_name}_histogram.png')
+
+    # print_statistics("Mock Data", data1)
+    # print_statistics("RELION Data", data2)
+    # print_statistics("Difference", difference)
+    # print_statistics("Percent Difference", percent_difference, is_percent=True)
+    # print_statistics("Transformed/Inverse Transformed Difference", transformed_difference, is_percent=True)
+    plot_heatmaps(np.abs(data1), np.abs(data2), np.abs(difference), percent_difference.real, np.abs(transformed_difference), space_name, section_num, output_dir)
+    # if space_name == "fourier":
+    #     plot_radial_averages(data1, data2, section_num, output_dir)
 
 def compare_section(
     mock_data_2d: np.ndarray,
     relion_data_2d: np.ndarray,
     section_num: int,
+    apply_nyquist_filter: bool,
     output_dir: Path,
 ) -> None:
     """
@@ -187,8 +231,13 @@ def compare_section(
         mock_data_2d: The 2D section from the mock MRC file.
         relion_data_2d: The 2D section from the RELION MRC file.
         section_num: The section number being analyzed.
+        apply_nyquist_filter: If True, applies a Nyquist filter to the data.
         output_dir: The directory to save plots.
     """
+    # if apply_nyquist_filter:
+    #     mask = nyquist_filter_mask(mock_data_2d.shape[0])
+    #     mock_data_2d = np.fft.ifft2(np.fft.fft2(mock_data_2d) * mask).real
+    #     relion_data_2d = np.fft.ifft2(np.fft.fft2(relion_data_2d) * mask).real
     analyze_space(
         mock_data_2d,
         relion_data_2d,
@@ -197,9 +246,11 @@ def compare_section(
         output_dir,
     )
 
-    ft_mock = np.abs(np.fft.fftshift(np.fft.fft2(mock_data_2d)))
-    ft_relion = np.abs(np.fft.fftshift(np.fft.fft2(relion_data_2d)))
-    
+    # ft_mock = np.abs(np.fft.fftshift(np.fft.fft2(mock_data_2d)))
+    # ft_relion = np.abs(np.fft.fftshift(np.fft.fft2(relion_data_2d)))
+    ft_mock = np.fft.fft2(mock_data_2d)
+    ft_relion = np.fft.fft2(relion_data_2d)
+
     analyze_space(
         ft_mock,
         ft_relion,
@@ -236,6 +287,11 @@ def main():
         help="One or more space-separated section numbers to compare (e.g., 0 5 10).",
     )
     parser.add_argument(
+        "--apply-nyquist-filter",
+        action='store_true',
+        help="Apply a Nyquist filter to the data before comparison.",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("./mrc_comparison_results"),
@@ -267,6 +323,7 @@ def main():
                 mock_data[section - 1],
                 relion_data[section - 1],
                 section,
+                args.apply_nyquist_filter,
                 args.output_dir,
             )
 
