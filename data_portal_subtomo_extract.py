@@ -42,6 +42,7 @@ def get_particle_crop_and_visibility(particle_id: int, sections: dict, tiltserie
     for section, coords in sections.items():
         coordinate, projected_point = coords
         x, y = projected_point
+        # convert physical angstroms to floating-point pixel coordinates
         x_px_float = (x + tiltseries_x * tiltseries_pixel_size / 2.0) / tiltseries_pixel_size
         y_px_float = (y + tiltseries_y * tiltseries_pixel_size / 2.0) / tiltseries_pixel_size
         x_start_px = int(round(x_px_float - box_size / 2.0))
@@ -56,8 +57,8 @@ def get_particle_crop_and_visibility(particle_id: int, sections: dict, tiltserie
         # subpixel shift
         box_center_x = x_start_px + box_size / 2.0
         box_center_y = y_start_px + box_size / 2.0
-        shift_x = x_px_float - box_center_x
-        shift_y = y_px_float - box_center_y
+        shift_x = box_center_x - x_px_float 
+        shift_y = box_center_y - y_px_float 
 
         visible_sections.append(1)
         particle_data.append(
@@ -69,8 +70,7 @@ def get_particle_crop_and_visibility(particle_id: int, sections: dict, tiltserie
                 "y_start_px": y_start_px,
                 "x_end_px": x_end_px,
                 "y_end_px": y_end_px,
-                # TODO: REMOVE THIS HARDCODED OFFSET (currently for debugging purposes)
-                "subpixel_shift": (shift_y + 0.25, shift_x + 0.75)
+                "subpixel_shift": (shift_y, shift_x)
             }
         )
 
@@ -92,6 +92,24 @@ def update_particles_df(particles_df: pd.DataFrame, output_folder: str, all_visi
     updated_particles_df["rlnOriginZAngst"] = 0.0
 
     return updated_particles_df
+
+
+def shift_slice_rfft(spectrum: np.ndarray, shift: tuple[float, float]) -> np.ndarray:
+    h, wh = spectrum.shape
+    w = (wh - 1) * 2
+    ty, tx = map(float, shift)
+    x = np.arange(wh, dtype=np.float32)
+    y = np.arange(h,  dtype=np.float32)
+    y[h//2:] -= h
+
+    # phase ramp
+    phi = (2*np.pi/w)*tx * x[None, :] + (2*np.pi/h)*ty * y[:, None]
+    ramp = np.exp(-1j * phi)
+
+    out = np.empty_like(spectrum, dtype=np.complex64)
+
+    np.multiply(ramp, spectrum, out=out)
+    return out
 
 
 def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
@@ -176,39 +194,44 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
             # TODO: handle binning here
             # Section is 1 indexed in RELION, so subtract 1 for 0-indexed Python arrays
             current_tilt = data[section - 1, y_start_px:y_end_px, x_start_px:x_end_px]
+            fourier_tilt = np.fft.rfft2(current_tilt)
+            fourier_tilt = shift_slice_rfft(fourier_tilt, subpixel_shift)
+            current_tilt = np.fft.irfft2(fourier_tilt)
+            current_tilt *= -1
 
-            # apply subpixel shift
-            fourier_tilt = fourier_shift(np.fft.fft2(current_tilt), subpixel_shift)
+            tilt_data[tilt] = current_tilt
 
             # TODO: look into gamma offset
             # TODO: implement spherical aberration correction
             # TODO: implement binning for CTF application
-            ctf_weights = calculate_ctf(
-                coordinate=coordinate,
-                tilt_projection_matrix=projection_matrices[section - 1],
-                voltage=voltage,
-                spherical_aberration=spherical_aberration,
-                amplitude_contrast=amplitude_contrast,
-                handedness=handedness,
-                tiltseries_pixel_size=tiltseries_pixel_size,
-                phase_shift=phase_shift,
-                defocus_u=defocus_u[section - 1],
-                defocus_v=defocus_v[section - 1],
-                defocus_angle=defocus_angle[section - 1],
-                dose=doses[section - 1],
-                bfactor=bfactor_per_electron_dose[section - 1],
-                box_size=box_size,
-            )
-            fourier_tilt *= -1 * dose_weights[section - 1, :, :] * ctf_weights
+            # ctf_weights = calculate_ctf(
+            #     coordinate=coordinate,
+            #     tilt_projection_matrix=projection_matrices[section - 1],
+            #     voltage=voltage,
+            #     spherical_aberration=spherical_aberration,
+            #     amplitude_contrast=amplitude_contrast,
+            #     handedness=handedness,
+            #     tiltseries_pixel_size=tiltseries_pixel_size,
+            #     phase_shift=phase_shift,
+            #     defocus_u=defocus_u[section - 1],
+            #     defocus_v=defocus_v[section - 1],
+            #     defocus_angle=defocus_angle[section - 1],
+            #     dose=doses[section - 1],
+            #     bfactor=bfactor_per_electron_dose[section - 1],
+            #     box_size=box_size,
+            # )
+            # fourier_tilt *= -1 * dose_weights[section - 1, :, :] * ctf_weights
             # fourier_tilt *= -1
-            current_tilt = np.fft.ifft2(fourier_tilt).real
+            # current_tilt = np.fft.irfft2(fourier_tilt).astype(np.float32)
+            # current_tilt = pyfftw.interfaces.dask_fft.ifft(fourier_tilt).astype(np.complex64)
 
             # remove noise via background subtraction and apply soft circular mask
-            background_data_mean = np.mean(current_tilt, where=background_mask)
-            current_tilt -= background_data_mean
-            current_tilt *= soft_mask
+            # background_data_mean = np.mean(current_tilt, where=background_mask)
+            # current_tilt -= background_data_mean
+            # current_tilt *= soft_mask
+            # current_tilt *= -1
 
-            tilt_data[tilt] = current_tilt
+            # tilt_data[tilt] = current_tilt
 
         with mrcfile.new(os.path.join(output_folder, f"{particle_id}_stack2d.mrcs"), overwrite=True) as mrc:
             mrc.set_data(tilt_data)
