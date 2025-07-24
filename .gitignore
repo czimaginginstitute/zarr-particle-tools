@@ -208,3 +208,9 @@ __marimo__/
 
 # analysis results
 mrc_comparison_results*/
+
+# test output files
+tests/output/
+
+# test data (input) files
+tests/data/

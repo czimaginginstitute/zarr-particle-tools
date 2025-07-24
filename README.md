@@ -39,7 +39,6 @@ time python /hpc/projects/group.czii/daniel.ji/cryoet-data-portal-pick-extract/p
 ## Known Limitations
 - Does not support gamma offset
 - Does not support spherical aberration correction
-- Does not support subpixel shifts
 - Does not support circle precrop
 - Does not support grid precorrection
 - Does not support whitening (power spectral flattening)
@@ -48,13 +47,13 @@ time python /hpc/projects/group.czii/daniel.ji/cryoet-data-portal-pick-extract/p
 - Does not write any other *.mrcs files other than the 2D stacks themselves
 - Does not support defocus slope (rlnTomoDefocusSlope)
 - Does not (currently) support binning
-- Does not support float16
+- Does not (currently) support particle orientations / offsets (rlnAngleRot, rlnAngleTilt, rlnAnglePsi, rlnOriginXAngst, rlnOriginYAngst, rlnOriginZAngst)
+- Does not (currently) support multiple optics groups
 
 ## Project roadmap
-- [ ] Determine why the extracted subtomograms are slightly different (even without CTF premultiplication & dose weighting). Could possibly be due to the Fourier transform they do? Investigate in Fourier space?
-- [ ] Write tests (using synthetic data this should be pretty easy, just compare against RELION output, serving also as a tracker for if RELION output ever changes)
 - [ ] Implement binning
 - [ ] Support multiple optics groups
+- [ ] Write more tests (with variations in extract job flags - no ctf, no cropping, experimental data, different binning, different box size, different paths etc.)
 - [ ] Incorporate alpha and beta offset parameters from AreTomo .aln file (for additional rotation) (and from CryoET Data Portal? if it exists?)
 - [ ] Notify teamtomo of this work and possible integration into their codebase
 - [ ] Data Portal support (not downloading the entire tiltseries & using the API to pull relevant alignment & CTF information)

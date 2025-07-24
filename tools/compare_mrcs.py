@@ -66,13 +66,13 @@ def plot_heatmaps(
     sns.heatmap(difference, ax=axes[1, 0], cmap="hot", vmin=vmin_diff, vmax=vmax_diff, **heatmap_kwargs).set_title("Absolute Difference")
     axes[1, 0].set_aspect("equal")
 
-    # vmin_pdiff, vmax_pdiff = np.percentile(percent_diff, [0, 100])
-    # sns.heatmap(percent_diff, ax=axes[1, 1], cmap='hot', vmin=vmin_pdiff, vmax=vmax_pdiff, **heatmap_kwargs).set_title('Percent Difference (%)')
-    # axes[1, 1].set_aspect('equal')
+    vmin_pdiff, vmax_pdiff = np.percentile(percent_diff, [0, 100])
+    sns.heatmap(percent_diff, ax=axes[1, 1], cmap='hot', vmin=vmin_pdiff, vmax=vmax_pdiff, **heatmap_kwargs).set_title('Percent Difference (%)')
+    axes[1, 1].set_aspect('equal')
 
-    vmin_transformed, vmax_transformed = np.percentile(transformed_difference, [0, 100])
-    sns.heatmap(transformed_difference, ax=axes[1, 1], cmap="hot", vmin=vmin_transformed, vmax=vmax_transformed, **heatmap_kwargs).set_title("Transformed/Inverse Transformed Difference")
-    axes[1, 1].set_aspect("equal")
+    # vmin_transformed, vmax_transformed = np.percentile(transformed_difference, [0, 100])
+    # sns.heatmap(transformed_difference, ax=axes[1, 1], cmap="hot", vmin=vmin_transformed, vmax=vmax_transformed, **heatmap_kwargs).set_title("Transformed/Inverse Transformed Difference")
+    # axes[1, 1].set_aspect("equal")
 
     output_filename = output_dir / f"section_{section_num}_{space_name}_comparison.png"
     plt.savefig(output_filename)
@@ -116,14 +116,15 @@ def analyze_space(
         data1 = np.fft.fftshift(data1)
         data2 = np.fft.fftshift(data2)
         difference = np.fft.fftshift(difference)
+        percent_difference = np.fft.fftshift(percent_difference)
     else:
-        transformed_difference = np.fft.fft2(difference)
+        transformed_difference = np.fft.fftshift(np.fft.fft2(difference))
 
-    print_statistics("Mock Data", data1)
-    print_statistics("RELION Data", data2)
-    print_statistics("Difference", difference)
-    print_statistics("Percent Difference", percent_difference, is_percent=True)
-    print_statistics("Transformed/Inverse Transformed Difference", transformed_difference, is_percent=True)
+    print_statistics("Mock Data", data1.real)
+    print_statistics("RELION Data", data2.real)
+    print_statistics("Difference", difference.real)
+    print_statistics("Percent Difference", percent_difference.real, is_percent=True)
+    print_statistics("Transformed/Inverse Transformed Difference", transformed_difference.real, is_percent=True)
     plot_heatmaps(np.abs(data1), np.abs(data2), np.abs(difference), percent_difference.real, np.abs(transformed_difference), space_name, section_num, output_dir)
 
 

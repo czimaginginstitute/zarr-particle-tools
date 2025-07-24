@@ -11,15 +11,14 @@ import pandas as pd
 import mrcfile
 import time
 from typing import Union
-from scipy.ndimage import fourier_shift
 from tqdm import tqdm
 from multiprocessing import Pool
 from cryoet_data_portal import Client, Run
 from cryoet_alignment.io.aretomo3 import AreTomo3ALN
 from cryoet_alignment.io.cryoet_data_portal import Alignment
 
-from projection import calculate_projection_matrix_from_aretomo_aln, get_particles_to_tiltseries_coordinates, circular_mask, circular_soft_mask
-from ctf import calculate_dose_weight_image, calculate_ctf
+from core.projection import calculate_projection_matrix_from_aretomo_aln, get_particles_to_tiltseries_coordinates, circular_mask, circular_soft_mask
+from core.ctf import calculate_dose_weight_image, calculate_ctf
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +119,7 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
 
     Returns the updated particles DataFrame and the number of skipped particles.
     """
-    aln_file_path, particles_tomo_name, filtered_particles_df, box_size, bin, tiltseries_dir, tiltseries_x, tiltseries_y, tiltseries_row_entry, optics_row, output_dir = args
+    aln_file_path, particles_tomo_name, filtered_particles_df, box_size, bin, tiltseries_dir, tiltseries_x, tiltseries_y, tiltseries_row_entry, optics_row, float16, output_dir = args
 
     # TODO: can also load from the tiltseries file, aln not required? but might be less reliable?
     tiltseries_file = os.path.basename(aln_file_path).replace(".aln", ".star")
@@ -140,6 +139,9 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
     if tiltseries_df.empty or tiltseries_row_entry.empty:
         raise ValueError(f"Tiltseries file {tiltseries_file} is empty or does not contain the required columns. Please check the file.")
     tiltseries_mrc_file = tiltseries_df["rlnMicrographName"].iloc[0].split("@")[1]
+    # if a relative path, consider it relative to the tiltseries path
+    if not tiltseries_mrc_file.startswith("/"):
+        tiltseries_mrc_file = os.path.join(tiltseries_dir, tiltseries_mrc_file)
 
     # projection-relevant variables
     background_mask = circular_mask(box_size) == 0.0
@@ -196,42 +198,37 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
             current_tilt = data[section - 1, y_start_px:y_end_px, x_start_px:x_end_px]
             fourier_tilt = np.fft.rfft2(current_tilt)
             fourier_tilt = shift_slice_rfft(fourier_tilt, subpixel_shift)
-            current_tilt = np.fft.irfft2(fourier_tilt)
-            current_tilt *= -1
-
-            tilt_data[tilt] = current_tilt
 
             # TODO: look into gamma offset
             # TODO: implement spherical aberration correction
             # TODO: implement binning for CTF application
-            # ctf_weights = calculate_ctf(
-            #     coordinate=coordinate,
-            #     tilt_projection_matrix=projection_matrices[section - 1],
-            #     voltage=voltage,
-            #     spherical_aberration=spherical_aberration,
-            #     amplitude_contrast=amplitude_contrast,
-            #     handedness=handedness,
-            #     tiltseries_pixel_size=tiltseries_pixel_size,
-            #     phase_shift=phase_shift,
-            #     defocus_u=defocus_u[section - 1],
-            #     defocus_v=defocus_v[section - 1],
-            #     defocus_angle=defocus_angle[section - 1],
-            #     dose=doses[section - 1],
-            #     bfactor=bfactor_per_electron_dose[section - 1],
-            #     box_size=box_size,
-            # )
-            # fourier_tilt *= -1 * dose_weights[section - 1, :, :] * ctf_weights
-            # fourier_tilt *= -1
-            # current_tilt = np.fft.irfft2(fourier_tilt).astype(np.float32)
-            # current_tilt = pyfftw.interfaces.dask_fft.ifft(fourier_tilt).astype(np.complex64)
+            ctf_weights = calculate_ctf(
+                coordinate=coordinate,
+                tilt_projection_matrix=projection_matrices[section - 1],
+                voltage=voltage,
+                spherical_aberration=spherical_aberration,
+                amplitude_contrast=amplitude_contrast,
+                handedness=handedness,
+                tiltseries_pixel_size=tiltseries_pixel_size,
+                phase_shift=phase_shift,
+                defocus_u=defocus_u[section - 1],
+                defocus_v=defocus_v[section - 1],
+                defocus_angle=defocus_angle[section - 1],
+                dose=doses[section - 1],
+                bfactor=bfactor_per_electron_dose[section - 1],
+                box_size=box_size,
+            )
+            fourier_tilt *= -1 * dose_weights[section - 1, :, :] * ctf_weights
+            current_tilt = np.fft.irfft2(fourier_tilt)
 
             # remove noise via background subtraction and apply soft circular mask
-            # background_data_mean = np.mean(current_tilt, where=background_mask)
-            # current_tilt -= background_data_mean
-            # current_tilt *= soft_mask
-            # current_tilt *= -1
+            background_data_mean = np.mean(current_tilt, where=background_mask)
+            current_tilt -= background_data_mean
+            current_tilt *= soft_mask
 
-            # tilt_data[tilt] = current_tilt
+            # if float16:
+            #     current_tilt = current_tilt.astype(np.float16)
+            tilt_data[tilt] = current_tilt
 
         with mrcfile.new(os.path.join(output_folder, f"{particle_id}_stack2d.mrcs"), overwrite=True) as mrc:
             mrc.set_data(tilt_data)
@@ -257,11 +254,11 @@ def write_starfiles(merged_particles_df: pd.DataFrame, particle_optics_df: pd.Da
     updated_optics_df = particle_optics_df.copy()
     updated_optics_df["rlnCtfDataAreCtfPremultiplied"] = 1
     updated_optics_df["rlnImageDimensionality"] = 2
-    updated_optics_df["rlnTomoSubtomogramBinning"] = bin
+    updated_optics_df["rlnTomoSubtomogramBinning"] = float(bin)
     updated_optics_df["rlnImagePixelSize"] = updated_optics_df["rlnTomoTiltSeriesPixelSize"]
     updated_optics_df["rlnImageSize"] = box_size
 
-    general_df = pd.DataFrame({"rlnTomoSubTomosAre2DStacks": [1]})
+    general_df = {"rlnTomoSubTomosAre2DStacks": 1}
     starfile.write(
         {
             "general": general_df,
@@ -289,6 +286,7 @@ def extract_local_subtomograms(
     tiltseries_x: int,
     tiltseries_y: int,
     aln_dir: str,
+    float16: bool,
     output_dir: str,
 ) -> None:
     """
@@ -337,6 +335,7 @@ def extract_local_subtomograms(
             tiltseries_y,
             tiltseries_row_entry,
             optics_row,
+            float16,
             output_dir,
         )
 
@@ -395,6 +394,7 @@ def main():
     parser.add_argument("--tiltseries-x", type=int, required=True, help="X dimension of the tiltseries in pixels.")
     parser.add_argument("--tiltseries-y", type=int, required=True, help="Y dimension of the tiltseries in pixels.")
     parser.add_argument("--aln-dir", type=str, required=True, help="Path to the directory containing the *.aln files (should be named the same as the tiltseries).")
+    parser.add_argument("--float16", action="store_true", help="Use float16 precision for the output mrcs files. Default is False (float32).")
     parser.add_argument("--output-dir", type=str, required=True, help="Path to the output directory where the extracted subtomograms will be saved.")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging.")
 
@@ -430,6 +430,7 @@ def main():
         tiltseries_x=args.tiltseries_x,
         tiltseries_y=args.tiltseries_y,
         aln_dir=args.aln_dir,
+        float16=args.float16,
         output_dir=args.output_dir,
     )
 

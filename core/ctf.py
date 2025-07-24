@@ -2,7 +2,7 @@
 Helper functions for calculating the CTF and dose-weighting filters in Fourier space.
 """
 import numpy as np
-from projection import project_3d_point_to_2d
+from core.projection import project_3d_point_to_2d
 
 
 def calculate_dose_weights(k2: np.ndarray, dose: float, bfactor: float) -> np.ndarray:
@@ -42,14 +42,14 @@ def calculate_dose_weight_image(dose: float, tiltseries_pixel_size: float, box_s
                                            Otherwise, the Grant & Grigorieff model is used.
 
     Returns:
-        np.ndarray: A 2D array (box_size, box_size) representing the dose-weighting filter in Fourier space.
+        np.ndarray: A 2D array (box_size // 2 + 1, box_size) representing the dose-weighting filter in Fourier space.
     """
     s = box_size
 
     # fourier space coordinates
     ky = np.fft.fftfreq(s, d=tiltseries_pixel_size)
-    kx = np.fft.fftfreq(s, d=tiltseries_pixel_size)
-    kx_grid, ky_grid = np.meshgrid(kx, ky)
+    kx = np.fft.rfftfreq(s, d=tiltseries_pixel_size)
+    ky_grid, kx_grid = np.meshgrid(ky, kx, indexing='ij')
     # squared spatial frequency
     k2 = kx_grid**2 + ky_grid**2
 
@@ -160,8 +160,8 @@ def calculate_ctf(
 
     # fourier space coordinates
     ky = np.fft.fftfreq(s, d=tiltseries_pixel_size)
-    kx = np.fft.fftfreq(s, d=tiltseries_pixel_size)
-    kx_grid, ky_grid = np.meshgrid(kx, ky)
+    kx = np.fft.rfftfreq(s, d=tiltseries_pixel_size)
+    ky_grid, kx_grid = np.meshgrid(ky, kx, indexing='ij')
 
     u2 = kx_grid**2 + ky_grid**2
     u4 = u2**2
@@ -171,7 +171,7 @@ def calculate_ctf(
     ctf = -1 * np.sin(gamma)
 
     # dose weighting
-    ctf *= calculate_dose_weights(u2, dose, bfactor)
+    # ctf *= calculate_dose_weights(u2, dose, bfactor)
 
     mask = np.abs(ctf) < 1e-8
     ctf[mask] = np.sign(ctf[mask]) * 1e-8
