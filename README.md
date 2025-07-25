@@ -25,16 +25,18 @@ pip install -r requirements.txt
 
 ## Example run
 ```
-time python /hpc/projects/group.czii/daniel.ji/cryoet-data-portal-pick-extract/portal-particle-extraction/data_portal_subtomo_extract.py \
-  --particles-starfile /hpc/projects/group.czii/daniel.ji/cryoet-data-portal-pick-extract/pyrelion-runs/polnet/input/session1_polnet_0_ribosome.star \
-  --tiltseries-dir /hpc/projects/group.czii/daniel.ji/cryoet-data-portal-pick-extract/pyrelion-runs/polnet/input/tiltSeries \
-  --tiltseries-starfile /hpc/projects/group.czii/daniel.ji/cryoet-data-portal-pick-extract/pyrelion-runs/polnet/input/tiltSeries/aligned_tilt_series.star \
-  --aln-dir /hpc/projects/group.czii/daniel.ji/cryoet-data-portal-pick-extract/pyrelion-runs/polnet/aretomo_mock/session1/run001/ \
-  --output-dir /hpc/projects/group.czii/daniel.ji/cryoet-data-portal-pick-extract/pyrelion-runs/polnet/relion_mock/Extract/mockjob001/ \
+python data_portal_subtomo_extract.py \
+  --particles-starfile tests/data/relion_project_synthetic/particles.star \
+  --tiltseries-dir tests/data/relion_project_synthetic/tiltSeries \
+  --tiltseries-starfile tests/data/relion_project_synthetic/tiltSeries/tomograms.star \
+  --aln-dir tests/data/relion_project_synthetic/aln/ \
+  --output-dir tests/output/sample_test/ \
   --particles-tomo-name-prefix "session1_" \
-  --tiltseries-x 630 --tiltseries-y 630 --box-size 64 --bin 1 --debug \
-  &> /hpc/projects/group.czii/daniel.ji/cryoet-data-portal-pick-extract/pyrelion-runs/polnet/relion_mock/relion_extract_manual.log
+  --tiltseries-x 630 --tiltseries-y 630 --box-size 16 --bin 4 --debug
 ```
+
+## Pytest
+To ensure that the subtomogram extraction matches RELION's subtomogram extraction, we have a set of tests that compare the output of this script with RELION 5.0's output and ensure that they match within reasonable numerical precision (1e-6 for float32, 1e-4 for float16).
 
 ## Known Limitations
 - Does not support gamma offset
@@ -46,14 +48,13 @@ time python /hpc/projects/group.czii/daniel.ji/cryoet-data-portal-pick-extract/p
 - Does not support min_frames or max_dose flags
 - Does not write any other *.mrcs files other than the 2D stacks themselves
 - Does not support defocus slope (rlnTomoDefocusSlope)
-- Does not (currently) support binning
 - Does not (currently) support particle orientations / offsets (rlnAngleRot, rlnAngleTilt, rlnAnglePsi, rlnOriginXAngst, rlnOriginYAngst, rlnOriginZAngst)
 - Does not (currently) support multiple optics groups
+- Does not support CTF_BFACTOR (rlnCtfBfactor) or CTF_BFACTOR_PERELECTRONDOSE (rlnCtfBfactorPerElectronDose)
 
 ## Project roadmap
-- [ ] Implement binning
 - [ ] Support multiple optics groups
-- [ ] Write more tests (with variations in extract job flags - no ctf, no cropping, experimental data, different binning, different box size, different paths etc.)
+- [ ] Write more tests (with variations in extract job flags - no ctf, no cropping, experimental data, different binning, different box size (bin and box that don't have clean divides), different paths etc.)
 - [ ] Incorporate alpha and beta offset parameters from AreTomo .aln file (for additional rotation) (and from CryoET Data Portal? if it exists?)
 - [ ] Notify teamtomo of this work and possible integration into their codebase
 - [ ] Data Portal support (not downloading the entire tiltseries & using the API to pull relevant alignment & CTF information)

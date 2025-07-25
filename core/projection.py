@@ -146,39 +146,49 @@ def get_particles_to_tiltseries_coordinates(
     return particles_to_tiltseries_coordinates
 
 
-def circular_mask(box_size: int) -> np.ndarray:
-    """Return a centered circular mask within a square of given box size (in pixels)."""
-    y, x = np.ogrid[-box_size // 2 : box_size // 2, -box_size // 2 : box_size // 2]
-    mask = (x * x + y * y) <= (box_size // 2) ** 2
-    return mask.astype(np.float32)
-
-
-def circular_soft_mask(box_size: int, falloff: float) -> np.ndarray:
-    """Return a centered circular soft mask within a square of given box size (in pixels) (based on RELION soft mask)."""
-    y, x = np.ogrid[-box_size // 2 : box_size // 2, -box_size // 2 : box_size // 2]
-    mask = np.zeros((box_size, box_size), dtype=np.float32)
-    r = np.sqrt(x * x + y * y)
-    mask[r < box_size / 2.0 - falloff] = 1.0
-    falloff_zone = (r >= box_size / 2.0 - falloff) & (r < box_size / 2.0)
-    mask[falloff_zone] = 0.5 - 0.5 * np.cos(np.pi * ((box_size / 2.0) - r[falloff_zone]) / falloff)
-    return mask
-
-
-def nyquist_filter_mask(box_size):
+def shift_slice_rfft(spectrum: np.ndarray, shift: tuple[float, float]) -> np.ndarray:
     """
-    Return a circular low-pass mask based on a physical resolution cutoff (in Fourier space).
-
-    Args:
-        box_size (int): The dimension of the square image in pixels.
-
-    Returns:
-        numpy.ndarray: A 2D array representing the circular filter mask.
+    Applies a subpixel shift to a Fourier-space image slice (spectrum) using the specified shift values.
     """
-    ky, kx = np.fft.fftfreq(box_size), np.fft.fftfreq(box_size)
-    kx_grid, ky_grid = np.meshgrid(kx, ky)
-    freq_radius_pix = np.sqrt(kx_grid**2 + ky_grid**2)
-    # nyquist is at 2 * pixel_size in Angstroms, in pixels it's pixel_size / (2 * pixel_size) = 0.5
-    freq_cutoff_pix = 0.5
-    mask = (freq_radius_pix < freq_cutoff_pix).astype(np.float32)
+    h, wh = spectrum.shape
+    w = (wh - 1) * 2
+    ty, tx = map(float, shift)
+    x = np.arange(wh, dtype=np.float32)
+    y = np.arange(h,  dtype=np.float32)
+    y[h//2:] -= h
+
+    # phase ramp
+    phi = (2*np.pi/w)*tx * x[None, :] + (2*np.pi/h)*ty * y[:, None]
+    ramp = np.exp(-1j * phi)
+
+    out = np.empty_like(spectrum, dtype=np.complex64)
+
+    np.multiply(ramp, spectrum, out=out)
+    return out
+
+
+def fourier_crop(fft_image_stack: np.ndarray, factor: float) -> np.ndarray:
+    """
+    Performs binning by cropping a Fourier-space image stack. Based on the RELION Resampling::FourierCrop_fftwHalfStack function.
+    """
+    h0, wh0 = fft_image_stack.shape
+    w0 = (wh0 - 1) * 2
+
+    h1 = int(round(h0 / factor))
+    w1 = int(round(w0 / factor))
+
+    # Ensure the new width is even for RFFT compatibility
+    if w1 % 2 != 0:
+        w1 += 1
+
+    wh1 = w1 // 2 + 1
+
+    h1_top = (h1 + 1) // 2
+    h1_bottom = h1 // 2
     
-    return mask
+    cropped_w = fft_image_stack[:, :wh1]
+    top_slice = cropped_w[:h1_top, :]
+    bottom_slice = cropped_w[h0 - h1_bottom:, :]
+
+    binned_fft_stack = np.concatenate((top_slice, bottom_slice), axis=0)
+    return binned_fft_stack

@@ -17,6 +17,7 @@ def mrcs_equal(file1: str, file2: str, tolerance: float = 1e-6) -> bool:
 
 def np_arrays_equal(arr1: np.ndarray, arr2: np.ndarray, tolerance: float = 1e-6) -> bool:
     if arr1.shape != arr2.shape:
+        print(f"Shapes differ: {arr1.shape} vs {arr2.shape}")
         return False
     return np.allclose(arr1, arr2, atol=tolerance)
 
@@ -32,9 +33,11 @@ def df_equal(df1, df2, tol=1e-6):
         s1, s2 = df1_sorted[col], df2_sorted[col]
         if pd.api.types.is_numeric_dtype(s1):
             if not np.allclose(s1, s2, atol=tol, equal_nan=True):
+                print(f"Column '{col}' differs: {s1} vs {s2}")
                 return False
         else:
             if not s1.equals(s2):
+                print(f"Column '{col}' differs: {s1} vs {s2}")
                 return False
 
     return True
