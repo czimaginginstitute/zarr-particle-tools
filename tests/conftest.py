@@ -6,11 +6,6 @@ from tests.helpers.compare import mrcs_equal, df_equal
 
 
 @pytest.fixture
-def synthetic_data_root() -> Path:
-    return Path("tests/data/relion_project_synthetic")
-
-
-@pytest.fixture
 def validate_optimisation_set_starfile():
     def _validate_starfile(star_file: Path):
         df = starfile.read(star_file)
@@ -40,13 +35,15 @@ def validate_particles_starfile():
 
 @pytest.fixture
 def compare_mrcs_dirs():
-    def _compare_dirs(dir1: str, dir2: str, tol: float = 1e-6):
-        for fname in os.listdir(dir1):
-            if not fname.endswith(".mrcs"):
-                continue
-            f1 = os.path.join(dir1, fname)
-            f2 = os.path.join(dir2, fname)
-            assert os.path.exists(f2), f"Expected file missing: {f2}"
-            assert mrcs_equal(f1, f2, tol), f"{f1} and {f2} differ beyond tolerance {tol}"
+    def _compare_dirs(dir1: str, dir2: str, tol: float):
+        dir1 = Path(dir1)
+        dir2 = Path(dir2)
+
+        for file1 in dir1.rglob("*.mrcs"):
+            relative_path = file1.relative_to(dir1)
+            file2 = dir2 / relative_path
+
+            assert file2.exists(), f"Expected file missing: {file2}"
+            assert mrcs_equal(file1, file2, tol=tol), f"{file1} and {file2} differ beyond tol={tol}"
 
     return _compare_dirs

@@ -42,7 +42,7 @@ def plot_heatmaps(
     section_num: int,
     output_dir: Path,
 ) -> None:
-    fig, axes = plt.subplots(2, 2, figsize=(12, 11))
+    fig, axes = plt.subplots(3, 2, figsize=(12, 16))
     fig.suptitle(
         f"Comparison for Section {section_num} - {space_name.capitalize()} Space (0-100 Percentile Scale)",
         fontsize=16,
@@ -70,9 +70,9 @@ def plot_heatmaps(
     sns.heatmap(percent_diff, ax=axes[1, 1], cmap='hot', vmin=vmin_pdiff, vmax=vmax_pdiff, **heatmap_kwargs).set_title('Percent Difference (%)')
     axes[1, 1].set_aspect('equal')
 
-    # vmin_transformed, vmax_transformed = np.percentile(transformed_difference, [0, 100])
-    # sns.heatmap(transformed_difference, ax=axes[1, 1], cmap="hot", vmin=vmin_transformed, vmax=vmax_transformed, **heatmap_kwargs).set_title("Transformed/Inverse Transformed Difference")
-    # axes[1, 1].set_aspect("equal")
+    vmin_transformed, vmax_transformed = np.percentile(transformed_difference, [0, 100])
+    sns.heatmap(transformed_difference, ax=axes[2, 0], cmap="hot", vmin=vmin_transformed, vmax=vmax_transformed, **heatmap_kwargs).set_title("Transformed/Inverse Transformed Difference")
+    axes[2, 0].set_aspect("equal")
 
     output_filename = output_dir / f"section_{section_num}_{space_name}_comparison.png"
     plt.savefig(output_filename)
@@ -110,7 +110,7 @@ def analyze_space(
     print(f"\nAnalyzing {space_name.capitalize()} Space:", flush=True)
 
     difference = data1 - data2
-    percent_difference = (difference / (data2 + 1e-9)) * 100
+    percent_difference = (difference / (data2 + 1e-12)) * 100
     if space_name == "fourier":
         transformed_difference = np.fft.ifft2(difference)
         data1 = np.fft.fftshift(data1)
@@ -228,7 +228,22 @@ if __name__ == "__main__":
 
 
 # Example usage:
-# python compare_mrcs.py \
-# --mock-mrc-file ~/cryoet-data-portal-pick-extract/pyrelion-runs/polnet/relion_mock/Extract/mockjob001/Subtomograms/session1_TS_1/1_stack2d.mrcs \
-# --relion-mrc-file ~/cryoet-data-portal-pick-extract/pyrelion-runs/polnet/relion_mock/Extract/job001/Subtomograms/session1_TS_1/1_stack2d.mrc \
+# python tools/compare_mrcs.py \
+# --mock-mrc-file tests/output/unroofing_noctf_nocirclecrop/Subtomograms/session1_16849/1_stack2d.mrcs \
+# --relion-mrc-file tests/data/relion_project_unroofing/relion_output_noctf_nocirclecrop/Subtomograms/session1_16849/1_stack2d.mrcs \
 # --section 1 6 11 16 21 26 31
+
+# python tools/compare_mrcs.py \
+# --mock-mrc-file tests/output/synthetic_noctf_nocirclecrop/Subtomograms/session1_TS_1/9_stack2d.mrcs \
+# --relion-mrc-file tests/data/relion_project_synthetic/relion_output_noctf_nocirclecrop/Subtomograms/session1_TS_1/9_stack2d.mrcs \
+# --section 1 6 11 16 21 26 31
+
+# python tools/compare_mrcs.py \
+# --mock-mrc-file tests/output/synthetic_and_aln_noctf_nocirclecrop/Subtomograms/session1_TS_1/1_stack2d.mrcs \
+# --relion-mrc-file tests/data/relion_project_synthetic_and_aln/relion_output_noctf_nocirclecrop/Subtomograms/session1_TS_1/1_stack2d.mrcs \
+# --section 1 6 11 16 21 26 31
+
+# python tools/compare_mrcs.py \
+# --mock-mrc-file tests/output/unroofing_noctf/Subtomograms/session1_16849/89_stack2d.mrcs \
+# --relion-mrc-file tests/data/relion_project_unroofing/relion_output_noctf/Subtomograms/session1_16849/89_stack2d.mrcs \
+# --section 1 10 11 26 31 

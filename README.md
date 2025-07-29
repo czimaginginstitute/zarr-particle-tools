@@ -36,7 +36,7 @@ python data_portal_subtomo_extract.py \
 ```
 
 ## Pytest
-To ensure that the subtomogram extraction matches RELION's subtomogram extraction, we have a set of tests that compare the output of this script with RELION 5.0's output and ensure that they match within reasonable numerical precision (1e-6 for float32, 1e-4 for float16).
+To ensure that the subtomogram extraction matches RELION's subtomogram extraction, we have a set of tests that compare the output of this script with RELION 5.0's output and ensure that they match within reasonable numerical precision. float16 data has a more relaxed tolerance due to the reduced precision of the data type, and the real experimental data has a more relaxed tolerance due to the noisier nature of the data.
 
 ## Known Limitations
 - Does not support gamma offset
@@ -51,6 +51,8 @@ To ensure that the subtomogram extraction matches RELION's subtomogram extractio
 - Does not (currently) support particle orientations / offsets (rlnAngleRot, rlnAngleTilt, rlnAnglePsi, rlnOriginXAngst, rlnOriginYAngst, rlnOriginZAngst)
 - Does not (currently) support multiple optics groups
 - Does not support CTF_BFACTOR (rlnCtfBfactor) or CTF_BFACTOR_PERELECTRONDOSE (rlnCtfBfactorPerElectronDose)
+- Does not support motion trajectories
+- Does not support Anisotropic magnification matrix (EMDL_IMAGE_MAG_MATRIX_00, EMDL_IMAGE_MAG_MATRIX_01, EMDL_IMAGE_MAG_MATRIX_10, EMDL_IMAGE_MAG_MATRIX_11)
 
 ## Project roadmap
 - [ ] Support multiple optics groups

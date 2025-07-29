@@ -4,13 +4,13 @@ def circular_mask(box_size: int) -> np.ndarray:
     """Return a centered circular mask within a square of given box size (in pixels)."""
     y, x = np.ogrid[-box_size // 2 : box_size // 2, -box_size // 2 : box_size // 2]
     mask = (x * x + y * y) <= (box_size // 2) ** 2
-    return mask.astype(np.float32)
+    return mask
 
 
 def circular_soft_mask(box_size: int, falloff: float) -> np.ndarray:
     """Return a centered circular soft mask within a square of given box size (in pixels) (based on RELION soft mask)."""
     y, x = np.ogrid[-box_size // 2 : box_size // 2, -box_size // 2 : box_size // 2]
-    mask = np.zeros((box_size, box_size), dtype=np.float32)
+    mask = np.zeros((box_size, box_size))
     r = np.sqrt(x * x + y * y)
     mask[r < box_size / 2.0 - falloff] = 1.0
     falloff_zone = (r >= box_size / 2.0 - falloff) & (r < box_size / 2.0)
@@ -33,6 +33,6 @@ def nyquist_filter_mask(box_size):
     freq_radius_pix = np.sqrt(kx_grid**2 + ky_grid**2)
     # nyquist is at 2 * pixel_size in Angstroms, in pixels it's pixel_size / (2 * pixel_size) = 0.5
     freq_cutoff_pix = 0.5
-    mask = (freq_radius_pix < freq_cutoff_pix).astype(np.float32)
+    mask = (freq_radius_pix < freq_cutoff_pix)
     
     return mask

@@ -146,25 +146,55 @@ def get_particles_to_tiltseries_coordinates(
     return particles_to_tiltseries_coordinates
 
 
-def shift_slice_rfft(spectrum: np.ndarray, shift: tuple[float, float]) -> np.ndarray:
+def get_particle_crop_and_visibility(particle_id: int, sections: dict, tiltseries_x: int, tiltseries_y: int, tiltseries_pixel_size: float, pre_bin_box_size: int) -> tuple[list[dict], list[int]]:
     """
-    Applies a subpixel shift to a Fourier-space image slice (spectrum) using the specified shift values.
+    Process the calculated (Angstrom) 2D coordinate of the particle to pixel coordinates and perform cropping.
+
+    Returns a tuple of (particle_data, visible_sections), where particle_data is a list of dictionaries with the particle's 2D coordinates and cropping information,
+    and visible_sections is a list indicating whether or not the particle is visible in each section (1 for visible, 0 for not visible).
     """
-    h, wh = spectrum.shape
-    w = (wh - 1) * 2
-    ty, tx = map(float, shift)
-    x = np.arange(wh, dtype=np.float32)
-    y = np.arange(h,  dtype=np.float32)
-    y[h//2:] -= h
+    particle_data = []
+    visible_sections = []
 
-    # phase ramp
-    phi = (2*np.pi/w)*tx * x[None, :] + (2*np.pi/h)*ty * y[:, None]
-    ramp = np.exp(-1j * phi)
+    for section, coords in sections.items():
+        coordinate, projected_point = coords
+        x, y = projected_point
+        # convert physical angstroms to floating-point pixel coordinates
+        x_px_float = (x + tiltseries_x * tiltseries_pixel_size / 2.0) / tiltseries_pixel_size
+        y_px_float = (y + tiltseries_y * tiltseries_pixel_size / 2.0) / tiltseries_pixel_size
+        x_start_px_float = x_px_float - pre_bin_box_size / 2.0
+        y_start_px_float = y_px_float - pre_bin_box_size / 2.0
+        x_start_px = int(round(x_start_px_float))
+        y_start_px = int(round(y_start_px_float))
+        x_end_px_float = x_start_px_float + pre_bin_box_size
+        y_end_px_float = y_start_px_float + pre_bin_box_size
+        x_end_px = x_start_px + pre_bin_box_size
+        y_end_px = y_start_px + pre_bin_box_size
 
-    out = np.empty_like(spectrum, dtype=np.complex64)
+        if x_start_px_float < 0 or x_end_px_float > tiltseries_x or y_start_px_float < 0 or y_end_px_float > tiltseries_y:
+            visible_sections.append(0)
+            continue
 
-    np.multiply(ramp, spectrum, out=out)
-    return out
+        # subpixel shift
+        shift_x = x_start_px - x_start_px_float
+        shift_y = y_start_px - y_start_px_float
+
+        visible_sections.append(1)
+        particle_data.append(
+            {
+                "particle_id": particle_id,
+                "coordinate": coordinate,
+                "section": section,
+                "x_start_px": x_start_px,
+                "y_start_px": y_start_px,
+                "x_end_px": x_end_px,
+                "y_end_px": y_end_px,
+                "subpixel_shift": (shift_y, shift_x)
+            }
+        )
+
+    return particle_data, visible_sections
+
 
 
 def fourier_crop(fft_image_stack: np.ndarray, factor: float) -> np.ndarray:

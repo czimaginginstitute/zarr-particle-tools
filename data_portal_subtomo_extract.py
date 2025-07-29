@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import mrcfile
 import time
+from scipy.ndimage import fourier_shift
 from typing import Union
 from tqdm import tqdm
 from multiprocessing import Pool
@@ -17,7 +18,7 @@ from cryoet_data_portal import Client, Run
 from cryoet_alignment.io.aretomo3 import AreTomo3ALN
 from cryoet_alignment.io.cryoet_data_portal import Alignment
 
-from core.projection import calculate_projection_matrix_from_aretomo_aln, get_particles_to_tiltseries_coordinates, shift_slice_rfft, fourier_crop
+from core.projection import calculate_projection_matrix_from_aretomo_aln, get_particles_to_tiltseries_coordinates, fourier_crop, get_particle_crop_and_visibility
 from core.mask import circular_mask, circular_soft_mask
 from core.dose import calculate_dose_weight_image
 from core.ctf import calculate_ctf
@@ -28,56 +29,6 @@ logger = logging.getLogger(__name__)
 # TODO: Implement subtomomgram extraction from a CryoET Data Portal run
 def extract_subtomogram_from_run(run: Run, output_dir: str):
     pass
-
-
-def get_particle_crop_and_visibility(particle_id: int, sections: dict, tiltseries_x: int, tiltseries_y: int, tiltseries_pixel_size: float, pre_bin_box_size: int) -> tuple[list[dict], list[int]]:
-    """
-    Process the calculated (Angstrom) 2D coordinate of the particle to pixel coordinates and perform cropping.
-
-    Returns a tuple of (particle_data, visible_sections), where particle_data is a list of dictionaries with the particle's 2D coordinates and cropping information,
-    and visible_sections is a list indicating whether or not the particle is visible in each section (1 for visible, 0 for not visible).
-    """
-    particle_data = []
-    visible_sections = []
-
-    for section, coords in sections.items():
-        coordinate, projected_point = coords
-        x, y = projected_point
-        # convert physical angstroms to floating-point pixel coordinates
-        x_px_float = (x + tiltseries_x * tiltseries_pixel_size / 2.0) / tiltseries_pixel_size
-        y_px_float = (y + tiltseries_y * tiltseries_pixel_size / 2.0) / tiltseries_pixel_size
-        x_start_px_float = x_px_float - pre_bin_box_size / 2.0
-        y_start_px_float = y_px_float - pre_bin_box_size / 2.0
-        x_start_px = int(round(x_start_px_float))
-        y_start_px = int(round(y_start_px_float))
-        x_end_px_float = x_start_px_float + pre_bin_box_size
-        y_end_px_float = y_start_px_float + pre_bin_box_size
-        x_end_px = x_start_px + pre_bin_box_size
-        y_end_px = y_start_px + pre_bin_box_size
-
-        if x_start_px_float < 0 or x_end_px_float > tiltseries_x or y_start_px_float < 0 or y_end_px_float > tiltseries_y:
-            visible_sections.append(0)
-            continue
-
-        # subpixel shift
-        shift_x = x_start_px - x_start_px_float
-        shift_y = y_start_px - y_start_px_float
-
-        visible_sections.append(1)
-        particle_data.append(
-            {
-                "particle_id": particle_id,
-                "coordinate": coordinate,
-                "section": section,
-                "x_start_px": x_start_px,
-                "y_start_px": y_start_px,
-                "x_end_px": x_end_px,
-                "y_end_px": y_end_px,
-                "subpixel_shift": (shift_y, shift_x)
-            }
-        )
-
-    return particle_data, visible_sections
 
 
 def update_particles_df(particles_df: pd.DataFrame, output_folder: str, all_visible_sections_column: list, skipped_particles: set) -> pd.DataFrame:
@@ -171,7 +122,7 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
         # modify the values to be in RELION format
         all_visible_sections_column.append(str(visible_sections).replace(" ", ""))
 
-        tilt_data = np.zeros((len(particle_data), box_size, box_size), dtype=np.float32)
+        tilt_data = np.zeros((len(particle_data), box_size, box_size))
         for tilt in range(len(particle_data)):
             section = particle_data[tilt]["section"]
             x_start_px = particle_data[tilt]["x_start_px"]
@@ -184,7 +135,8 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
             # Section is 1 indexed in RELION, so subtract 1 for 0-indexed Python arrays
             current_tilt = data[section - 1, y_start_px:y_end_px, x_start_px:x_end_px]
             fourier_tilt = np.fft.rfft2(current_tilt, norm="ortho")
-            fourier_tilt = shift_slice_rfft(fourier_tilt, subpixel_shift)
+
+            fourier_tilt = fourier_shift(fourier_tilt, subpixel_shift, n=current_tilt.shape[0], axis=1)
 
             if bin > 1:
                 fourier_tilt = fourier_crop(fourier_tilt, bin)
@@ -220,13 +172,12 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
                 current_tilt -= background_data_mean
                 current_tilt *= soft_mask
 
-            if float16:
-                current_tilt = current_tilt.astype(np.float16)
+            current_tilt = current_tilt
             tilt_data[tilt] = current_tilt
 
         with mrcfile.new(os.path.join(output_folder, f"{particle_id}_stack2d.mrcs"), overwrite=True) as mrc:
-            mrc.set_data(tilt_data)
-            mrc.voxel_size = (tiltseries_pixel_size, tiltseries_pixel_size, 1)
+            mrc.set_data(tilt_data.astype(np.float16 if float16 else np.float32))
+            mrc.voxel_size = (tiltseries_pixel_size * bin, tiltseries_pixel_size * bin, 1.0)
 
     updated_filtered_particles_df = update_particles_df(filtered_particles_df, output_folder, all_visible_sections_column, skipped_particles)
 
