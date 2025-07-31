@@ -1,5 +1,5 @@
 """
-Standalone script to compare two MRC files for subtomogram extraction consistency.
+Standalone script with modular functions to compare two MRC files for subtomogram extraction consistency.
 
 This script takes two MRC files (e.g., one from a custom implementation and one
 from RELION) and compares specified 2D sections. It performs analyses in both
@@ -67,12 +67,15 @@ def plot_heatmaps(
     axes[1, 0].set_aspect("equal")
 
     vmin_pdiff, vmax_pdiff = np.percentile(percent_diff, [0, 100])
-    sns.heatmap(percent_diff, ax=axes[1, 1], cmap='hot', vmin=vmin_pdiff, vmax=vmax_pdiff, **heatmap_kwargs).set_title('Percent Difference (%)')
-    axes[1, 1].set_aspect('equal')
+    sns.heatmap(percent_diff, ax=axes[1, 1], cmap="hot", vmin=vmin_pdiff, vmax=vmax_pdiff, **heatmap_kwargs).set_title("Percent Difference (%)")
+    axes[1, 1].set_aspect("equal")
 
     vmin_transformed, vmax_transformed = np.percentile(transformed_difference, [0, 100])
     sns.heatmap(transformed_difference, ax=axes[2, 0], cmap="hot", vmin=vmin_transformed, vmax=vmax_transformed, **heatmap_kwargs).set_title("Transformed/Inverse Transformed Difference")
     axes[2, 0].set_aspect("equal")
+
+    # delete [2, 1] as it is not used
+    axes[2, 1].axis("off")
 
     output_filename = output_dir / f"section_{section_num}_{space_name}_comparison.png"
     plt.savefig(output_filename)
@@ -164,6 +167,36 @@ def compare_section(
     )
 
 
+def compare_mrcs(
+    mock_mrc_file: Path,
+    relion_mrc_file: Path,
+    sections: list[int],
+    output_dir: Path,
+) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    with mrcfile.open(mock_mrc_file, permissive=True) as mock_mrc, mrcfile.open(relion_mrc_file, permissive=True) as relion_mrc:
+
+        mock_data = mock_mrc.data
+        relion_data = relion_mrc.data
+
+        if mock_data.shape != relion_data.shape:
+            raise ValueError(f"MRC files must have the same shape. " f"Mock: {mock_data.shape}, RELION: {relion_data.shape}")
+
+        for section in sections:
+            print(f"\n{'='*20} Processing Section {section} {'='*20}")
+            if section > mock_data.shape[0]:
+                print(f"Warning: Section {section} is out of bounds for shape {mock_data.shape}. Skipping.")
+                continue
+
+            compare_section(
+                mock_data[section - 1],
+                relion_data[section - 1],
+                section,
+                output_dir,
+            )
+
+
 def main():
     """
     Main function to parse arguments and run the comparison.
@@ -199,28 +232,12 @@ def main():
     )
     args = parser.parse_args()
 
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-
-    with mrcfile.open(args.mock_mrc_file, permissive=True) as mock_mrc, mrcfile.open(args.relion_mrc_file, permissive=True) as relion_mrc:
-
-        mock_data = mock_mrc.data
-        relion_data = relion_mrc.data
-
-        if mock_data.shape != relion_data.shape:
-            raise ValueError(f"MRC files must have the same shape. " f"Mock: {mock_data.shape}, RELION: {relion_data.shape}")
-
-        for section in args.sections:
-            print(f"\n{'='*20} Processing Section {section} {'='*20}")
-            if section > mock_data.shape[0]:
-                print(f"Warning: Section {section} is out of bounds for shape {mock_data.shape}. Skipping.")
-                continue
-
-            compare_section(
-                mock_data[section - 1],
-                relion_data[section - 1],
-                section,
-                args.output_dir,
-            )
+    compare_mrcs(
+        mock_mrc_file=args.mock_mrc_file,
+        relion_mrc_file=args.relion_mrc_file,
+        sections=args.sections,
+        output_dir=args.output_dir,
+    )
 
 
 if __name__ == "__main__":
@@ -228,22 +245,7 @@ if __name__ == "__main__":
 
 
 # Example usage:
-# python tools/compare_mrcs.py \
+# python utils/compare_mrcs.py \
 # --mock-mrc-file tests/output/unroofing_noctf_nocirclecrop/Subtomograms/session1_16849/1_stack2d.mrcs \
 # --relion-mrc-file tests/data/relion_project_unroofing/relion_output_noctf_nocirclecrop/Subtomograms/session1_16849/1_stack2d.mrcs \
-# --section 1 6 11 16 21 26 31
-
-# python tools/compare_mrcs.py \
-# --mock-mrc-file tests/output/synthetic_noctf_nocirclecrop/Subtomograms/session1_TS_1/9_stack2d.mrcs \
-# --relion-mrc-file tests/data/relion_project_synthetic/relion_output_noctf_nocirclecrop/Subtomograms/session1_TS_1/9_stack2d.mrcs \
-# --section 1 6 11 16 21 26 31
-
-# python tools/compare_mrcs.py \
-# --mock-mrc-file tests/output/synthetic_and_aln_noctf_nocirclecrop/Subtomograms/session1_TS_1/1_stack2d.mrcs \
-# --relion-mrc-file tests/data/relion_project_synthetic_and_aln/relion_output_noctf_nocirclecrop/Subtomograms/session1_TS_1/1_stack2d.mrcs \
-# --section 1 6 11 16 21 26 31
-
-# python tools/compare_mrcs.py \
-# --mock-mrc-file tests/output/unroofing_noctf/Subtomograms/session1_16849/89_stack2d.mrcs \
-# --relion-mrc-file tests/data/relion_project_unroofing/relion_output_noctf/Subtomograms/session1_16849/89_stack2d.mrcs \
-# --section 1 10 11 26 31 
+# --sections 1 6 11 16 21 26 31

@@ -325,24 +325,31 @@ def main():
     logging.basicConfig(level=logging.INFO)
 
     parser = argparse.ArgumentParser(description="Extract subtomograms from a provided particles *.star file, tiltseries *.star file, and set of *.aln files.")
+    subparser = parser.add_subparsers(dest="command", required=True)
+    
+    local = subparser.add_parser("local", help="Extract subtomograms from local files (particles, tiltseries, and alignment files).")
     # TODO: support multiple starfiles, dirs
-    parser.add_argument("--particles-starfile", type=str, required=True, help="Path to the particles *.star file.")
-    parser.add_argument(
+    local.add_argument("--particles-starfile", type=str, required=True, help="Path to the particles *.star file.")
+    local.add_argument(
         "--particles-tomo-name-prefix",
         type=str,
         default="",
         help="An added prefix to the tomogram names in the particles star file. Used to properly match the particles to the tiltseries and alignment files.",
     )
-    parser.add_argument("--box-size", type=int, required=True, help="Box size of the extracted subtomograms in pixels.")
-    parser.add_argument("--bin", type=int, default=1, help="Binning factor for the subtomograms. Default is 1 (no binning).")
     # TODO: consolidate the two to one? just find the tiltseries star file in the tiltseries dir (can be done if we restrain to just pyrelion format)
-    parser.add_argument("--tiltseries-dir", type=str, required=True, help="Path to the tiltseries directory containing *.star files (individual tiltseries, with entries as individual tilts).")
-    parser.add_argument("--tiltseries-starfile", type=str, required=True, help="Path to the tiltseries star file (containing all tiltseries entries, with entries as tiltseries).")
+    local.add_argument("--tiltseries-dir", type=str, required=True, help="Path to the tiltseries directory containing *.star files (individual tiltseries, with entries as individual tilts).")
+    local.add_argument("--tiltseries-starfile", type=str, required=True, help="Path to the tiltseries star file (containing all tiltseries entries, with entries as tiltseries).")
     # TODO: Make this a filter for only running extraction on specific tiltseries
     # parser.add_argument("--tiltseries-pixel-size", type=float, required=True, help="Pixel size of the tiltseries in Angstroms.")
-    parser.add_argument("--tiltseries-x", type=int, required=True, help="X dimension of the tiltseries in pixels.")
-    parser.add_argument("--tiltseries-y", type=int, required=True, help="Y dimension of the tiltseries in pixels.")
-    parser.add_argument("--aln-dir", type=str, required=True, help="Path to the directory containing the *.aln files (should be named the same as the tiltseries).")
+    local.add_argument("--tiltseries-x", type=int, required=True, help="X dimension of the tiltseries in pixels.")
+    local.add_argument("--tiltseries-y", type=int, required=True, help="Y dimension of the tiltseries in pixels.")
+    local.add_argument("--aln-dir", type=str, required=True, help="Path to the directory containing the *.aln files (should be named the same as the tiltseries).")
+    
+    data_portal = subparser.add_parser("data_portal", help="Extract subtomograms from a CryoET Data Portal run.")
+    data_portal.add_argument("--run-id", type=str, required=True, help="ID of the CryoET Data Portal run to extract subtomograms from.")
+
+    parser.add_argument("--box-size", type=int, required=True, help="Box size of the extracted subtomograms in pixels.")
+    parser.add_argument("--bin", type=int, default=1, help="Binning factor for the subtomograms. Default is 1 (no binning).")
     parser.add_argument("--float16", action="store_true", help="Use float16 precision for the output mrcs files. Default is False (float32).")
     parser.add_argument("--no-ctf", action="store_true", help="Disable CTF premultiplication.")
     parser.add_argument("--no-circle-crop", action="store_true", help="Disable circular cropping of the subtomograms")
