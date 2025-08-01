@@ -8,7 +8,7 @@ from cryoet_alignment.io.aretomo3 import AreTomo3ALN
 from cryoet_data_portal import Client, Run
 
 
-def calculate_projection_matrix(rot: float, gmag: float, tx: float, ty: float, tilt: float, radians: bool = False) -> np.ndarray:
+def calculate_projection_matrix(rot: float, gmag: float, tx: float, ty: float, tilt: float, x_tilt: float = 0.0, radians: bool = False) -> np.ndarray:
     """
     Calculates a 4x4 projection matrix based on the given rotation, translation, and tilt parameters (based on AreTomo .aln file).
     Calculations are based on affine projections in 3D space.
@@ -19,6 +19,7 @@ def calculate_projection_matrix(rot: float, gmag: float, tx: float, ty: float, t
         tx (float): Translation in the x direction (Angstroms).
         ty (float): Translation in the y direction (Angstroms).
         tilt (float): (Stage) tilt angle in radians or degrees (around the y-axis).
+        x_tilt (float): Rotation around the x-axis in radians or degrees (rlnTomoXTilt in RELION, volume_x_rotation on the CryoET Data Portal). Default is 0.0.
         radians (bool): If input angles are in radians. Defaults to False (degrees).
     Returns:
         np.ndarray: A 4x4 projection matrix.
@@ -26,6 +27,7 @@ def calculate_projection_matrix(rot: float, gmag: float, tx: float, ty: float, t
     if not radians:
         rot = np.radians(rot)
         tilt = np.radians(tilt)
+        x_tilt = np.radians(x_tilt)
 
     M_2d_translation = np.array([
         [1, 0, 0, tx],
@@ -55,7 +57,14 @@ def calculate_projection_matrix(rot: float, gmag: float, tx: float, ty: float, t
         [0, 0, 0, 1]
     ])
 
-    return M_2d_translation @ M_magnification @ M_axis_rot @ M_stage_tilt
+    M_x_tilt = np.array([
+        [1, 0, 0, 0],
+        [0, np.cos(x_tilt), -np.sin(x_tilt), 0],
+        [0, np.sin(x_tilt), np.cos(x_tilt), 0],
+        [0, 0, 0, 1]
+    ])
+
+    return M_2d_translation @ M_magnification @ M_axis_rot @ M_stage_tilt @ M_x_tilt
 
 
 def project_3d_point_to_2d(point_3d: np.ndarray, projection_matrix: np.ndarray) -> np.ndarray:
@@ -81,7 +90,7 @@ def project_3d_point_to_2d(point_3d: np.ndarray, projection_matrix: np.ndarray) 
     projected_point /= projected_point[3]
     return projected_point
 
-
+# NOTE: Not currently used, but may be useful in the future.
 def calculate_projection_matrix_from_aretomo_aln(aln: AreTomo3ALN, tiltseries_pixel_size: float = 1.0) -> list[np.ndarray]:
     """
     Calculates the projection matrices for each section in the given AreTomo3ALN object.
@@ -99,25 +108,36 @@ def calculate_projection_matrix_from_aretomo_aln(aln: AreTomo3ALN, tiltseries_pi
         tx = section.tx * tiltseries_pixel_size
         ty = section.ty * tiltseries_pixel_size
         tilt = section.tilt
-
-        projection_matrix = calculate_projection_matrix(rot, gmag, tx, ty, tilt)
+        
+        # AreTomo3 has no x_tilt
+        projection_matrix = calculate_projection_matrix(rot, gmag, tx, ty, tilt, x_tilt=0.0, radians=False)
         projection_matrices.append(projection_matrix)
 
     return projection_matrices
 
 
-# TODO: Refactor this to take in PerSectionAlignmentParameters instead of Run?
-def calculate_projection_matrix_from_run(run: Run) -> dict[int, np.ndarray]:
+def calculate_projection_matrix_from_starfile_df(tiltseries_df: pd.DataFrame) -> list[np.ndarray]:
     """
-    Calculates the projection matrices for each section in the given Run object.
-
+    Calculates the projection matrices for each section in the given tiltseries DataFrame (with section information).
     Args:
-        run (Run): A Run object containing the alignment parameters.
+        tiltseries_df (pd.DataFrame): A DataFrame containing tiltseries information with alignment parameters.
 
     Returns:
-        dict[int, np.ndarray]: A dictionary of 4x4 projection matrices for each section. (section ID as key)
+        list[np.ndarray]: A list of 4x4 projection matrices for each section.
     """
-    pass
+    projection_matrices = []
+    for _, tilt in tiltseries_df.iterrows():
+        rot = tilt["rlnTomoZRot"]
+        gmag = 1.0 # Assuming no magnification change
+        tx = tilt["rlnTomoXShiftAngst"]
+        ty = tilt["rlnTomoYShiftAngst"]
+        tilt_angle = tilt["rlnTomoYTilt"]
+        x_tilt = tilt["rlnTomoXTilt"]
+
+        projection_matrix = calculate_projection_matrix(rot, gmag, tx, ty, tilt_angle, x_tilt=x_tilt, radians=False)
+        projection_matrices.append(projection_matrix)
+        
+    return projection_matrices
 
 
 # can likely be parallelized

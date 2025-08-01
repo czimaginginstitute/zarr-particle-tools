@@ -4,7 +4,7 @@
 import pytest
 import shutil
 from pathlib import Path
-from data_portal_subtomo_extract import extract_local_subtomograms
+from data_portal_subtomo_extract import extract_subtomograms
 
 DATASET_CONFIGS = {
     "synthetic": {
@@ -63,16 +63,15 @@ def test_extract_local_subtomograms_parametrized(
     if output_dir.exists():
         shutil.rmtree(output_dir)
 
-    extract_local_subtomograms(
+    extract_subtomograms(
         particles_starfile=data_root / "particles.star",
         particles_tomo_name_prefix=dataset_config["particles_tomo_name_prefix"],
         box_size=extract_arguments.get("box_size"),
         bin=extract_arguments.get("bin"),
-        tiltseries_dir=data_root / "tiltSeries/",
-        tiltseries_starfile=data_root / "tiltSeries/tomograms.star",
+        tiltseries_dir=data_root / "tiltseries",
+        tiltseries_starfile=data_root / "tomograms.star",
         tiltseries_x=dataset_config["tiltseries_x"],
         tiltseries_y=dataset_config["tiltseries_y"],
-        aln_dir=data_root / "aln/",
         float16=float16,
         no_ctf=extract_arguments.get("no_ctf", False),
         no_circle_crop=extract_arguments.get("no_circle_crop", False),

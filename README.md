@@ -25,11 +25,10 @@ pip install -r requirements.txt
 
 ## Example run
 ```
-python data_portal_subtomo_extract.py \
+python data_portal_subtomo_extract.py local \
   --particles-starfile tests/data/relion_project_synthetic/particles.star \
-  --tiltseries-dir tests/data/relion_project_synthetic/tiltSeries \
-  --tiltseries-starfile tests/data/relion_project_synthetic/tiltSeries/tomograms.star \
-  --aln-dir tests/data/relion_project_synthetic/aln/ \
+  --tiltseries-dir tests/data/relion_project_synthetic/tiltseries \
+  --tiltseries-starfile tests/data/relion_project_synthetic/tomograms.star \
   --output-dir tests/output/sample_test/ \
   --particles-tomo-name-prefix "session1_" \
   --tiltseries-x 630 --tiltseries-y 630 --box-size 16 --bin 4 --debug

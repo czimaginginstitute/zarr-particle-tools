@@ -207,7 +207,6 @@ def generate_individual_tomogram_starfile(alignment: Alignment, output_dir: Path
     per_section_parameters = pd.DataFrame(columns=INDIVIDUAL_TOMOGRAM_CTF_COLUMNS)
     for param in tiltseries.per_section_parameters:
         frame = param.frame
-        # TODO: make this dict-based instead
         per_section_parameters.loc[len(per_section_parameters)] = {
             "z_index": param.z_index,
             "acquisition_order": frame.acquisition_order + 1,  # match RELION's 1-based indexing
