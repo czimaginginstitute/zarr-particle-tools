@@ -1,8 +1,6 @@
 THREAD_POOL_WORKER_COUNT = 8  # tested to work best
 DEFAULT_AMPLITUDE_CONTRAST = 0.07
 TOMO_HAND_DEFAULT_VALUE = -1
-# TODO: remove this and actually provide the tomogram size
-TOMO_SIZE_DEFAULT_VALUE = 0
 PARTICLES_DF_COLUMNS = [
     "rlnTomoName",
     "rlnCoordinateX",
@@ -52,7 +50,7 @@ INDIVIDUAL_TOMOGRAM_ALN_COLUMNS = [
     "rlnTomoXShiftAngst",
     "rlnTomoYShiftAngst",
 ]
-# TODO: not included for now, need clarification on how to handle these fields & where to pull from & if needed
+# TODO: not included for now, but filled in with 0s / placeholders in pyrelion
 # "rlnTomoTiltMovieFrameCount",
 # "rlnTomoNominalStageTiltAngle",
 # "rlnTomoNominalTiltAxisAngle",
@@ -71,4 +69,5 @@ NOISY_LOGGERS = [
     "aiobotocore",
     "fsspec",
     "asyncio",
+    "numcodecs",
 ]

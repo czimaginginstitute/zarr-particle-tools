@@ -11,8 +11,6 @@ def get_depth_offset(tilt_projection_matrix: np.ndarray, coordinate: np.ndarray)
     return projected_point[2] - projected_origin[2]  # z coordinate in the projected space
 
 
-# TODO: cache re-used values (origin_projection, etc.) and even the projected point itself - only should be computed once per particle & tilt
-# TODO: cache / reuse across different particles?
 def calculate_ctf(
     coordinate: np.ndarray,
     tilt_projection_matrix: np.ndarray,
@@ -55,6 +53,13 @@ def calculate_ctf(
         np.ndarray: A 2D array representing the CTF in Fourier space.
 
     """
+    if amplitude_contrast < 0.0 or amplitude_contrast > 1.0:
+        raise ValueError("Amplitude contrast must be between 0 and 1.")
+    if handedness != 1 and handedness != -1:
+        raise ValueError("Handedness must be either 1 or -1.")
+    if abs(defocus_u) < 1e-6 and abs(defocus_v) < 1e-6 and abs(amplitude_contrast) < 1e-6 and abs(spherical_aberration) < 1e-6:
+        raise ValueError("CTF parameters are 0, please check your inputs.")
+
     voltage *= 1000  # kV to V
     spherical_aberration *= 1e7  # mm to Angstroms
     defocus_angle = np.deg2rad(defocus_angle)
@@ -79,13 +84,6 @@ def calculate_ctf(
     K3 = np.arctan(amplitude_contrast / np.sqrt(1 - amplitude_contrast**2))
     K4 = -1 * bfactor / 4.0 # not used
     K5 = np.deg2rad(phase_shift)
-
-    if amplitude_contrast < 0.0 or amplitude_contrast > 1.0:
-        raise ValueError("Amplitude contrast must be between 0 and 1.")
-    if handedness != 1 and handedness != -1:
-        raise ValueError("Handedness must be either 1 or -1.")
-    if abs(defocus_u) < 1e-6 and abs(defocus_v) < 1e-6 and abs(amplitude_contrast) < 1e-6 and abs(spherical_aberration) < 1e-6:
-        raise ValueError("CTF parameters are 0, please check your inputs.")
 
     # for astigmatism correction
     Q = np.array([

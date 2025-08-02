@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 from cryoet_alignment.io.aretomo3 import AreTomo3ALN
 from cryoet_data_portal import Client, Run
+from core.data import DataReader
 
 
 def calculate_projection_matrix(rot: float, gmag: float, tx: float, ty: float, tilt: float, x_tilt: float = 0.0, radians: bool = False) -> np.ndarray:
@@ -166,7 +167,7 @@ def get_particles_to_tiltseries_coordinates(
     return particles_to_tiltseries_coordinates
 
 
-def get_particle_crop_and_visibility(particle_id: int, sections: dict, tiltseries_x: int, tiltseries_y: int, tiltseries_pixel_size: float, pre_bin_box_size: int) -> tuple[list[dict], list[int]]:
+def get_particle_crop_and_visibility(tiltseries_data: DataReader, particle_id: int, sections: dict, tiltseries_x: int, tiltseries_y: int, tiltseries_pixel_size: float, pre_bin_box_size: int) -> tuple[list[dict], list[int]]:
     """
     Process the calculated (Angstrom) 2D coordinate of the particle to pixel coordinates and perform cropping.
 
@@ -199,16 +200,17 @@ def get_particle_crop_and_visibility(particle_id: int, sections: dict, tiltserie
         shift_x = x_start_px - x_start_px_float
         shift_y = y_start_px - y_start_px_float
 
+        slice_key = (section - 1, slice(y_start_px, y_end_px), slice(x_start_px, x_end_px))
+        # add it to the DataReader cache to be computed later
+        tiltseries_data.slice_data(slice_key)
+
         visible_sections.append(1)
         particle_data.append(
             {
                 "particle_id": particle_id,
                 "coordinate": coordinate,
                 "section": section,
-                "x_start_px": x_start_px,
-                "y_start_px": y_start_px,
-                "x_end_px": x_end_px,
-                "y_end_px": y_end_px,
+                "tiltseries_slice_key": slice_key,
                 "subpixel_shift": (shift_y, shift_x)
             }
         )

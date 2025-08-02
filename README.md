@@ -23,15 +23,33 @@ And then install from requirements.txt:
 pip install -r requirements.txt
 ```
 
-## Example run
+## Example runs
 ```
 python data_portal_subtomo_extract.py local \
   --particles-starfile tests/data/relion_project_synthetic/particles.star \
   --tiltseries-dir tests/data/relion_project_synthetic/tiltseries \
-  --tiltseries-starfile tests/data/relion_project_synthetic/tomograms.star \
-  --output-dir tests/output/sample_test/ \
+  --tomograms-starfile tests/data/relion_project_synthetic/tomograms.star \
+  --output-dir tests/output/sample_local_test/ \
   --particles-tomo-name-prefix "session1_" \
-  --tiltseries-x 630 --tiltseries-y 630 --box-size 16 --bin 4 --debug
+  --box-size 16 --bin 4
+```
+
+```
+python data_portal_subtomo_extract.py local \
+  --particles-starfile tests/data/relion_project_unroofing/particles.star \
+  --tiltseries-dir tests/data/relion_project_unroofing/tiltseries \
+  --tomograms-starfile tests/data/relion_project_unroofing/tomograms.star \
+  --output-dir tests/output/sample_local_test/ \
+  --particles-tomo-name-prefix "session1_" \
+  --box-size 64 --bin 1 --no-ctf --no-circle-crop
+```
+
+```
+python data_portal_subtomo_extract.py data-portal \
+  --run-id 16463 \
+  --annotation-names "ribosome" \
+  --output-dir tests/output/sample_data_portal_test/ \
+  --box-size 320
 ```
 
 ## Pytest

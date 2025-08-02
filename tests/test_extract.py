@@ -1,25 +1,22 @@
 # TODO: create more focused tests for individual functions?
 # TODO: create a highly sensitive cross-correlation test for MRCs? (better represents the testing we're trying to do)
 # TODO: don't store tiltseries / RELION *.mrcs data in the repository, but host them on zenodo
+import sys
 import pytest
 import shutil
 from pathlib import Path
-from data_portal_subtomo_extract import extract_subtomograms
+from data_portal_subtomo_extract import extract_subtomograms, main as cli_main
 
 DATASET_CONFIGS = {
     "synthetic": {
         "data_root": Path("tests/data/relion_project_synthetic"),
         "particles_tomo_name_prefix": "session1_",
-        "tiltseries_x": 630,
-        "tiltseries_y": 630,
         "tol": 1e-7,
     },
     "unroofing": {
         "data_root": Path("tests/data/relion_project_unroofing"),
         "particles_tomo_name_prefix": "session1_",
-        "tiltseries_x": 4092,
-        "tiltseries_y": 5760,
-        "tol": 5e-5, # relaxed requirements due to noisier data
+        "tol": 5e-5,  # relaxed requirements due to noisier data
     },
 }
 
@@ -58,7 +55,7 @@ def test_extract_local_subtomograms_parametrized(
     data_root = dataset_config["data_root"]
     tol = dataset_config["tol"]
     float16 = extract_arguments.get("float16", False)
-    
+
     output_dir = Path(f"tests/output/{dataset}_{extract_suffix}/")
     if output_dir.exists():
         shutil.rmtree(output_dir)
@@ -69,9 +66,7 @@ def test_extract_local_subtomograms_parametrized(
         box_size=extract_arguments.get("box_size"),
         bin=extract_arguments.get("bin"),
         tiltseries_dir=data_root / "tiltseries",
-        tiltseries_starfile=data_root / "tomograms.star",
-        tiltseries_x=dataset_config["tiltseries_x"],
-        tiltseries_y=dataset_config["tiltseries_y"],
+        tomograms_starfile=data_root / "tomograms.star",
         float16=float16,
         no_ctf=extract_arguments.get("no_ctf", False),
         no_circle_crop=extract_arguments.get("no_circle_crop", False),
@@ -91,3 +86,60 @@ def test_extract_local_subtomograms_parametrized(
         compare_mrcs_dirs(relion_dir, subtomo_dir, tol=tol * 100)
     else:
         compare_mrcs_dirs(relion_dir, subtomo_dir, tol=tol)
+
+
+@pytest.mark.parametrize(
+    "dataset, extract_suffix",
+    [
+        ("unroofing", "baseline"),
+        ("synthetic", "box16_bin4_noctf_nocirclecrop"),
+    ],
+    ids=["unroofing_baseline", "synthetic_box16_bin4_noctf_nocirclecrop"],
+)
+def test_cli_main_extract_local(monkeypatch, tmp_path, compare_mrcs_dirs, dataset, extract_suffix):
+    dataset_config = DATASET_CONFIGS[dataset]
+    extract_arguments = EXTRACTION_PARAMETERS[extract_suffix]
+
+    output_dir = tmp_path / f"{dataset}_{extract_suffix}"
+    data_root = dataset_config["data_root"]
+
+    args = [
+        "main.py",
+        "local",
+        "--particles-starfile",
+        str(data_root / "particles.star"),
+        "--particles-tomo-name-prefix",
+        dataset_config["particles_tomo_name_prefix"],
+        "--tiltseries-dir",
+        str(data_root / "tiltseries"),
+        "--tomograms-starfile",
+        str(data_root / "tomograms.star"),
+        "--box-size",
+        str(extract_arguments["box_size"]),
+        "--bin",
+        str(extract_arguments.get("bin", 1)),
+        "--output-dir",
+        str(output_dir),
+    ]
+
+    if extract_arguments.get("float16"):
+        args.append("--float16")
+    if extract_arguments.get("no_ctf"):
+        args.append("--no-ctf")
+    if extract_arguments.get("no_circle_crop"):
+        args.append("--no-circle-crop")
+
+    monkeypatch.setattr(sys, "argv", args)
+    cli_main()
+
+    subtomo_dir = output_dir / "Subtomograms/"
+    relion_dir = data_root / f"relion_output_{extract_suffix}/Subtomograms/"
+    # extra tolerance for float16 data
+    if extract_arguments.get("float16"):
+        compare_mrcs_dirs(relion_dir, subtomo_dir, tol=dataset_config["tol"] * 100)
+    else:
+        compare_mrcs_dirs(relion_dir, subtomo_dir, tol=dataset_config["tol"])
+
+
+# def test_cli_main_extract_data_portal(monkeypatch, tmp_path, compare_mrcs_dirs, dataset, extract_suffix):
+#     pass
