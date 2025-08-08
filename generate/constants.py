@@ -1,4 +1,6 @@
 THREAD_POOL_WORKER_COUNT = 8  # tested to work best
+TILTSERIES_MRC_PLACEHOLDER = "tiltseries/tiltseries_placeholder.mrc"
+TILTSERIES_URI_RELION_COLUMN = "tomoTiltSeriesURI"
 DEFAULT_AMPLITUDE_CONTRAST = 0.07
 TOMO_HAND_DEFAULT_VALUE = -1
 PARTICLES_DF_COLUMNS = [
@@ -20,6 +22,7 @@ OPTICS_DF_COLUMNS = ["rlnOpticsGroup", "rlnOpticsGroupName", "rlnSphericalAberra
 # to keep track of columns and order
 INDIVIDUAL_TOMOGRAM_COLUMNS = [
     "rlnMicrographName",
+    TILTSERIES_URI_RELION_COLUMN,
     "rlnTomoXTilt",
     "rlnTomoYTilt",
     "rlnTomoZRot",

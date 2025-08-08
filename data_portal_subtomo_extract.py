@@ -23,6 +23,7 @@ from core.dose import calculate_dose_weight_image
 from core.ctf import calculate_ctf
 from core.data import DataReader
 from generate.generate_starfile import generate_starfiles
+from generate.constants import TILTSERIES_URI_RELION_COLUMN
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,13 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
     if individual_tiltseries_df.empty or tiltseries_row_entry.empty:
         raise ValueError(f"Tiltseries file {individual_tiltseries_path} is empty or does not contain the required columns. Please check the file.")
     
-    tiltseries_data_locator = individual_tiltseries_df["rlnMicrographName"].iloc[0].split("@")[1]
+    if TILTSERIES_URI_RELION_COLUMN in individual_tiltseries_df.columns:
+        tiltseries_data_locators = individual_tiltseries_df[TILTSERIES_URI_RELION_COLUMN].to_list()
+    else:
+        tiltseries_data_locators = individual_tiltseries_df["rlnMicrographName"].apply(lambda x: x.split("@")[1]).to_list()
+    if len(set(tiltseries_data_locators)) != 1:
+        raise ValueError(f"Multiple tiltseries data locators found: {set(tiltseries_data_locators)}. This is not supported.")
+    tiltseries_data_locator = tiltseries_data_locators[0]
     if not tiltseries_data_locator.startswith("s3://") and not tiltseries_data_locator.startswith("/"): # assume it's a local relative path, relative to the tiltseries file
         tiltseries_data_locator = individual_tiltseries_path.parent / tiltseries_data_locator
     tiltseries_data = DataReader(str(tiltseries_data_locator))
@@ -389,7 +396,7 @@ def main():
     common_parser.add_argument("--debug", action="store_true", help="Enable debug logging.")
 
     local = subparser.add_parser("local", parents=[common_parser], help="Extract subtomograms from local files (particles, tiltseries, and alignment files).")
-    # TODO: support multiple starfiles, dirs
+    # TODO: support multiple starfiles
     local.add_argument("--particles-starfile", type=Path, required=True, help="Path to the particles *.star file.")
     local.add_argument(
         "--particles-tomo-name-prefix",

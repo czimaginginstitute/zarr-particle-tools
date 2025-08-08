@@ -5,7 +5,6 @@ Helper functions for calculating projection matrices, projecting 3D points to 2D
 import pandas as pd
 import numpy as np
 from cryoet_alignment.io.aretomo3 import AreTomo3ALN
-from cryoet_data_portal import Client, Run
 from core.data import DataReader
 
 
