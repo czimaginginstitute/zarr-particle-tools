@@ -44,6 +44,7 @@ python data_portal_subtomo_extract.py local \
 python data_portal_subtomo_extract.py data-portal \
   --run-id 16463 \
   --annotation-names "ribosome" \
+  --inexact-match \
   --output-dir tests/output/sample_data_portal_test/ \
   --box-size 320
 ```

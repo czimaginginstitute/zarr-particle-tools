@@ -296,7 +296,7 @@ def extract_subtomograms(
     # do actual subtomogram extraction & .mrcs file creation here
     total_skipped_count = 0
     particles_df_results = []
-    cpu_count = min(64, mp.cpu_count(), len(tomograms_df))
+    cpu_count = min(32, mp.cpu_count(), len(tomograms_df))
     logger.info(f"Starting extraction of subtomograms from {len(tomograms_df)} tiltseries using {cpu_count} CPU cores.")
     with mp.Pool(processes=cpu_count) as pool:
         for updated_filtered_particles_df, skipped_count in tqdm(pool.imap_unordered(process_tiltseries, args_list, chunksize=1), total=len(args_list)):

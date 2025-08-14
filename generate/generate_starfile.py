@@ -10,7 +10,17 @@ Generates:
 - tiltseries/*.star files for each tiltseries in the run.
 """
 
-# TODO: add tests - with all possible parameters and edge cases
+# TODO: add tests - with all possible parameters and edge cases, including:
+# - no annotations
+# - no alignments
+# - no tiltseries
+# - no CTF parameters
+# - across multiple tomograms
+# - across multiple alignments
+# - across multiple tiltseries
+# - across multiple runs
+# - across multiple datasets
+# - across multiple deposition ids
 import argparse
 import logging
 import json
@@ -25,6 +35,8 @@ import mrcfile
 import cryoet_data_portal as cdp
 from tqdm import tqdm
 
+import generate.cdp_cache as cdp_cache
+import utils.args_common as args_common
 from generate.constants import (
     THREAD_POOL_WORKER_COUNT,
     TILTSERIES_MRCS_PLACEHOLDER,
@@ -38,30 +50,25 @@ from generate.constants import (
     INDIVIDUAL_TOMOGRAM_ALN_COLUMNS,
     NOISY_LOGGERS,
 )
-from generate.helpers import TqdmLoggingHandler, suppress_noisy_loggers, get_data
-import generate.cdp_cache as cdp_cache
-import utils.args_common as args_common
+from generate.helpers import TqdmLoggingHandler, suppress_noisy_loggers, get_data, get_filter
+from core.projection import in_plane_rotation_to_tilt_axis_rotation
 
 logger = logging.getLogger(__name__)
 
 
-def get_particles_df_optics_df_from_shape(
-    annotation_file: cdp.AnnotationFile, alignment_dict: dict[int, cdp.Alignment], tiltseries_dict: dict[int, cdp.TiltSeries]
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+def get_particles_df_optics_df_from_file(annotation_file: cdp.AnnotationFile, alignment: cdp.Alignment, tiltseries: cdp.TiltSeries) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Returns a particles dataframe and optics dataframe from Point / OrientedPoint annotation files.
+    Returns a particles dataframe and optics dataframe from a Point / OrientedPoint annotation file.
     Args:
-        annotation_file (cdp.AnnotationFile): The annotation file associated with the shape.
-        alignment_dict (dict[int, cdp.Alignment]): Dictionary of alignments associated with the shape.
-        tiltseries_dict (dict[int, cdp.TiltSeries]): Dictionary of tiltseries associated with the shape.
+        annotation_file (cdp.AnnotationFile): The annotation file containing the Point or OrientedPoint location data.
+        alignment (cdp.Alignment): The alignment associated with the annotation file.
+        tiltseries (cdp.TiltSeries): The tiltseries associated with the annotation file.
     Returns:
         tuple: A tuple containing the optics dataframe and particles dataframe.
     """
     optics_df = pd.DataFrame(columns=OPTICS_DF_COLUMNS)
     particles_df = pd.DataFrame(columns=PARTICLES_DF_COLUMNS)
 
-    alignment = alignment_dict.get(annotation_file.alignment_id)
-    tiltseries = tiltseries_dict.get(alignment.tiltseries_id) if alignment else None
     if not alignment or not cdp_cache.get_per_section_alignments_by_alignment_id(alignment.id) or not tiltseries or not cdp_cache.get_per_section_parameters_by_tiltseries_id(tiltseries.id):
         logger.error(f"[Run {alignment.run_id}, Annotation File {annotation_file.id}] Missing alignment or tiltseries information. Skipping file.")
         return optics_df, particles_df
@@ -136,12 +143,13 @@ def get_particles_df_optics_df(annotation_files: list[cdp.AnnotationFile], use_t
         tuple: A tuple containing the optics dataframe and particles dataframe (combined from all Point and OrientedPoint annotations).
     """
     logger.info(f"Pulling annotation files from the CryoET Data Portal ...")
-    all_optics_dfs, all_particles_dfs = [], []
+    all_optics_dfs: list[pd.DataFrame] = []
+    all_particles_dfs: list[pd.DataFrame] = []
 
     alignments = cdp_cache.get_alignments([file.alignment_id for file in annotation_files])
     tiltseries = cdp_cache.get_tiltseries([alignment.tiltseries_id for alignment in alignments.values()])
     with ThreadPoolExecutor(max_workers=THREAD_POOL_WORKER_COUNT) as thread_pool:
-        futures = [thread_pool.submit(get_particles_df_optics_df_from_shape, ann_files, alignments, tiltseries) for ann_files in annotation_files]
+        futures = [thread_pool.submit(get_particles_df_optics_df_from_file, file, alignments[file.alignment_id], tiltseries[alignments[file.alignment_id].tiltseries_id]) for file in annotation_files]
 
         pbar = tqdm(total=len(futures), desc="Downloading particle data") if use_tqdm else None
         for fut in as_completed(futures):
@@ -184,7 +192,7 @@ def get_tomograms_df(optics_df: pd.DataFrame, particles_df: pd.DataFrame) -> tup
         optics_df (pd.DataFrame): The optics dataframe containing the optics group information.
         particles_df (pd.DataFrame): The particles dataframe containing the particle information.
     Returns:
-        tuple: A tuple containing the tomograms dataframe and a list of alignment IDs.
+        tuple: A tuple containing the tomograms dataframe and a list of alignment and voxel spacing IDs.
     """
     only_tomo_names_and_optics_groups = particles_df[["rlnTomoName", "rlnOpticsGroupName"]].drop_duplicates()
     # merge with optics_df to get rlnVoltage, rlnSphericalAberration, rlnAmplitudeContrast, and rlnTomoTiltSeriesPixelSize
@@ -193,6 +201,7 @@ def get_tomograms_df(optics_df: pd.DataFrame, particles_df: pd.DataFrame) -> tup
     tomograms_df["rlnTomoHand"] = TOMO_HAND_DEFAULT_VALUE
     tomograms_df["rlnTomoTiltSeriesStarFile"] = tomograms_df["rlnTomoName"].apply(lambda x: f"tiltseries/{x}.star")
 
+    # add tomogram dimensions rlnTomoSizeX, rlnTomoSizeY, rlnTomoSizeZ
     # reliant on the fact that rlnTomoName is in the format of "run_WWWW_tiltseries_XXXX_alignment_YYYY_spacing_ZZZZ"
     tomograms_df["alignment_id"] = tomograms_df["rlnTomoName"].apply(lambda x: int(x.split("_")[-3]))
     tomograms_df["voxel_spacing_id"] = tomograms_df["rlnTomoName"].apply(lambda x: int(x.split("_")[-1]))
@@ -210,11 +219,6 @@ def get_tomograms_df(optics_df: pd.DataFrame, particles_df: pd.DataFrame) -> tup
     tomograms_df = tomograms_df.merge(tomograms_dimensions, on=["alignment_id", "voxel_spacing_id"], how="left")
     tomograms_df.drop(columns=["alignment_id", "voxel_spacing_id"], inplace=True)
     return tomograms_df, list(zip(alignment_ids, voxel_spacing_ids))
-
-
-def in_plane_rotation_to_tilt_axis_rotation(rotation_matrix: list[list[float]]) -> float:
-    np_matrix = np.array(rotation_matrix)
-    return np.degrees(np.arctan2(np_matrix[1, 0], np_matrix[0, 0]))
 
 
 def generate_individual_tomogram_starfile(alignment: cdp.Alignment, voxel_spacing: cdp.TomogramVoxelSpacing, output_dir: Path) -> tuple[pd.DataFrame, str]:
@@ -377,8 +381,6 @@ def generate_starfiles_from_annotation_files(annotation_files: list[cdp.Annotati
     return particles_path, tomograms_path, tiltseries_folder_path
 
 
-# TODO: Implement tomogram_ids and tomogram_names filtering
-# TODO: If these values get used by rest of script, cache them in cdp_cache
 def resolve_annotation_files(
     deposition_ids: list[int] = None,
     deposition_titles: list[str] = None,
@@ -398,94 +400,75 @@ def resolve_annotation_files(
 ) -> list[cdp.AnnotationFile]:
     client = cdp.Client()
 
-    # First filter with information related to the Annotation class
+    # First filter with information related to the Annotation class; ids are always exact match
     annotation_query_filters = []
-
-    def add_filter(values, field, label=""):
-        """Helper to append filters depending on inexact_match."""
-        if not values:
-            return
-        if inexact_match:
-            if len(values) > 1:
-                raise ValueError(f"Cannot use inexact match with multiple values for {label}. Please provide a single value.")
-            annotation_query_filters.append(field.ilike(f"%{values[0]}%"))
-            logger.debug(f"Finding similar {label}: {values} (case insensitive, includes partial matches)")
-        else:
-            annotation_query_filters.append(field._in(values))
-            logger.debug(f"Filtering annotations by exact {label}: {values}")
-
-    if deposition_ids:
-        annotation_query_filters.append(cdp.Annotation.deposition_id._in(deposition_ids))
-        logger.debug(f"Filtering annotations by deposition IDs: {deposition_ids}")
-    add_filter(deposition_titles, cdp.Annotation.deposition.title,  "deposition titles")
-    if dataset_ids:
-        annotation_query_filters.append(cdp.Annotation.run.dataset_id._in(dataset_ids))
-        logger.debug(f"Filtering annotations by dataset IDs: {dataset_ids}")
-    add_filter(dataset_titles, cdp.Annotation.run.dataset.title, "dataset titles")
-    add_filter(organism_names, cdp.Annotation.run.dataset.organism_name, "organism names")
-    add_filter(cell_names, cdp.Annotation.run.dataset.cell_name, "cell names")
-    if run_ids:
-        annotation_query_filters.append(cdp.Annotation.run.id._in(run_ids))
-        logger.debug(f"Filtering annotations by run IDs: {run_ids}")
-    add_filter(run_names, cdp.Annotation.run.name, "run names")
-    if annotation_ids:
-        annotation_query_filters.append(cdp.Annotation.id._in(annotation_ids))
-        logger.debug(f"Filtering annotations by annotation IDs: {annotation_ids}")
-    add_filter(annotation_names, cdp.Annotation.object_name, "annotation names")
+    annotation_query_filters.append(get_filter(deposition_ids, cdp.Annotation.deposition.id, False, "deposition IDs"))
+    annotation_query_filters.append(get_filter(deposition_titles, cdp.Annotation.deposition.title, inexact_match, "deposition titles"))
+    annotation_query_filters.append(get_filter(dataset_ids, cdp.Annotation.run.dataset.id, False, "dataset IDs"))
+    annotation_query_filters.append(get_filter(dataset_titles, cdp.Annotation.run.dataset.title, inexact_match, "dataset titles"))
+    annotation_query_filters.append(get_filter(organism_names, cdp.Annotation.run.dataset.organism_name, inexact_match, "organism names"))
+    annotation_query_filters.append(get_filter(cell_names, cdp.Annotation.run.dataset.cell_name, inexact_match, "cell names"))
+    annotation_query_filters.append(get_filter(run_ids, cdp.Annotation.run.id, False, "run IDs"))
+    annotation_query_filters.append(get_filter(run_names, cdp.Annotation.run.name, inexact_match, "run names"))
+    annotation_query_filters.append(get_filter(annotation_ids, cdp.Annotation.id, False, "annotation IDs"))
+    annotation_query_filters.append(get_filter(annotation_names, cdp.Annotation.object_name, inexact_match, "annotation names"))
+    annotation_query_filters = [f for f in annotation_query_filters if f is not None]
 
     # Then filter with information related to the AnnotationFile class
-    annotation_files = []
-    if tiltseries_ids:
-        logger.debug(f"Filtering annotation files by tiltseries IDs: {tiltseries_ids}")
-        tiltseries_list = cdp_cache.get_tiltseries(tiltseries_ids).values()
-        if not tiltseries_list:
-            raise ValueError(f"No tiltseries found for IDs: {tiltseries_ids}")
-
-        temp_alignment_ids = []
-        for tiltseries in tiltseries_list:
-            for alignment in tiltseries.alignments:
-                cdp_cache.alignment_cache[alignment.id] = alignment
-                temp_alignment_ids.append(alignment.id)
-
+    tiltseries_query_filters = []
+    tiltseries_query_filters.append(get_filter(tiltseries_ids, cdp.TiltSeries.id, False, "tiltseries IDs"))
+    tiltseries_query_filters = [f for f in tiltseries_query_filters if f is not None]
+    if tiltseries_query_filters:
+        tiltseries_list: list[cdp.TiltSeries] = cdp.TiltSeries.find(client, tiltseries_query_filters)
+        cdp_cache.tiltseries_cache = {**cdp_cache.tiltseries_cache, **{ts.id: ts for ts in tiltseries_list}}
+        alignment_ids_to_aln = {al.id: al for ts in tiltseries_list for al in ts.alignments}
+        cdp_cache.alignment_cache = {**cdp_cache.alignment_cache, **alignment_ids_to_aln}
+        temp_alignment_ids = list(alignment_ids_to_aln.keys())
         if not temp_alignment_ids:
-            raise ValueError(f"No alignments found for tiltseries IDs: {tiltseries_ids}")
+            raise ValueError("No tiltseries / corresponding alignments found. Please check your filters.")
+        alignment_ids = temp_alignment_ids if not alignment_ids else list(set(alignment_ids) & set(temp_alignment_ids))
+        if not alignment_ids:
+            raise ValueError("No alignment IDs found after filtering. Please check your filters.")
 
-        if alignment_ids:
-            alignment_ids = [aid for aid in alignment_ids if aid in temp_alignment_ids]  # restrict to provided alignment IDs
-        else:
-            alignment_ids = temp_alignment_ids
-    if alignment_ids:
-        annotation_files: list[cdp.AnnotationFile] = cdp.AnnotationFile.find(client, [cdp.AnnotationFile.alignment_id._in(alignment_ids)])
-        if not annotation_files:
-            raise ValueError(f"No annotation files found for alignment IDs: {alignment_ids}")
+    voxel_spacing_ids = []
+    tomogram_query_filters = []
+    tomogram_query_filters.append(get_filter(tomogram_ids, cdp.Tomogram.id, False, "tomogram IDs"))
+    tomogram_query_filters.append(get_filter(tomogram_names, cdp.Tomogram.name, inexact_match, "tomogram names"))
+    tomogram_query_filters = [f for f in tomogram_query_filters if f is not None]
+    if tomogram_query_filters:
+        tomogram_list: list[cdp.Tomogram] = cdp.Tomogram.find(client, tomogram_query_filters)
+        cdp_cache.tomogram_cache = {**cdp_cache.tomogram_cache, **{t.id: t for t in tomogram_list}}
+        temp_alignment_ids = {t.alignment_id for t in tomogram_list}
+        voxel_spacing_ids = [t.tomogram_voxel_spacing_id for t in tomogram_list]
+        if not temp_alignment_ids:
+            raise ValueError("No tomograms / corresponding alignments found. Please check your filters.")
+        alignment_ids = temp_alignment_ids if not alignment_ids else list(set(alignment_ids) & set(temp_alignment_ids))
+        if not alignment_ids:
+            raise ValueError("No alignment IDs found after filtering. Please check your filters.")
 
-    # Combine the two filters together
-    if not annotation_query_filters and not annotation_files:
-        raise ValueError("No filters provided. Please provide at least one filter.")
-
-    final_files = []
-    # if there's no annotation query filters, we just return the annotation files
-    if not annotation_query_filters:
-        final_files = annotation_files
-    else:
+    annotation_file_query_filters = []
+    annotation_file_query_filters.append(get_filter(alignment_ids, cdp.AnnotationFile.alignment_id, False, "alignment IDs"))
+    annotation_file_query_filters.append(get_filter(voxel_spacing_ids, cdp.AnnotationFile.tomogram_voxel_spacing_id, False, "tomogram voxel spacing IDs"))
+    annotation_file_query_filters.append(get_filter(["Point", "OrientedPoint"], cdp.AnnotationFile.annotation_shape.shape_type, False, "annotation shape types"))
+    # incorporate the Annotation related filters into the AnnotationFile query filters
+    resolved_annotation_ids = []
+    if annotation_query_filters:
         annotations: list[cdp.Annotation] = cdp.Annotation.find(client, annotation_query_filters)
         if not annotations:
             raise ValueError("No annotations found matching the provided filters.")
+        resolved_annotation_ids = [a.id for a in annotations]
+    annotation_file_query_filters.append(get_filter(resolved_annotation_ids, cdp.AnnotationFile.annotation_shape.annotation_id, False, "annotation IDs"))
+    annotation_file_query_filters = [f for f in annotation_file_query_filters if f is not None]
 
-        # if there is both annotation query filters and annotation files, we filter the annotation files by the annotations
-        if not annotation_files:
-            final_files = [af for af in annotation_files if af.annotation_shape.annotation_id in [a.id for a in annotations]]
-        # if there is annotation query filters, but there isn't any annotation files, we just find all annotation files that belong to the annotations
-        else:
-            final_files = cdp.AnnotationFile.find(client, [cdp.AnnotationFile.annotation_shape.annotation_id._in([a.id for a in annotations])])
+    if not annotation_file_query_filters:
+        raise ValueError("No filtering is applied. Please provide at least one filter.")
 
-    final_files = [af for af in final_files if af.annotation_shape.shape_type in ["Point", "OrientedPoint"]]
+    annotation_files: list[cdp.AnnotationFile] = cdp.AnnotationFile.find(client, annotation_file_query_filters)
+    if not annotation_files:
+        raise ValueError("No Point / Oriented Point annotation files found matching the provided filters.")
 
-    if not final_files:
-        raise ValueError("No Points / Oriented Point annotation files found matching the provided filters.")
-
-    logger.info(f"Found {len(final_files)} annotation files matching the provided filters.")
-    return final_files
+    logger.info(f"Found {len(annotation_files)} annotation files matching the provided filters.")
+    return annotation_files
 
 
 def generate_starfiles(

@@ -8,6 +8,11 @@ from cryoet_alignment.io.aretomo3 import AreTomo3ALN
 from core.data import DataReader
 
 
+def in_plane_rotation_to_tilt_axis_rotation(rotation_matrix: list[list[float]]) -> float:
+    np_matrix = np.array(rotation_matrix)
+    return np.degrees(np.arctan2(np_matrix[1, 0], np_matrix[0, 0]))
+
+
 def calculate_projection_matrix(rot: float, gmag: float, tx: float, ty: float, tilt: float, x_tilt: float = 0.0, radians: bool = False) -> np.ndarray:
     """
     Calculates a 4x4 projection matrix based on the given rotation, translation, and tilt parameters (based on AreTomo .aln file).
