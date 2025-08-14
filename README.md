@@ -27,20 +27,16 @@ pip install -r requirements.txt
 ```
 python data_portal_subtomo_extract.py local \
   --particles-starfile tests/data/relion_project_synthetic/particles.star \
-  --tiltseries-dir tests/data/relion_project_synthetic/tiltseries \
   --tomograms-starfile tests/data/relion_project_synthetic/tomograms.star \
   --output-dir tests/output/sample_local_test/ \
-  --particles-tomo-name-prefix "session1_" \
   --box-size 16 --bin 4
 ```
 
 ```
 python data_portal_subtomo_extract.py local \
   --particles-starfile tests/data/relion_project_unroofing/particles.star \
-  --tiltseries-dir tests/data/relion_project_unroofing/tiltseries \
   --tomograms-starfile tests/data/relion_project_unroofing/tomograms.star \
   --output-dir tests/output/sample_local_test/ \
-  --particles-tomo-name-prefix "session1_" \
   --box-size 64 --bin 1 --no-ctf --no-circle-crop
 ```
 
@@ -72,8 +68,8 @@ To ensure that the subtomogram extraction matches RELION's subtomogram extractio
 - Does not support Anisotropic magnification matrix (EMDL_IMAGE_MAG_MATRIX_00, EMDL_IMAGE_MAG_MATRIX_01, EMDL_IMAGE_MAG_MATRIX_10, EMDL_IMAGE_MAG_MATRIX_11)
 
 ## Project roadmap
-- [ ] Support multiple optics groups
-- [ ] Write more tests (with variations in extract job flags - no ctf, no cropping, experimental data, different binning, different box size (bin and box that don't have clean divides), different paths etc.)
-- [ ] Incorporate alpha and beta offset parameters from AreTomo .aln file (for additional rotation) (and from CryoET Data Portal? if it exists?)
+- [ ] TEST: Support multiple optics groups 
+- [ ] Write tests for generating star files and pulling from the CryoET Data Portal
+- [ ] Add copick support
 - [ ] Notify teamtomo of this work and possible integration into their codebase
 - [ ] Data Portal support (not downloading the entire tiltseries & using the API to pull relevant alignment & CTF information)

@@ -27,7 +27,7 @@ from tqdm import tqdm
 
 from generate.constants import (
     THREAD_POOL_WORKER_COUNT,
-    TILTSERIES_MRC_PLACEHOLDER,
+    TILTSERIES_MRCS_PLACEHOLDER,
     TILTSERIES_URI_RELION_COLUMN,
     DEFAULT_AMPLITUDE_CONTRAST,
     TOMO_HAND_DEFAULT_VALUE,
@@ -40,121 +40,114 @@ from generate.constants import (
 )
 from generate.helpers import TqdmLoggingHandler, suppress_noisy_loggers, get_data
 import generate.cdp_cache as cdp_cache
+import utils.args_common as args_common
 
 logger = logging.getLogger(__name__)
-client = cdp.Client()
+
 
 def get_particles_df_optics_df_from_shape(
-    annotation_shape: cdp.AnnotationShape, annotation_files: list[cdp.AnnotationFile], alignment_dict: dict[int, cdp.Alignment], tiltseries_dict: dict[int, cdp.TiltSeries]
+    annotation_file: cdp.AnnotationFile, alignment_dict: dict[int, cdp.Alignment], tiltseries_dict: dict[int, cdp.TiltSeries]
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Returns a particles dataframe and optics dataframe from a Point / OrientedPoint annotation shape in RELION 5 format.
+    Returns a particles dataframe and optics dataframe from Point / OrientedPoint annotation files.
     Args:
-        annotation_shape (AnnotationShape): The annotation shape object containing point data.
-        annotation_files (list[AnnotationFile]): List of annotation files associated with the shape.
-        alignment_list (list[Alignment]): List of alignments associated with the shape.
-        tiltseries_list (list[TiltSeries]): List of tiltseries associated with the shape.
+        annotation_file (cdp.AnnotationFile): The annotation file associated with the shape.
+        alignment_dict (dict[int, cdp.Alignment]): Dictionary of alignments associated with the shape.
+        tiltseries_dict (dict[int, cdp.TiltSeries]): Dictionary of tiltseries associated with the shape.
     Returns:
         tuple: A tuple containing the optics dataframe and particles dataframe.
     """
     optics_df = pd.DataFrame(columns=OPTICS_DF_COLUMNS)
     particles_df = pd.DataFrame(columns=PARTICLES_DF_COLUMNS)
-    particles_list = []
 
-    for i, file in enumerate(annotation_files, start=1):
-        alignment = alignment_dict.get(file.alignment_id)
-        tiltseries = tiltseries_dict.get(alignment.tiltseries_id) if alignment else None
-        if not alignment or not cdp_cache.get_per_section_alignments_by_alignment_id(alignment.id) or not tiltseries or not cdp_cache.get_per_section_parameters_by_tiltseries_id(tiltseries.id):
-            raise ValueError(
-                f'[Run {alignment.run_id}, Annotation {annotation_shape.annotation_id}] Missing alignment or tiltseries information "{annotation_shape.annotation.object_name}" (shape ID {annotation_shape.id}, file ID {file.id}).'
-            )
+    alignment = alignment_dict.get(annotation_file.alignment_id)
+    tiltseries = tiltseries_dict.get(alignment.tiltseries_id) if alignment else None
+    if not alignment or not cdp_cache.get_per_section_alignments_by_alignment_id(alignment.id) or not tiltseries or not cdp_cache.get_per_section_parameters_by_tiltseries_id(tiltseries.id):
+        logger.error(f"[Run {alignment.run_id}, Annotation File {annotation_file.id}] Missing alignment or tiltseries information. Skipping file.")
+        return optics_df, particles_df
 
-        tomogram_data = set(
-            (tomogram.size_x, tomogram.size_y, tomogram.size_z, tomogram.voxel_spacing)
-            for tomograms in cdp_cache.get_tomograms_by_alignment_id_and_voxel_spacing_id((alignment.id, file.tomogram_voxel_spacing_id)).values()
-            for tomogram in tomograms
+    tomogram_data = set(
+        (tomogram.size_x, tomogram.size_y, tomogram.size_z, tomogram.voxel_spacing)
+        for tomograms in cdp_cache.get_tomograms_by_alignment_id_and_voxel_spacing_id((alignment.id, annotation_file.tomogram_voxel_spacing_id)).values()
+        for tomogram in tomograms
+    )
+
+    if len(tomogram_data) != 1:
+        logger.error(f"[Run {alignment.run_id}, Annotation File {annotation_file.id}] Expected tomograms to have the same size and voxel size, but found {len(tomogram_data)} unique values.")
+        return optics_df, particles_df
+    tomogram_data = list(tomogram_data)[0]
+
+    # optics
+    optics_group_name = f"run_{tiltseries.run_id}_tiltseries_{tiltseries.id}"
+    optics_df.loc[0] = {
+        "rlnOpticsGroup": 1,
+        "rlnOpticsGroupName": optics_group_name,
+        "rlnSphericalAberration": tiltseries.spherical_aberration_constant,
+        "rlnVoltage": tiltseries.acceleration_voltage,
+        "rlnAmplitudeContrast": DEFAULT_AMPLITUDE_CONTRAST,
+        "rlnTomoTiltSeriesPixelSize": tiltseries.pixel_spacing,
+    }
+
+    # particles
+    tomo_name = f"run_{alignment.run_id}_tiltseries_{tiltseries.id}_alignment_{alignment.id}_spacing_{annotation_file.tomogram_voxel_spacing_id}"
+
+    json_data = get_data(annotation_file.s3_path)
+    json_point_data = [json.loads(line) for line in json_data.splitlines() if line.strip()]
+
+    pixel_coordinates = [(d["location"]["x"], d["location"]["y"], d["location"]["z"]) for d in json_point_data]
+    centered_coordinates = [
+        (
+            (p[0] - tomogram_data[0] / 2) * tomogram_data[3],
+            (p[1] - tomogram_data[1] / 2) * tomogram_data[3],
+            (p[2] - tomogram_data[2] / 2) * tomogram_data[3],
         )
+        for p in pixel_coordinates
+    ]
 
-        if len(tomogram_data) != 1:
-            raise ValueError(
-                f"[Run {alignment.run_id}, Annotation {annotation_shape.annotation_id}] Expected tomograms to have the same size and voxel size, but found {len(tomogram_data)} unique values."
-            )
-        tomogram_data = list(tomogram_data)[0]
-
-        # optics
-        optics_group_name = f"run_{tiltseries.run_id}_tiltseries_{tiltseries.id}"
-        optics_df.loc[len(optics_df)] = {
-            "rlnOpticsGroup": i,
+    particles_list = [
+        {
+            "rlnTomoName": tomo_name,
+            "rlnCoordinateX": p[0],
+            "rlnCoordinateY": p[1],
+            "rlnCoordinateZ": p[2],
+            "rlnAngleRot": 0,
+            "rlnAngleTilt": 0,
+            "rlnAnglePsi": 0,
+            "rlnCenteredCoordinateXAngst": c[0],
+            "rlnCenteredCoordinateYAngst": c[1],
+            "rlnCenteredCoordinateZAngst": c[2],
             "rlnOpticsGroupName": optics_group_name,
-            "rlnSphericalAberration": tiltseries.spherical_aberration_constant,
-            "rlnVoltage": tiltseries.acceleration_voltage,
-            "rlnAmplitudeContrast": DEFAULT_AMPLITUDE_CONTRAST,
-            "rlnTomoTiltSeriesPixelSize": tiltseries.pixel_spacing,
+            "rlnOpticsGroup": 1,
         }
-
-        # particles
-        tomo_name = f"run_{alignment.run_id}_tiltseries_{tiltseries.id}_alignment_{alignment.id}_spacing_{file.tomogram_voxel_spacing_id}"
-
-        json_data = get_data(file.s3_path)
-        json_point_data = [json.loads(line) for line in json_data.splitlines() if line.strip()]
-
-        pixel_coordinates = [(d["location"]["x"], d["location"]["y"], d["location"]["z"]) for d in json_point_data]
-        centered_coordinates = [
-            (
-                (p[0] - tomogram_data[0] / 2) * tomogram_data[3],
-                (p[1] - tomogram_data[1] / 2) * tomogram_data[3],
-                (p[2] - tomogram_data[2] / 2) * tomogram_data[3],
-            )
-            for p in pixel_coordinates
-        ]
-
-        current_particles_list = [
-            {
-                "rlnTomoName": tomo_name,
-                "rlnCoordinateX": p[0],
-                "rlnCoordinateY": p[1],
-                "rlnCoordinateZ": p[2],
-                "rlnAngleRot": 0,
-                "rlnAngleTilt": 0,
-                "rlnAnglePsi": 0,
-                "rlnCenteredCoordinateXAngst": c[0],
-                "rlnCenteredCoordinateYAngst": c[1],
-                "rlnCenteredCoordinateZAngst": c[2],
-                "rlnOpticsGroupName": optics_group_name,
-                "rlnOpticsGroup": i,
-            }
-            for p, c in zip(pixel_coordinates, centered_coordinates)
-        ]
-        particles_list.extend(current_particles_list)
-
+        for p, c in zip(pixel_coordinates, centered_coordinates)
+    ]
     particles_df = pd.DataFrame(particles_list, columns=particles_df.columns)
 
     return optics_df, particles_df
 
 
-def get_particles_df_optics_df(annotation_ids: list[int], use_tqdm: bool = True) -> tuple[pd.DataFrame, pd.DataFrame]:
+def get_particles_df_optics_df(annotation_files: list[cdp.AnnotationFile], use_tqdm: bool = True) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Creates particles and optics dataframes necessary for a particles.star file from CryoET Data Portal annotations.
     Args:
-        annotation_ids (list[int]): List of annotation IDs to pull data from.
+        annotation_files (list[AnnotationFile]): List of annotation files to process.
         use_tqdm (bool): Whether to use tqdm for progress tracking (and print it out to the console).
     Returns:
         tuple: A tuple containing the optics dataframe and particles dataframe (combined from all Point and OrientedPoint annotations).
     """
-    logger.info(f"Pulling annotations with IDs {annotation_ids} from the CryoET Data Portal ...")
+    logger.info(f"Pulling annotation files from the CryoET Data Portal ...")
     all_optics_dfs, all_particles_dfs = [], []
 
-    annotation_shapes = [shape for shapes in cdp_cache.get_annotation_shapes_by_annotation_ids(annotation_ids).values() for shape in shapes if shape.shape_type in ["Point", "OrientedPoint"]]
-    annotation_files = cdp_cache.get_annotation_files_by_shape_ids([shape.id for shape in annotation_shapes])
-    alignments = cdp_cache.get_alignments([file.alignment_id for files in annotation_files.values() for file in files])
+    alignments = cdp_cache.get_alignments([file.alignment_id for file in annotation_files])
     tiltseries = cdp_cache.get_tiltseries([alignment.tiltseries_id for alignment in alignments.values()])
-    shapes_to_files = {shape: annotation_files[shape.id] for shape in annotation_shapes}
     with ThreadPoolExecutor(max_workers=THREAD_POOL_WORKER_COUNT) as thread_pool:
-        futures = [thread_pool.submit(get_particles_df_optics_df_from_shape, ann_shape, ann_files, alignments, tiltseries) for ann_shape, ann_files in shapes_to_files.items()]
+        futures = [thread_pool.submit(get_particles_df_optics_df_from_shape, ann_files, alignments, tiltseries) for ann_files in annotation_files]
 
         pbar = tqdm(total=len(futures), desc="Downloading particle data") if use_tqdm else None
         for fut in as_completed(futures):
             optics_df, particles_df = fut.result()
+            if optics_df.empty or particles_df.empty:
+                continue
             all_optics_dfs.append(optics_df)
             all_particles_dfs.append(particles_df)
             if pbar:
@@ -184,7 +177,6 @@ def get_particles_df_optics_df(annotation_ids: list[int], use_tqdm: bool = True)
     return combined_optics_df, combined_particles_df
 
 
-# TODO: Refactor this to decouple it from get_particles_df_optics_df output dataframes
 def get_tomograms_df(optics_df: pd.DataFrame, particles_df: pd.DataFrame) -> tuple[pd.DataFrame, list[tuple[int, int]]]:
     """
     Returns a dataframe for the tomograms.star file from the optics and particles dataframes.
@@ -214,7 +206,7 @@ def get_tomograms_df(optics_df: pd.DataFrame, particles_df: pd.DataFrame) -> tup
     tomograms_dimensions.drop_duplicates(inplace=True)
     if len(tomograms_dimensions) != len(tomograms_dimensions[["alignment_id", "voxel_spacing_id"]].drop_duplicates()):
         raise ValueError("Multiple tomogram dimensions found for the same alignment ID and voxel spacing ID. This is not supported.")
-    
+
     tomograms_df = tomograms_df.merge(tomograms_dimensions, on=["alignment_id", "voxel_spacing_id"], how="left")
     tomograms_df.drop(columns=["alignment_id", "voxel_spacing_id"], inplace=True)
     return tomograms_df, list(zip(alignment_ids, voxel_spacing_ids))
@@ -239,7 +231,7 @@ def generate_individual_tomogram_starfile(alignment: cdp.Alignment, voxel_spacin
     per_section_parameters = list(cdp_cache.get_per_section_parameters_by_tiltseries_id(tiltseries.id).values())[0]
     per_section_alignment_parameters = list(cdp_cache.get_per_section_alignments_by_alignment_id(alignment.id).values())[0]
     frames = list(cdp_cache.get_frames_by_run_id(alignment.run_id).values())[0]
-    
+
     if len(per_section_parameters) != len(per_section_alignment_parameters):
         raise ValueError(
             f"[Run {alignment.run_id}, TiltSeries {tiltseries.id}, Alignment {alignment.id}] Mismatch between CTF and alignment parameters {len(per_section_parameters)} CTF != {len(per_section_alignment_parameters)} alignment parameters."
@@ -259,14 +251,13 @@ def generate_individual_tomogram_starfile(alignment: cdp.Alignment, voxel_spacin
             "rlnMicrographPreExposure": frame.accumulated_dose,
         }
 
-    # TODO: incorporate param.x_rotation_offset (and same for AreTomo3 beta)
     per_section_alignment_parameters_df = pd.DataFrame(
         columns=INDIVIDUAL_TOMOGRAM_ALN_COLUMNS,
         data=[
             {
                 "z_index": param.z_index,
-                "rlnTomoXTilt": param.volume_x_rotation,
-                "rlnTomoYTilt": param.tilt_angle, # already accounts for any tilt offset (AreTomo3 alpha)
+                "rlnTomoXTilt": param.volume_x_rotation,  # param.x_rotation offset (AreTomo3 beta) is not applied, as per AreTomo3 convention
+                "rlnTomoYTilt": param.tilt_angle,  # already accounts for any tilt offset (AreTomo3 alpha)
                 "rlnTomoZRot": in_plane_rotation_to_tilt_axis_rotation(np.array(param.in_plane_rotation)),
                 "rlnTomoXShiftAngst": param.x_offset,
                 "rlnTomoYShiftAngst": param.y_offset,
@@ -283,13 +274,13 @@ def generate_individual_tomogram_starfile(alignment: cdp.Alignment, voxel_spacin
 
     # reorder rows and columns to match RELION format
     individual_tomogram_df.sort_values(by="acquisition_order", inplace=True)
-    individual_tomogram_df["rlnMicrographName"] = individual_tomogram_df["acquisition_order"].apply(lambda x: f"{str(int(x))}@{TILTSERIES_MRC_PLACEHOLDER}")
+    individual_tomogram_df["rlnMicrographName"] = individual_tomogram_df["acquisition_order"].apply(lambda x: f"{str(int(x))}@{TILTSERIES_MRCS_PLACEHOLDER}")
     individual_tomogram_df[TILTSERIES_URI_RELION_COLUMN] = tiltseries.s3_omezarr_dir
     individual_tomogram_df = individual_tomogram_df.drop(columns=["z_index", "acquisition_order"])
     individual_tomogram_df = individual_tomogram_df[INDIVIDUAL_TOMOGRAM_COLUMNS]
 
     # generate empty placeholder tiltseries mrc (relative path)
-    with mrcfile.new(output_dir / TILTSERIES_MRC_PLACEHOLDER, overwrite=True) as mrc:
+    with mrcfile.new(output_dir / TILTSERIES_MRCS_PLACEHOLDER, overwrite=True) as mrc:
         mrc.voxel_size = tiltseries.pixel_spacing
         mrc.header.nx = tiltseries.size_x
         mrc.header.ny = tiltseries.size_y
@@ -346,18 +337,18 @@ def generate_individual_tomogram_starfiles(alignment_and_voxel_spacing_ids: list
     return individual_tomograms_dfs, tomo_names
 
 
-def generate_starfiles_from_annotation_ids(annotation_ids: list[int], output_dir: Path, use_tqdm: bool = True) -> tuple[Path, Path]:
+def generate_starfiles_from_annotation_files(annotation_files: list[cdp.AnnotationFile], output_dir: Path, use_tqdm: bool = True) -> tuple[Path, Path]:
     """
-    Generates particles.star, tomograms.star, and individual tomogram star files from the given annotation IDs.
+    Generates particles.star, tomograms.star, and individual tomogram star files from the given annotation files.
     Args:
-        annotation_ids (list[int]): List of annotation IDs to generate star files from.
+        annotation_files (list[cdp.AnnotationFile]): List of annotation files to generate star files from.
         output_dir (Path): Directory where the star files will be saved.
         use_tqdm (bool): Whether to use tqdm for progress tracking (and print it out to the console).
     Returns:
         tuple: A tuple containing the paths to the generated particles.star, tomograms.star, and the tiltseries folder.
     """
     start_time = time.time()
-    optics_df, particles_df = get_particles_df_optics_df(annotation_ids, use_tqdm=use_tqdm)
+    optics_df, particles_df = get_particles_df_optics_df(annotation_files, use_tqdm=use_tqdm)
     tomograms_df, alignment_and_voxel_spacing_ids = get_tomograms_df(optics_df, particles_df)
     _, tomo_names = generate_individual_tomogram_starfiles(alignment_and_voxel_spacing_ids, output_dir, use_tqdm=use_tqdm)
     # filter out invalid tomograms from optics, particles, and tomograms dataframes
@@ -386,21 +377,142 @@ def generate_starfiles_from_annotation_ids(annotation_ids: list[int], output_dir
     return particles_path, tomograms_path, tiltseries_folder_path
 
 
-def generate_starfiles(annotation_ids: list[int], run_ids: list[str], annotation_names: list[str], output_dir: Path, debug: bool = False, use_tqdm: bool = True) -> tuple[Path, Path]:
+# TODO: Implement tomogram_ids and tomogram_names filtering
+# TODO: If these values get used by rest of script, cache them in cdp_cache
+def resolve_annotation_files(
+    deposition_ids: list[int] = None,
+    deposition_titles: list[str] = None,
+    dataset_ids: list[int] = None,
+    dataset_titles: list[str] = None,
+    organism_names: list[str] = None,
+    cell_names: list[str] = None,
+    run_ids: list[int] = None,
+    run_names: list[str] = None,
+    tiltseries_ids: list[int] = None,
+    alignment_ids: list[int] = None,
+    tomogram_ids: list[int] = None,
+    tomogram_names: list[str] = None,
+    annotation_ids: list[int] = None,
+    annotation_names: list[str] = None,
+    inexact_match: bool = False,
+) -> list[cdp.AnnotationFile]:
+    client = cdp.Client()
+
+    # First filter with information related to the Annotation class
+    annotation_query_filters = []
+
+    def add_filter(values, field, label=""):
+        """Helper to append filters depending on inexact_match."""
+        if not values:
+            return
+        if inexact_match:
+            if len(values) > 1:
+                raise ValueError(f"Cannot use inexact match with multiple values for {label}. Please provide a single value.")
+            annotation_query_filters.append(field.ilike(f"%{values[0]}%"))
+            logger.debug(f"Finding similar {label}: {values} (case insensitive, includes partial matches)")
+        else:
+            annotation_query_filters.append(field._in(values))
+            logger.debug(f"Filtering annotations by exact {label}: {values}")
+
+    if deposition_ids:
+        annotation_query_filters.append(cdp.Annotation.deposition_id._in(deposition_ids))
+        logger.debug(f"Filtering annotations by deposition IDs: {deposition_ids}")
+    add_filter(deposition_titles, cdp.Annotation.deposition.title,  "deposition titles")
+    if dataset_ids:
+        annotation_query_filters.append(cdp.Annotation.run.dataset_id._in(dataset_ids))
+        logger.debug(f"Filtering annotations by dataset IDs: {dataset_ids}")
+    add_filter(dataset_titles, cdp.Annotation.run.dataset.title, "dataset titles")
+    add_filter(organism_names, cdp.Annotation.run.dataset.organism_name, "organism names")
+    add_filter(cell_names, cdp.Annotation.run.dataset.cell_name, "cell names")
+    if run_ids:
+        annotation_query_filters.append(cdp.Annotation.run.id._in(run_ids))
+        logger.debug(f"Filtering annotations by run IDs: {run_ids}")
+    add_filter(run_names, cdp.Annotation.run.name, "run names")
+    if annotation_ids:
+        annotation_query_filters.append(cdp.Annotation.id._in(annotation_ids))
+        logger.debug(f"Filtering annotations by annotation IDs: {annotation_ids}")
+    add_filter(annotation_names, cdp.Annotation.object_name, "annotation names")
+
+    # Then filter with information related to the AnnotationFile class
+    annotation_files = []
+    if tiltseries_ids:
+        logger.debug(f"Filtering annotation files by tiltseries IDs: {tiltseries_ids}")
+        tiltseries_list = cdp_cache.get_tiltseries(tiltseries_ids).values()
+        if not tiltseries_list:
+            raise ValueError(f"No tiltseries found for IDs: {tiltseries_ids}")
+
+        temp_alignment_ids = []
+        for tiltseries in tiltseries_list:
+            for alignment in tiltseries.alignments:
+                cdp_cache.alignment_cache[alignment.id] = alignment
+                temp_alignment_ids.append(alignment.id)
+
+        if not temp_alignment_ids:
+            raise ValueError(f"No alignments found for tiltseries IDs: {tiltseries_ids}")
+
+        if alignment_ids:
+            alignment_ids = [aid for aid in alignment_ids if aid in temp_alignment_ids]  # restrict to provided alignment IDs
+        else:
+            alignment_ids = temp_alignment_ids
+    if alignment_ids:
+        annotation_files: list[cdp.AnnotationFile] = cdp.AnnotationFile.find(client, [cdp.AnnotationFile.alignment_id._in(alignment_ids)])
+        if not annotation_files:
+            raise ValueError(f"No annotation files found for alignment IDs: {alignment_ids}")
+
+    # Combine the two filters together
+    if not annotation_query_filters and not annotation_files:
+        raise ValueError("No filters provided. Please provide at least one filter.")
+
+    final_files = []
+    # if there's no annotation query filters, we just return the annotation files
+    if not annotation_query_filters:
+        final_files = annotation_files
+    else:
+        annotations: list[cdp.Annotation] = cdp.Annotation.find(client, annotation_query_filters)
+        if not annotations:
+            raise ValueError("No annotations found matching the provided filters.")
+
+        # if there is both annotation query filters and annotation files, we filter the annotation files by the annotations
+        if not annotation_files:
+            final_files = [af for af in annotation_files if af.annotation_shape.annotation_id in [a.id for a in annotations]]
+        # if there is annotation query filters, but there isn't any annotation files, we just find all annotation files that belong to the annotations
+        else:
+            final_files = cdp.AnnotationFile.find(client, [cdp.AnnotationFile.annotation_shape.annotation_id._in([a.id for a in annotations])])
+
+    final_files = [af for af in final_files if af.annotation_shape.shape_type in ["Point", "OrientedPoint"]]
+
+    if not final_files:
+        raise ValueError("No Points / Oriented Point annotation files found matching the provided filters.")
+
+    logger.info(f"Found {len(final_files)} annotation files matching the provided filters.")
+    return final_files
+
+
+def generate_starfiles(
+    output_dir: Path,
+    deposition_ids: list[int] = None,
+    deposition_titles: list[str] = None,
+    dataset_ids: list[int] = None,
+    dataset_titles: list[str] = None,
+    organism_names: list[str] = None,
+    cell_names: list[str] = None,
+    run_ids: list[str] = None,
+    run_names: list[str] = None,
+    tiltseries_ids: list[int] = None,
+    alignment_ids: list[int] = None,
+    tomogram_ids: list[int] = None,
+    tomogram_names: list[str] = None,
+    annotation_ids: list[int] = None,
+    annotation_names: list[str] = None,
+    inexact_match: bool = False,
+    debug: bool = False,
+    use_tqdm: bool = True,
+) -> tuple[Path, Path]:
     """
-    Validates and resolves annotation IDs or names, and generates star files for the specified runs and annotations (calls generate_starfiles_from_annotation_ids).
-    Args:
-        annotation_ids (list[int]): List of annotation IDs to generate star files from.
-        run_ids (list[str]): List of run IDs to filter annotations by.
-        annotation_names (list[str]): List of annotation names to filter annotations by.
-        output_dir (Path): Directory where the star files will be saved.
-        use_tqdm (bool): Whether to use tqdm for progress tracking (and print it out to the console).
+    Generates star files for annotations based on the specified filters. First resolves all annotation IDs based on the provided filters, then generates the star files given the resolved annotation IDs.
     Returns:
         tuple: A tuple containing the paths to the generated particles.star, tomograms.star, and the tiltseries folder.
     """
-    if annotation_ids is None and annotation_names is None:
-        raise ValueError("Either annotation_ids or annotation_names must be provided.")
-
     if use_tqdm:
         handler = TqdmLoggingHandler()
         handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
@@ -414,46 +526,37 @@ def generate_starfiles(annotation_ids: list[int], run_ids: list[str], annotation
 
     (output_dir / "tiltseries").mkdir(parents=True, exist_ok=True)
 
-    # TODO: allow for both to be provided, but do additional filtering
-    if annotation_ids:
-        if annotation_names:
-            raise ValueError("Both annotation_ids and annotation_names provided. These parameters are mutually exclusive.")
-        if run_ids:
-            raise ValueError("Both annotation_ids and run_id provided. These parameters are mutually exclusive.")
-        return generate_starfiles_from_annotation_ids(annotation_ids, output_dir, use_tqdm=use_tqdm)
-    else:
-        # get annotation id from object name
-        resolved_annotation_ids = []
-        for object_name in annotation_names:
-            # requires extra setup to cache, and since only hit once, not setup for now
-            query_filters = [cdp.Annotation.object_name.ilike(f"%{object_name}%")]
-            if run_ids:
-                query_filters.append((cdp.Annotation.run_id._in(run_ids)))
-            annotation: list[cdp.Annotation] = cdp.Annotation.find(client, query_filters)
-            if annotation:
-                ids = [a.id for a in annotation]
-                resolved_annotation_ids.extend(ids)
-                logger.debug(f"Found annotation IDs for '{object_name}': {ids}")
-            else:
-                logger.error(f"Annotation with name '{object_name}' not found{f" in runs {run_ids}" if run_ids else ''}.")
+    annotation_files = resolve_annotation_files(
+        deposition_ids=deposition_ids,
+        deposition_titles=deposition_titles,
+        dataset_ids=dataset_ids,
+        dataset_titles=dataset_titles,
+        organism_names=organism_names,
+        cell_names=cell_names,
+        run_ids=run_ids,
+        run_names=run_names,
+        tiltseries_ids=tiltseries_ids,
+        alignment_ids=alignment_ids,
+        tomogram_ids=tomogram_ids,
+        tomogram_names=tomogram_names,
+        annotation_ids=annotation_ids,
+        annotation_names=annotation_names,
+        inexact_match=inexact_match,
+    )
 
-        resolved_annotation_ids = list(set(resolved_annotation_ids))
-        if not resolved_annotation_ids:
-            raise ValueError("No valid annotation IDs found.")
-        return generate_starfiles_from_annotation_ids(resolved_annotation_ids, output_dir, use_tqdm=use_tqdm)
+    return generate_starfiles_from_annotation_files(annotation_files, output_dir, use_tqdm=use_tqdm)
 
 
 def main():
     parser = argparse.ArgumentParser(description="Generate star files needed for subtomogram extraction from a CryoET Data Portal run.")
-    parser.add_argument("--run-ids", type=str, nargs="*", help="ID of the CryoET Data Portal run.")
-    parser.add_argument("--annotation-ids", type=int, nargs="*", help="ID(s) of the annotation(s) to use for generating the star file.")
-    parser.add_argument("--annotation-names", type=str, nargs="*", help="Name(s) of the annotation object(s) to use for generating the star file.")
+    args_common.add_data_portal_args(parser)
     parser.add_argument("--output-dir", type=Path, required=True, help="Directory where star files will be saved.")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging.")
 
     args = parser.parse_args()
 
-    generate_starfiles(run_ids=args.run_ids, annotation_ids=args.annotation_ids, annotation_names=args.annotation_names, output_dir=args.output_dir, debug=args.debug, use_tqdm=True)
+    data_portal_args = {arg_ref: getattr(args, arg_ref) for arg_ref in args_common.DATA_PORTAL_ARG_REFS}
+    generate_starfiles(output_dir=args.output_dir, **data_portal_args, debug=args.debug, use_tqdm=True)
 
 
 if __name__ == "__main__":

@@ -10,12 +10,10 @@ from data_portal_subtomo_extract import extract_subtomograms, main as cli_main
 DATASET_CONFIGS = {
     "synthetic": {
         "data_root": Path("tests/data/relion_project_synthetic"),
-        "particles_tomo_name_prefix": "session1_",
         "tol": 1e-7,
     },
     "unroofing": {
         "data_root": Path("tests/data/relion_project_unroofing"),
-        "particles_tomo_name_prefix": "session1_",
         "tol": 5e-5,  # relaxed requirements due to noisier data
     },
 }
@@ -62,10 +60,8 @@ def test_extract_local_subtomograms_parametrized(
 
     extract_subtomograms(
         particles_starfile=data_root / "particles.star",
-        particles_tomo_name_prefix=dataset_config["particles_tomo_name_prefix"],
         box_size=extract_arguments.get("box_size"),
         bin=extract_arguments.get("bin"),
-        tiltseries_dir=data_root / "tiltseries",
         tomograms_starfile=data_root / "tomograms.star",
         float16=float16,
         no_ctf=extract_arguments.get("no_ctf", False),
@@ -108,10 +104,6 @@ def test_cli_main_extract_local(monkeypatch, tmp_path, compare_mrcs_dirs, datase
         "local",
         "--particles-starfile",
         str(data_root / "particles.star"),
-        "--particles-tomo-name-prefix",
-        dataset_config["particles_tomo_name_prefix"],
-        "--tiltseries-dir",
-        str(data_root / "tiltseries"),
         "--tomograms-starfile",
         str(data_root / "tomograms.star"),
         "--box-size",

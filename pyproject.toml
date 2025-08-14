@@ -1,0 +1,31 @@
+[project]
+name = "portal-particle-extraction"
+version = "0.1.0"
+description = "Subtomogram extraction from local and CryoET Data Portal datasets"
+authors = [
+    {name = "Daniel Ji"},
+    {name = "Utz Ermel"}
+]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "starfile",
+    "numpy",
+    "pandas",
+    "mrcfile",
+    "scipy",
+    "tqdm",
+    "matplotlib",
+    "seaborn",
+    "pytest",
+    "s3fs",
+    "cryoet_data_portal",
+    "cryoet_alignment",
+    "dask"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"

@@ -1,5 +1,5 @@
 THREAD_POOL_WORKER_COUNT = 8  # tested to work best
-TILTSERIES_MRC_PLACEHOLDER = "tiltseries/tiltseries_placeholder.mrc"
+TILTSERIES_MRCS_PLACEHOLDER = "tiltseries/tiltseries_placeholder.mrcs"
 TILTSERIES_URI_RELION_COLUMN = "tomoTiltSeriesURI"
 DEFAULT_AMPLITUDE_CONTRAST = 0.07
 TOMO_HAND_DEFAULT_VALUE = -1

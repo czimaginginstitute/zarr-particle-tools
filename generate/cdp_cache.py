@@ -1,7 +1,9 @@
 from cryoet_data_portal import Client, Run, Alignment, TiltSeries, Tomogram, TomogramVoxelSpacing, AnnotationShape, PerSectionAlignmentParameters, PerSectionParameters, AnnotationFile, Frame
 from functools import lru_cache, wraps
 from typing import Union, Callable, Any
+from collections import defaultdict
 import logging
+
 
 logger = logging.getLogger(__name__)
 
@@ -18,19 +20,15 @@ voxel_spacing_cache: dict[int, TomogramVoxelSpacing] = {}
 tomograms_cache: dict[int, Tomogram] = {}
 
 # alignment id to tomogram id
-alignment_to_tomograms_cache: dict[int, list[int]] = {}
+alignment_to_tomograms_cache: dict[int, list[int]] = defaultdict(list)
 # tomogram voxel spacing id to tomogram id
-tomogram_voxel_spacing_to_tomogram_cache: dict[int, list[int]] = {}
+tomogram_voxel_spacing_to_tomogram_cache: dict[int, list[int]] = defaultdict(list)
 # alignment id to per section alignments
-per_section_alignments_cache: dict[int, list[PerSectionAlignmentParameters]] = {}
+per_section_alignments_cache: dict[int, list[PerSectionAlignmentParameters]] = defaultdict(list)
 # tiltseries id to per section parameters
-per_section_parameters_cache: dict[int, list[PerSectionParameters]] = {}
-# annotation id to annotation shapes
-annotation_to_shapes_cache: dict[int, list[AnnotationShape]] = {}
-# annotation shape id to annotation files
-annotation_shape_to_files_cache: dict[int, list[AnnotationFile]] = {}
+per_section_parameters_cache: dict[int, list[PerSectionParameters]] = defaultdict(list)
 # run id to frames
-run_to_frames_cache: dict[int, list[Frame]] = {}
+run_to_frames_cache: dict[int, list[Frame]] = defaultdict(list)
 
 client = Client()
 
@@ -75,9 +73,9 @@ def get_items_by_ids(
 
     if derived_cache:
         # will later be used to fetch items from the derived cache
-        result_ids: dict[int, int] = {}
+        result_ids: dict[int, list[int]] = defaultdict(list)
     else:
-        result_items: dict[int, Any] = {}
+        result_items: dict[int, Any] = defaultdict(list) if multiple_results else {}
     missing_ids = []
 
     # for every item, check the cache first
@@ -97,19 +95,13 @@ def get_items_by_ids(
             item_key = key_extractor(item)
             # first add them to the results being returned
             if derived_cache:
-                if item_key not in result_ids:
-                    result_ids[item_key] = []
                 result_ids[item_key].append(item.id)
             else:
                 if multiple_results:
-                    if item_key not in result_items:
-                        result_items[item_key] = []
                     result_items[item_key].append(item)
                 else:
                     result_items[item_key] = item
-            # then add them to the cache
-            if item_key not in cache and multiple_results:
-                cache[item_key] = []
+
             # if there is a derived cache, that means this cache just holds the ids, while we need to add the actual item to the derived cache
             if derived_cache:
                 if multiple_results:
@@ -268,25 +260,6 @@ def get_per_section_parameters_by_tiltseries_id(tiltseries_ids: Union[list[int],
         query_field=PerSectionParameters.tiltseries_id,
         model_cls=PerSectionParameters,
         key_extractor=lambda p: p.tiltseries_id,
-        multiple_results=True,
-    )
-
-
-@hashable_lru_cache(maxsize=None)
-def get_annotation_shapes_by_annotation_ids(annotation_ids: Union[list[int], int]) -> dict[int, list[AnnotationShape]]:
-    return get_items_by_ids(
-        ids=annotation_ids, cache=annotation_to_shapes_cache, query_field=AnnotationShape.annotation_id, model_cls=AnnotationShape, key_extractor=lambda s: s.annotation_id, multiple_results=True
-    )
-
-
-@hashable_lru_cache(maxsize=None)
-def get_annotation_files_by_shape_ids(shape_ids: Union[list[int], int]) -> dict[int, list[AnnotationFile]]:
-    return get_items_by_ids(
-        ids=shape_ids,
-        cache=annotation_shape_to_files_cache,
-        query_field=AnnotationFile.annotation_shape_id,
-        model_cls=AnnotationFile,
-        key_extractor=lambda f: f.annotation_shape_id,
         multiple_results=True,
     )
 

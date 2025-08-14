@@ -1,11 +1,16 @@
+import os
+from io import BytesIO
 import mrcfile
 import s3fs
 import numpy as np
 import dask.array as da
 import logging
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 
 logger = logging.getLogger(__name__)
+
 
 class DataReader:
     """
@@ -20,6 +25,7 @@ class DataReader:
             - An S3 URI (s3://...) to an .mrc file.
             - An S3 URI (s3://...) to a .zarr store.
     """
+
     def __init__(self, resource_locator: str, is_s3: bool = None, is_zarr: bool = None):
         self.locator = resource_locator
         self._s3fs = None
@@ -39,9 +45,9 @@ class DataReader:
             else:
                 if Path(self.locator).is_dir() and (Path(self.locator) / ".zgroup").exists():
                     self.locator += "/0"
-            
+
         logger.debug(f"Initializing DataReader with locator: {self.locator}")
-        
+
         self.data = self._load_data()
 
     def _get_s3fs(self):
@@ -57,7 +63,7 @@ class DataReader:
                 return da.from_zarr(s3_map)
             else:
                 logger.debug(f"Loading S3 MRC file: {self.locator}")
-                with self._get_s3fs().open(self.locator, 'rb') as f:
+                with self._get_s3fs().open(self.locator, "rb") as f:
                     with mrcfile.open(f) as mrc:
                         return mrc.data
         else:
@@ -73,7 +79,7 @@ class DataReader:
         """
         For MRC data, this method is a no-op since MRC files are loaded fully into memory.
         For Zarr data, this method adds a slice (lazily) to the cache if it doesn't exist yet.
-            Data slice will be computed the next time compute_crops() is called. 
+            Data slice will be computed the next time compute_crops() is called.
         """
         if not self.is_zarr:
             return

@@ -1,8 +1,0 @@
-starfile
-numpy
-pandas
-mrcfile
-tqdm
-cryoet-data-portal
-cryoet-alignment
-pytest

@@ -17,6 +17,7 @@ from scipy.ndimage import fourier_shift
 from typing import Union
 from tqdm import tqdm
 
+import utils.args_common as args_common
 from core.projection import get_particles_to_tiltseries_coordinates, fourier_crop, get_particle_crop_and_visibility, calculate_projection_matrix_from_starfile_df
 from core.mask import circular_mask, circular_soft_mask
 from core.dose import calculate_dose_weight_image
@@ -54,7 +55,6 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
     Returns the updated particles DataFrame and the number of skipped particles.
     """
     (
-        particles_tomo_name,
         filtered_particles_df,
         box_size,
         bin,
@@ -71,12 +71,13 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
     if not individual_tiltseries_path.exists():
         raise FileNotFoundError(f"Tiltseries file {individual_tiltseries_path} does not exist. Please check the path and try again.")
 
+    particles_tomo_name = tiltseries_row_entry["rlnTomoName"]
     output_folder = output_dir / "Subtomograms" / particles_tomo_name
     output_folder.mkdir(parents=True, exist_ok=True)
     logger.debug(f"Extracting subtomograms for {len(filtered_particles_df)} particles (filtered by rlnTomoName: {particles_tomo_name}) from tiltseries {individual_tiltseries_path}")
 
     individual_tiltseries_df = starfile.read(individual_tiltseries_path)
-    if individual_tiltseries_df.empty or tiltseries_row_entry.empty:
+    if individual_tiltseries_df.empty:
         raise ValueError(f"Tiltseries file {individual_tiltseries_path} is empty or does not contain the required columns. Please check the file.")
     
     if TILTSERIES_URI_RELION_COLUMN in individual_tiltseries_df.columns:
@@ -93,7 +94,7 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
     # projection-relevant variables
     background_mask = circular_mask(box_size) == 0.0
     soft_mask = circular_soft_mask(box_size, falloff=5.0)
-    tiltseries_pixel_size = tiltseries_row_entry["rlnTomoTiltSeriesPixelSize"].values[0]
+    tiltseries_pixel_size = tiltseries_row_entry["rlnTomoTiltSeriesPixelSize"]
     tiltseries_x = tiltseries_data.data.shape[2]
     tiltseries_y = tiltseries_data.data.shape[1]
     logger.debug(f"Tiltseries data shape: {tiltseries_data.data.shape}, pixel size: {tiltseries_pixel_size}")
@@ -101,11 +102,11 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
     particles_to_tiltseries_coordinates = get_particles_to_tiltseries_coordinates(filtered_particles_df, individual_tiltseries_df, projection_matrices)
 
     # ctf & dose-weighting parameters
-    voltage = tiltseries_row_entry["rlnVoltage"].values[0]
-    spherical_aberration = tiltseries_row_entry["rlnSphericalAberration"].values[0]
-    amplitude_contrast = tiltseries_row_entry["rlnAmplitudeContrast"].values[0]
-    handedness = tiltseries_row_entry["rlnTomoHand"].values[0]
-    phase_shift = tiltseries_row_entry["rlnPhaseShift"].values[0] if "rlnPhaseShift" in optics_row.columns else 0.0
+    voltage = tiltseries_row_entry["rlnVoltage"]
+    spherical_aberration = tiltseries_row_entry["rlnSphericalAberration"]
+    amplitude_contrast = tiltseries_row_entry["rlnAmplitudeContrast"]
+    handedness = tiltseries_row_entry["rlnTomoHand"]
+    phase_shift = tiltseries_row_entry["rlnPhaseShift"] if "rlnPhaseShift" in optics_row.columns else 0.0
     defocus_u = individual_tiltseries_df["rlnDefocusU"].values
     defocus_v = individual_tiltseries_df["rlnDefocusV"].values
     defocus_angle = individual_tiltseries_df["rlnDefocusAngle"].values
@@ -193,7 +194,7 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
             mrc.voxel_size = (tiltseries_pixel_size * bin, tiltseries_pixel_size * bin, 1.0)
 
     start_time = time.time()
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    with ThreadPoolExecutor(max_workers=4) as executor: # emperically determined 4 threads is optimal for this task
         futures = [executor.submit(process_particle_data, particle_data) for particle_data in all_particle_data]
         for future in as_completed(futures):
             future.result()
@@ -243,10 +244,9 @@ def write_starfiles(merged_particles_df: pd.DataFrame, particle_optics_df: pd.Da
 
 def extract_subtomograms(
     particles_starfile: str,
-    particles_tomo_name_prefix: str,
     box_size: int,
     bin: int,
-    tiltseries_dir: Path,
+    tiltseries_relative_dir: Path,
     tomograms_starfile: str,
     float16: bool,
     no_ctf: bool,
@@ -264,28 +264,18 @@ def extract_subtomograms(
     particles_star_file = starfile.read(particles_starfile)
     particles_df = particles_star_file["particles"]
     # tiltseries files with per-tilt / per-section entries
-    individual_tiltseries_files = [f for f in tiltseries_dir.glob("*.star")]
-    if len(individual_tiltseries_files) == 0:
-        raise ValueError(f"No tiltseries files found in {tiltseries_dir}. Expected files with .star extension.")
-    individual_tiltseries_files.sort()
-    logger.debug(f"Found tiltseries files: {individual_tiltseries_files}")
 
     # TODO: filter list by what is in the tomograms star file
     tomograms_df = starfile.read(tomograms_starfile)
 
-    def build_args(individual_tiltseries_file: Path) -> tuple:
+    def build_args(tiltseries_row_entry: pd.Series) -> tuple:
         """Builds the arguments for processing a single tiltseries and its particles (to be passed into process_tiltseries)."""
-        individual_tiltseries_path = individual_tiltseries_file
-        particles_tomo_name = f"{particles_tomo_name_prefix}{individual_tiltseries_file.stem}"
-        filtered_particles_df = particles_df[particles_df["rlnTomoName"] == particles_tomo_name]
-        tiltseries_row_entry = tomograms_df[tomograms_df["rlnTomoName"] == particles_tomo_name]
+        individual_tiltseries_path = tiltseries_relative_dir / tiltseries_row_entry["rlnTomoTiltSeriesStarFile"]
+        filtered_particles_df = particles_df[particles_df["rlnTomoName"] == tiltseries_row_entry["rlnTomoName"]]
         if filtered_particles_df.empty:
-            raise ValueError(f"No particles found for tomogram {particles_tomo_name} in {particles_starfile}. Please check the particles star file.")
-        if tiltseries_row_entry.empty:
-            raise ValueError(f"No tiltseries entry found for tomogram {particles_tomo_name} in {tomograms_df}. Please check the tomograms star file.")
-        optics_row = particles_star_file["optics"][particles_star_file["optics"]["rlnOpticsGroupName"] == tiltseries_row_entry["rlnOpticsGroupName"].values[0]]
+            raise ValueError(f"No particles found for tomogram {tiltseries_row_entry["rlnTomoName"]} in {particles_starfile}. Please check the particles star file.")
+        optics_row = particles_star_file["optics"][particles_star_file["optics"]["rlnOpticsGroupName"] == tiltseries_row_entry["rlnOpticsGroupName"]]
         return (
-            particles_tomo_name,
             filtered_particles_df,
             box_size,
             bin,
@@ -297,14 +287,17 @@ def extract_subtomograms(
             no_circle_crop,
             output_dir,
         )
+    
+    if "rlnTomoTiltSeriesStarFile" not in tomograms_df.columns:
+        raise ValueError(f"Tomograms star file {tomograms_starfile} does not contain the required column 'rlnTomoTiltSeriesStarFile'. Please check the file.")
 
-    args_list = [build_args(individual_tiltseries_file) for individual_tiltseries_file in individual_tiltseries_files]
+    args_list = [build_args(tiltseries_row_entry) for _, tiltseries_row_entry in tomograms_df.iterrows()]
 
     # do actual subtomogram extraction & .mrcs file creation here
     total_skipped_count = 0
     particles_df_results = []
-    cpu_count = min(64, mp.cpu_count(), len(individual_tiltseries_files))
-    logger.info(f"Starting extraction of subtomograms from {len(individual_tiltseries_files)} tiltseries using {cpu_count} CPU cores.")
+    cpu_count = min(64, mp.cpu_count(), len(tomograms_df))
+    logger.info(f"Starting extraction of subtomograms from {len(tomograms_df)} tiltseries using {cpu_count} CPU cores.")
     with mp.Pool(processes=cpu_count) as pool:
         for updated_filtered_particles_df, skipped_count in tqdm(pool.imap_unordered(process_tiltseries, args_list, chunksize=1), total=len(args_list)):
             if updated_filtered_particles_df is not None and not updated_filtered_particles_df.empty:
@@ -318,24 +311,21 @@ def extract_subtomograms(
     # update all the relevant star files
     write_starfiles(merged_particles_df, particles_star_file["optics"], tomograms_starfile, box_size, bin, no_ctf, output_dir)
 
-    return len(merged_particles_df), total_skipped_count, len(individual_tiltseries_files)
+    return len(merged_particles_df), total_skipped_count, len(tomograms_df)
 
 
 def parse_extract_local_subtomograms(args):
     start_time = time.time()
     if not args.particles_starfile.exists():
         raise FileNotFoundError(f"Particles star file '{args.particles_starfile}' does not exist.")
-    if not args.tiltseries_dir.exists():
-        raise FileNotFoundError(f"Tiltseries directory '{args.tiltseries_dir}' does not exist.")
     if not args.tomograms_starfile.exists():
         raise FileNotFoundError(f"Tomograms star file '{args.tomograms_starfile}' does not exist.")
 
     particles_count, total_skipped_count, individual_tiltseries_count = extract_subtomograms(
         particles_starfile=args.particles_starfile,
-        particles_tomo_name_prefix=args.particles_tomo_name_prefix,
         box_size=args.box_size,
         bin=args.bin,
-        tiltseries_dir=args.tiltseries_dir,
+        tiltseries_relative_dir=args.tiltseries_relative_dir,
         tomograms_starfile=args.tomograms_starfile,
         float16=args.float16,
         no_ctf=args.no_ctf,
@@ -350,11 +340,11 @@ def parse_extract_local_subtomograms(args):
 
 def parse_extract_data_portal_subtomograms(args):
     start_time = time.time()
-    particles_path, tomograms_path, tiltseries_folder_path = generate_starfiles(
-        annotation_ids=args.annotation_ids,
-        run_ids=[args.run_id],
-        annotation_names=args.annotation_names,
+    data_portal_args = {arg_ref: getattr(args, arg_ref) for arg_ref in args_common.DATA_PORTAL_ARG_REFS}
+
+    particles_path, tomograms_path, _ = generate_starfiles(
         output_dir=args.output_dir,
+        **data_portal_args,
         debug=args.debug,
     )
 
@@ -366,10 +356,9 @@ def parse_extract_data_portal_subtomograms(args):
 
     particles_count, total_skipped_count, individual_tiltseries_count = extract_subtomograms(
         particles_starfile=particles_path,
-        particles_tomo_name_prefix="",
         box_size=args.box_size,
         bin=args.bin,
-        tiltseries_dir=tiltseries_folder_path,
+        tiltseries_relative_dir=args.output_dir,
         tomograms_starfile=tomograms_path,
         float16=args.float16,
         no_ctf=args.no_ctf,
@@ -398,21 +387,13 @@ def main():
     local = subparser.add_parser("local", parents=[common_parser], help="Extract subtomograms from local files (particles, tiltseries, and alignment files).")
     # TODO: support multiple starfiles
     local.add_argument("--particles-starfile", type=Path, required=True, help="Path to the particles *.star file.")
-    local.add_argument(
-        "--particles-tomo-name-prefix",
-        type=str,
-        default="",
-        help="An added prefix to the tomogram names in the particles star file. Used to properly match the particles to the tiltseries and alignment files.",
-    )
-    local.add_argument("--tiltseries-dir", type=Path, required=True, help="Path to the tiltseries directory containing *.star files (individual tiltseries, with entries as individual tilts).")
+    local.add_argument("--tiltseries-relative-dir", type=Path, default="./", help="The directory in which the tiltseries file paths are relative to. Default is the current directory.")
     local.add_argument("--tomograms-starfile", type=Path, required=True, help="Path to the tomograms.star file (containing all tiltseries entries, with entries as tiltseries).")
     # TODO: Make this a filter for only running extraction on specific tiltseries
     # parser.add_argument("--tiltseries-pixel-size", type=float, required=True, help="Pixel size of the tiltseries in Angstroms.")
 
     data_portal = subparser.add_parser("data-portal", parents=[common_parser], help="Extract subtomograms from a CryoET Data Portal run.")
-    data_portal.add_argument("--annotation-ids", type=int, nargs="*", help="ID(s) of the annotation(s) to use for generating the star file.")
-    data_portal.add_argument("--run-id", type=str, required=True, help="ID of the CryoET Data Portal run to extract subtomograms from.")
-    data_portal.add_argument("--annotation-names", type=str, nargs="+", required=True, help="Names of the annotations to extract subtomograms from. Can be multiple names.")
+    args_common.add_data_portal_args(data_portal)
 
     args = parser.parse_args()
 
