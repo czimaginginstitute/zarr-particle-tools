@@ -3,8 +3,8 @@ Primary entry point for extracting subtomograms from a CryoET Data Portal run.
 Run python data_portal_subtomo_extract.py --help for usage instructions.
 """
 
-import argparse
 import logging
+import click
 import starfile
 import numpy as np
 import pandas as pd
@@ -17,7 +17,7 @@ from scipy.ndimage import fourier_shift
 from typing import Union
 from tqdm import tqdm
 
-import utils.args_common as args_common
+import cli.options as cli_options
 from core.projection import get_particles_to_tiltseries_coordinates, fourier_crop, get_particle_crop_and_visibility, calculate_projection_matrix_from_starfile_df
 from core.mask import circular_mask, circular_soft_mask
 from core.dose import calculate_dose_weight_image
@@ -79,7 +79,7 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
     individual_tiltseries_df = starfile.read(individual_tiltseries_path)
     if individual_tiltseries_df.empty:
         raise ValueError(f"Tiltseries file {individual_tiltseries_path} is empty or does not contain the required columns. Please check the file.")
-    
+
     if TILTSERIES_URI_RELION_COLUMN in individual_tiltseries_df.columns:
         tiltseries_data_locators = individual_tiltseries_df[TILTSERIES_URI_RELION_COLUMN].to_list()
     else:
@@ -87,7 +87,7 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
     if len(set(tiltseries_data_locators)) != 1:
         raise ValueError(f"Multiple tiltseries data locators found: {set(tiltseries_data_locators)}. This is not supported.")
     tiltseries_data_locator = tiltseries_data_locators[0]
-    if not tiltseries_data_locator.startswith("s3://") and not tiltseries_data_locator.startswith("/"): # assume it's a local relative path, relative to the tiltseries file
+    if not tiltseries_data_locator.startswith("s3://") and not tiltseries_data_locator.startswith("/"):  # assume it's a local relative path, relative to the tiltseries file
         tiltseries_data_locator = individual_tiltseries_path.parent / tiltseries_data_locator
     tiltseries_data = DataReader(str(tiltseries_data_locator))
 
@@ -111,7 +111,9 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
     defocus_v = individual_tiltseries_df["rlnDefocusV"].values
     defocus_angle = individual_tiltseries_df["rlnDefocusAngle"].values
     doses = individual_tiltseries_df["rlnMicrographPreExposure"].values
-    bfactor_per_electron_dose = individual_tiltseries_df["rlnCtfBfactorPerElectronDose"] if "rlnCtfBfactorPerElectronDose" in individual_tiltseries_df.columns else [0.0] * len(individual_tiltseries_df)
+    bfactor_per_electron_dose = (
+        individual_tiltseries_df["rlnCtfBfactorPerElectronDose"] if "rlnCtfBfactorPerElectronDose" in individual_tiltseries_df.columns else [0.0] * len(individual_tiltseries_df)
+    )
     dose_weights = np.stack([calculate_dose_weight_image(dose, tiltseries_pixel_size * bin, box_size, bfactor) for dose, bfactor in zip(doses, bfactor_per_electron_dose)], dtype=np.float32)
 
     all_particle_data = []
@@ -133,7 +135,7 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
         all_visible_sections_relion_column.append(str(visible_sections).replace(" ", ""))
 
     start_time = time.time()
-    tiltseries_data.compute_crops() # compute all cached slices
+    tiltseries_data.compute_crops()  # compute all cached slices
     end_time = time.time()
     logger.debug(f"Downloading crops took {end_time - start_time:.2f} seconds")
 
@@ -194,7 +196,7 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
             mrc.voxel_size = (tiltseries_pixel_size * bin, tiltseries_pixel_size * bin, 1.0)
 
     start_time = time.time()
-    with ThreadPoolExecutor(max_workers=4) as executor: # emperically determined 4 threads is optimal for this task
+    with ThreadPoolExecutor(max_workers=4) as executor:  # emperically determined 4 threads is optimal for this task
         futures = [executor.submit(process_particle_data, particle_data) for particle_data in all_particle_data]
         for future in as_completed(futures):
             future.result()
@@ -257,7 +259,7 @@ def extract_subtomograms(
     Extracts subtomograms from a provided particles *.star file, tiltseries *.star file, and set of *.aln files.
     Creates new *.mrcs files for each particle in the output directory, as well as updated particles and optimisation set star files.
     Uses multiprocessing to speed up the extraction process.
-    
+
     Returns:
         tuple: Number of particles extracted, number of skipped particles, number of tiltseries processed.
     """
@@ -287,7 +289,7 @@ def extract_subtomograms(
             no_circle_crop,
             output_dir,
         )
-    
+
     if "rlnTomoTiltSeriesStarFile" not in tomograms_df.columns:
         raise ValueError(f"Tomograms star file {tomograms_starfile} does not contain the required column 'rlnTomoTiltSeriesStarFile'. Please check the file.")
 
@@ -314,23 +316,47 @@ def extract_subtomograms(
     return len(merged_particles_df), total_skipped_count, len(tomograms_df)
 
 
-def parse_extract_local_subtomograms(args):
+def validate_and_setup(
+    box_size: int,
+    output_dir: Path,
+    debug: bool,
+) -> None:
+    if box_size % 2 != 0:
+        raise click.BadParameter(f"Box size must be an even number, got {box_size}.")
+
+    (output_dir / "Subtomograms").mkdir(parents=True, exist_ok=True)
+
+    logging.basicConfig(
+        level=logging.DEBUG if debug else logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+    )
+
+
+def parse_extract_local_subtomograms(
+    particles_starfile: Path,
+    tomograms_starfile: Path,
+    box_size: int,
+    bin: int,
+    tiltseries_relative_dir: Path,
+    float16: bool,
+    no_ctf: bool,
+    no_circle_crop: bool,
+    output_dir: Path,
+    debug: bool,
+) -> None:
     start_time = time.time()
-    if not args.particles_starfile.exists():
-        raise FileNotFoundError(f"Particles star file '{args.particles_starfile}' does not exist.")
-    if not args.tomograms_starfile.exists():
-        raise FileNotFoundError(f"Tomograms star file '{args.tomograms_starfile}' does not exist.")
+    validate_and_setup(box_size, output_dir, debug)
 
     particles_count, total_skipped_count, individual_tiltseries_count = extract_subtomograms(
-        particles_starfile=args.particles_starfile,
-        box_size=args.box_size,
-        bin=args.bin,
-        tiltseries_relative_dir=args.tiltseries_relative_dir,
-        tomograms_starfile=args.tomograms_starfile,
-        float16=args.float16,
-        no_ctf=args.no_ctf,
-        no_circle_crop=args.no_circle_crop,
-        output_dir=args.output_dir,
+        particles_starfile=particles_starfile,
+        box_size=box_size,
+        bin=bin,
+        tiltseries_relative_dir=tiltseries_relative_dir,
+        tomograms_starfile=tomograms_starfile,
+        float16=float16,
+        no_ctf=no_ctf,
+        no_circle_crop=no_circle_crop,
+        output_dir=output_dir,
     )
     end_time = time.time()
     logger.info(
@@ -338,32 +364,41 @@ def parse_extract_local_subtomograms(args):
     )
 
 
-def parse_extract_data_portal_subtomograms(args):
+def parse_extract_data_portal_subtomograms(
+    box_size: int,
+    bin: int,
+    float16: bool,
+    no_ctf: bool,
+    no_circle_crop: bool,
+    output_dir: Path,
+    debug: bool,
+    **data_portal_args,
+) -> None:
     start_time = time.time()
-    data_portal_args = {arg_ref: getattr(args, arg_ref) for arg_ref in args_common.DATA_PORTAL_ARG_REFS}
+    validate_and_setup(box_size, output_dir, debug)
 
     particles_path, tomograms_path, _ = generate_starfiles(
-        output_dir=args.output_dir,
+        output_dir=output_dir,
         **data_portal_args,
-        debug=args.debug,
+        debug=debug,
     )
 
     if not particles_path.exists():
         raise ValueError(f"Starfile generation failed. Expected particles star file at {particles_path} does not exist.")
-    
+
     if not tomograms_path.exists():
         raise ValueError(f"Starfile generation failed. Expected tomograms star file at {tomograms_path} does not exist.")
 
     particles_count, total_skipped_count, individual_tiltseries_count = extract_subtomograms(
         particles_starfile=particles_path,
-        box_size=args.box_size,
-        bin=args.bin,
-        tiltseries_relative_dir=args.output_dir,
+        box_size=box_size,
+        bin=bin,
+        tiltseries_relative_dir=output_dir,
         tomograms_starfile=tomograms_path,
-        float16=args.float16,
-        no_ctf=args.no_ctf,
-        no_circle_crop=args.no_circle_crop,
-        output_dir=args.output_dir,
+        float16=float16,
+        no_ctf=no_ctf,
+        no_circle_crop=no_circle_crop,
+        output_dir=output_dir,
     )
 
     end_time = time.time()
@@ -371,44 +406,26 @@ def parse_extract_data_portal_subtomograms(args):
         f"Subtomogram extraction completed in {end_time - start_time:.2f} seconds. Extracted {particles_count} particles from {individual_tiltseries_count} tiltseries, skipped {total_skipped_count} particles due to out-of-bounds coordinates."
     )
 
-def main():
-    parser = argparse.ArgumentParser(description="Extract subtomograms from a provided particles *.star file, and tiltseries *.star files.")
-    subparser = parser.add_subparsers(dest="command", required=True)
 
-    common_parser = argparse.ArgumentParser(add_help=False)
-    common_parser.add_argument("--box-size", type=int, required=True, help="Box size of the extracted subtomograms in pixels.")
-    common_parser.add_argument("--bin", type=int, default=1, help="Binning factor for the subtomograms. Default is 1 (no binning).")
-    common_parser.add_argument("--float16", action="store_true", help="Use float16 precision for the output mrcs files. Default is False (float32).")
-    common_parser.add_argument("--no-ctf", action="store_true", help="Disable CTF premultiplication.")
-    common_parser.add_argument("--no-circle-crop", action="store_true", help="Disable circular cropping of the subtomograms")
-    common_parser.add_argument("--output-dir", type=Path, required=True, help="Path to the output directory where the extracted subtomograms will be saved.")
-    common_parser.add_argument("--debug", action="store_true", help="Enable debug logging.")
+@click.group("Extract subtomograms from a provided particles *.star file, and tiltseries *.star files.")
+def cli():
+    pass
 
-    local = subparser.add_parser("local", parents=[common_parser], help="Extract subtomograms from local files (particles, tiltseries, and alignment files).")
-    # TODO: support multiple starfiles
-    local.add_argument("--particles-starfile", type=Path, required=True, help="Path to the particles *.star file.")
-    local.add_argument("--tiltseries-relative-dir", type=Path, default="./", help="The directory in which the tiltseries file paths are relative to. Default is the current directory.")
-    local.add_argument("--tomograms-starfile", type=Path, required=True, help="Path to the tomograms.star file (containing all tiltseries entries, with entries as tiltseries).")
-    # TODO: Make this a filter for only running extraction on specific tiltseries
-    # parser.add_argument("--tiltseries-pixel-size", type=float, required=True, help="Pixel size of the tiltseries in Angstroms.")
 
-    data_portal = subparser.add_parser("data-portal", parents=[common_parser], help="Extract subtomograms from a CryoET Data Portal run.")
-    args_common.add_data_portal_args(data_portal)
+@cli.command("local", help="Extract subtomograms from local files (particles, tiltseries, and alignment files).")
+@cli_options.local_options()
+@cli_options.common_options()
+def cmd_local(**kwargs):
+    parse_extract_local_subtomograms(**kwargs)
 
-    args = parser.parse_args()
 
-    if args.box_size % 2 != 0:
-        raise ValueError(f"Box size must be an even number, got {args.box_size}.")
-
-    (args.output_dir / "Subtomograms").mkdir(parents=True, exist_ok=True)
-
-    logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-
-    if args.command == "local":
-        parse_extract_local_subtomograms(args)
-    elif args.command == "data-portal":
-        parse_extract_data_portal_subtomograms(args)
+@cli.command("data-portal", help="Extract subtomograms from a CryoET Data Portal run.")
+@cli_options.common_options()
+@cli_options.data_portal_options()
+def cmd_data_portal(**kwargs):
+    kwargs = cli_options.flatten_data_portal_args(kwargs)
+    parse_extract_data_portal_subtomograms(**kwargs)
 
 
 if __name__ == "__main__":
-    main()
+    cli()

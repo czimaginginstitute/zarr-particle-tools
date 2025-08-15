@@ -28,6 +28,7 @@ pip install -r requirements.txt
 python data_portal_subtomo_extract.py local \
   --particles-starfile tests/data/relion_project_synthetic/particles.star \
   --tomograms-starfile tests/data/relion_project_synthetic/tomograms.star \
+  --tiltseries-relative-dir tests/data/relion_project_synthetic/ \
   --output-dir tests/output/sample_local_test/ \
   --box-size 16 --bin 4
 ```
@@ -36,6 +37,7 @@ python data_portal_subtomo_extract.py local \
 python data_portal_subtomo_extract.py local \
   --particles-starfile tests/data/relion_project_unroofing/particles.star \
   --tomograms-starfile tests/data/relion_project_unroofing/tomograms.star \
+  --tiltseries-relative-dir tests/data/relion_project_unroofing/ \
   --output-dir tests/output/sample_local_test/ \
   --box-size 64 --bin 1 --no-ctf --no-circle-crop
 ```

@@ -12,12 +12,13 @@ For each specified section, it generates:
 3. A statistical summary printed to the console.
 """
 
-import argparse
+import click
 import mrcfile
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
+from cli.types import INT_LIST
 
 
 def print_statistics(name: str, data: np.ndarray, is_percent: bool = False) -> None:
@@ -197,55 +198,55 @@ def compare_mrcs(
             )
 
 
-def main():
+@click.command(help="Compare 2D sections of two MRC files in real and Fourier space.")
+@click.option(
+    "--mock-mrc-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    required=True,
+    help="Path to the first (mock) MRC file.",
+)
+@click.option(
+    "--relion-mrc-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    required=True,
+    help="Path to the second (RELION) MRC file.",
+)
+@click.option(
+    "--sections",
+    type=INT_LIST,
+    required=True,
+    help="One or more space-separated section numbers to compare (e.g., 0 5 10).",
+)
+@click.option(
+    "--output-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=Path("./mrc_comparison_results"),
+    show_default=True,
+    help="Directory to save the output plots.",
+)
+def cli(
+    mock_mrc_file: Path,
+    relion_mrc_file: Path,
+    sections: list[int],
+    output_dir: Path,
+) -> None:
     """
     Main function to parse arguments and run the comparison.
     """
-    parser = argparse.ArgumentParser(
-        description="Compare 2D sections of two MRC files in real and Fourier space.",
-        formatter_class=argparse.RawTextHelpFormatter,
-    )
-    parser.add_argument(
-        "--mock-mrc-file",
-        type=Path,
-        required=True,
-        help="Path to the first (mock) MRC file.",
-    )
-    parser.add_argument(
-        "--relion-mrc-file",
-        type=Path,
-        required=True,
-        help="Path to the second (RELION) MRC file.",
-    )
-    parser.add_argument(
-        "--sections",
-        type=int,
-        nargs="+",
-        required=True,
-        help="One or more space-separated section numbers to compare (e.g., 0 5 10).",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=Path("./mrc_comparison_results"),
-        help="Directory to save the output plots.",
-    )
-    args = parser.parse_args()
-
     compare_mrcs(
-        mock_mrc_file=args.mock_mrc_file,
-        relion_mrc_file=args.relion_mrc_file,
-        sections=args.sections,
-        output_dir=args.output_dir,
+        mock_mrc_file=mock_mrc_file,
+        relion_mrc_file=relion_mrc_file,
+        sections=sections,
+        output_dir=output_dir,
     )
 
 
 if __name__ == "__main__":
-    main()
+    cli()
 
 
 # Example usage:
-# python utils/compare_mrcs.py \
+# python tools/compare_mrcs.py \
 # --mock-mrc-file tests/output/unroofing_noctf_nocirclecrop/Subtomograms/session1_16849/1_stack2d.mrcs \
 # --relion-mrc-file tests/data/relion_project_unroofing/relion_output_noctf_nocirclecrop/Subtomograms/session1_16849/1_stack2d.mrcs \
-# --sections 1 6 11 16 21 26 31
+# --sections 1,6,11,16,21,26,31

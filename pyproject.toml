@@ -22,7 +22,8 @@ dependencies = [
     "s3fs",
     "cryoet_data_portal",
     "cryoet_alignment",
-    "dask"
+    "dask",
+    "click",
 ]
 
 

@@ -21,13 +21,13 @@ Generates:
 # - across multiple runs
 # - across multiple datasets
 # - across multiple deposition ids
-import argparse
 import logging
 import json
 import time
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import click
 import pandas as pd
 import numpy as np
 import starfile
@@ -36,7 +36,7 @@ import cryoet_data_portal as cdp
 from tqdm import tqdm
 
 import generate.cdp_cache as cdp_cache
-import utils.args_common as args_common
+import cli.options as cli_options
 from generate.constants import (
     THREAD_POOL_WORKER_COUNT,
     TILTSERIES_MRCS_PLACEHOLDER,
@@ -530,20 +530,17 @@ def generate_starfiles(
     return generate_starfiles_from_annotation_files(annotation_files, output_dir, use_tqdm=use_tqdm)
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Generate star files needed for subtomogram extraction from a CryoET Data Portal run.")
-    args_common.add_data_portal_args(parser)
-    parser.add_argument("--output-dir", type=Path, required=True, help="Directory where star files will be saved.")
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging.")
-
-    args = parser.parse_args()
-
-    data_portal_args = {arg_ref: getattr(args, arg_ref) for arg_ref in args_common.DATA_PORTAL_ARG_REFS}
-    generate_starfiles(output_dir=args.output_dir, **data_portal_args, debug=args.debug, use_tqdm=True)
+@click.command(help="Generate star files needed for subtomogram extraction from a CryoET Data Portal run.")
+@cli_options.data_portal_options()
+@click.option("--output-dir", type=click.Path(exists=True, file_okay=False, dir_okay=True, writable=True, resolve_path=True), required=True, help="Directory where star files will be saved.")
+@click.option("--debug", is_flag=True, help="Enable debug logging.")
+def cli(**kwargs):
+    kwargs = cli_options.flatten_data_portal_args(kwargs)
+    generate_starfiles(output_dir=kwargs["output_dir"], **kwargs, debug=kwargs["debug"], use_tqdm=True)
 
 
 if __name__ == "__main__":
-    main()
+    cli()
 
 # Example usage:
 # python generate/generate_starfile.py --run-ids 16463 --annotation-names ribosome --output-dir tests/output/data_portal_16363_ribosome

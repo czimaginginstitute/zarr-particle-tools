@@ -5,7 +5,8 @@ import sys
 import pytest
 import shutil
 from pathlib import Path
-from data_portal_subtomo_extract import extract_subtomograms, main as cli_main
+from click.testing import CliRunner
+from data_portal_subtomo_extract import extract_subtomograms, cli
 
 DATASET_CONFIGS = {
     "synthetic": {
@@ -62,6 +63,7 @@ def test_extract_local_subtomograms_parametrized(
         particles_starfile=data_root / "particles.star",
         box_size=extract_arguments.get("box_size"),
         bin=extract_arguments.get("bin"),
+        tiltseries_relative_dir=data_root,
         tomograms_starfile=data_root / "tomograms.star",
         float16=float16,
         no_ctf=extract_arguments.get("no_ctf", False),
@@ -92,7 +94,7 @@ def test_extract_local_subtomograms_parametrized(
     ],
     ids=["unroofing_baseline", "synthetic_box16_bin4_noctf_nocirclecrop"],
 )
-def test_cli_main_extract_local(monkeypatch, tmp_path, compare_mrcs_dirs, dataset, extract_suffix):
+def test_cli_extract_local(monkeypatch, tmp_path, compare_mrcs_dirs, dataset, extract_suffix):
     dataset_config = DATASET_CONFIGS[dataset]
     extract_arguments = EXTRACTION_PARAMETERS[extract_suffix]
 
@@ -100,10 +102,11 @@ def test_cli_main_extract_local(monkeypatch, tmp_path, compare_mrcs_dirs, datase
     data_root = dataset_config["data_root"]
 
     args = [
-        "main.py",
         "local",
         "--particles-starfile",
         str(data_root / "particles.star"),
+        "--tiltseries-relative-dir",
+        str(data_root),
         "--tomograms-starfile",
         str(data_root / "tomograms.star"),
         "--box-size",
@@ -121,8 +124,10 @@ def test_cli_main_extract_local(monkeypatch, tmp_path, compare_mrcs_dirs, datase
     if extract_arguments.get("no_circle_crop"):
         args.append("--no-circle-crop")
 
-    monkeypatch.setattr(sys, "argv", args)
-    cli_main()
+    runner = CliRunner()
+    result = runner.invoke(cli, args)
+
+    assert result.exit_code == 0, f"CLI failed: {result.output}"
 
     subtomo_dir = output_dir / "Subtomograms/"
     relion_dir = data_root / f"relion_output_{extract_suffix}/Subtomograms/"
@@ -133,5 +138,5 @@ def test_cli_main_extract_local(monkeypatch, tmp_path, compare_mrcs_dirs, datase
         compare_mrcs_dirs(relion_dir, subtomo_dir, tol=dataset_config["tol"])
 
 
-# def test_cli_main_extract_data_portal(monkeypatch, tmp_path, compare_mrcs_dirs, dataset, extract_suffix):
+# def test_cli_extract_data_portal(monkeypatch, tmp_path, compare_mrcs_dirs, dataset, extract_suffix):
 #     pass
