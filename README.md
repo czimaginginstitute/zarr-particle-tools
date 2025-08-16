@@ -18,9 +18,9 @@ conda create -n portal-particle-extraction python=3.12
 conda activate portal-particle-extraction
 ```
 
-And then install from requirements.txt:
+And then install via poetry:
 ```bash
-pip install -r requirements.txt
+poetry install
 ```
 
 ## Example runs
