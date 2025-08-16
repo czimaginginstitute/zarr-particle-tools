@@ -10,17 +10,6 @@ Generates:
 - tiltseries/*.star files for each tiltseries in the run.
 """
 
-# TODO: add tests - with all possible parameters and edge cases, including:
-# - no annotations
-# - no alignments
-# - no tiltseries
-# - no CTF parameters
-# - across multiple tomograms
-# - across multiple alignments
-# - across multiple tiltseries
-# - across multiple runs
-# - across multiple datasets
-# - across multiple deposition ids
 import logging
 import json
 import time
@@ -34,6 +23,7 @@ import starfile
 import mrcfile
 import cryoet_data_portal as cdp
 from tqdm import tqdm
+from scipy.spatial.transform import Rotation
 
 import generate.cdp_cache as cdp_cache
 import cli.options as cli_options
@@ -69,8 +59,12 @@ def get_particles_df_optics_df_from_file(annotation_file: cdp.AnnotationFile, al
     optics_df = pd.DataFrame(columns=OPTICS_DF_COLUMNS)
     particles_df = pd.DataFrame(columns=PARTICLES_DF_COLUMNS)
 
-    if not alignment or not cdp_cache.get_per_section_alignments_by_alignment_id(alignment.id) or not tiltseries or not cdp_cache.get_per_section_parameters_by_tiltseries_id(tiltseries.id):
-        logger.error(f"[Run {alignment.run_id}, Annotation File {annotation_file.id}] Missing alignment or tiltseries information. Skipping file.")
+    if not cdp_cache.get_per_section_alignments_by_alignment_id(alignment.id):
+        logger.error(f"[Run {alignment.run_id}, Annotation File {annotation_file.id} Alignment {alignment.id}] Missing alignment information. Skipping file.")
+        return optics_df, particles_df
+
+    if not cdp_cache.get_per_section_parameters_by_tiltseries_id(tiltseries.id):
+        logger.error(f"[Run {alignment.run_id}, Annotation File {annotation_file.id} TiltSeries {tiltseries.id}] Missing tiltseries CTF parameters. Skipping file.")
         return optics_df, particles_df
 
     tomogram_data = set(
@@ -111,24 +105,34 @@ def get_particles_df_optics_df_from_file(annotation_file: cdp.AnnotationFile, al
         for p in pixel_coordinates
     ]
 
+    # rot, tilt, psi
+    euler_angles = (
+        [Rotation.from_matrix(np.linalg.inv(d["xyz_rotation_matrix"])).as_euler("ZYZ", degrees=True) for d in json_point_data]
+        if "xyz_rotation_matrix" in json_point_data[0]
+        else [(0, 0, 0)] * len(pixel_coordinates)
+    )
+
+    # TODO: Support OrientedPoint annotations with orientation information
     particles_list = [
         {
             "rlnTomoName": tomo_name,
             "rlnCoordinateX": p[0],
             "rlnCoordinateY": p[1],
             "rlnCoordinateZ": p[2],
-            "rlnAngleRot": 0,
-            "rlnAngleTilt": 0,
-            "rlnAnglePsi": 0,
+            "rlnAngleRot": e[0],
+            "rlnAngleTilt": e[1],
+            "rlnAnglePsi": e[2],
             "rlnCenteredCoordinateXAngst": c[0],
             "rlnCenteredCoordinateYAngst": c[1],
             "rlnCenteredCoordinateZAngst": c[2],
             "rlnOpticsGroupName": optics_group_name,
             "rlnOpticsGroup": 1,
         }
-        for p, c in zip(pixel_coordinates, centered_coordinates)
+        for p, c, e in zip(pixel_coordinates, centered_coordinates, euler_angles)
     ]
     particles_df = pd.DataFrame(particles_list, columns=particles_df.columns)
+
+    logger.debug(f"[Run {alignment.run_id}, Annotation File {annotation_file.id}] Processed {len(particles_df)} particles with optics group '{optics_group_name}'.")
 
     return optics_df, particles_df
 
@@ -146,8 +150,37 @@ def get_particles_df_optics_df(annotation_files: list[cdp.AnnotationFile], use_t
     all_optics_dfs: list[pd.DataFrame] = []
     all_particles_dfs: list[pd.DataFrame] = []
 
-    alignments = cdp_cache.get_alignments([file.alignment_id for file in annotation_files])
+    alignments = cdp_cache.get_alignments([file.alignment_id for file in annotation_files if file.alignment_id])
+    # filter out alignments that do not have a valid tiltseries
+    removed_alignments = [a.id for a in alignments.values() if not a.tiltseries_id]
+    if removed_alignments:
+        logger.error(f"Removed {len(removed_alignments)}/{len(alignments)} alignments due to missing tiltseries: {removed_alignments}")
+    alignments = {a.id: a for a in alignments.values() if a and a.tiltseries_id}
+
     tiltseries = cdp_cache.get_tiltseries([alignment.tiltseries_id for alignment in alignments.values()])
+    per_section_parameters = cdp_cache.get_per_section_parameters_by_tiltseries_id([t.id for t in tiltseries.values()])
+    # filter out tiltseries that do not have valid CTF parameters
+    removed_tiltseries = [t.id for t in tiltseries.values() if not per_section_parameters.get(t.id)]
+    if removed_tiltseries:
+        logger.error(f"Removed {len(removed_tiltseries)}/{len(tiltseries)} tiltseries due to missing CTF parameters: {removed_tiltseries}")
+    tiltseries = {t.id: t for t in tiltseries.values() if per_section_parameters.get(t.id)}
+
+    # filter out the alignments that do not have valid tiltseries
+    removed_alignments = [a.id for a in alignments.values() if a.tiltseries_id not in tiltseries]
+    if removed_alignments:
+        logger.error(f"Removed {len(removed_alignments)}/{len(alignments)} alignments due to missing tiltseries' CTF parameters: {removed_alignments}")
+    alignments = {a.id: a for a in alignments.values() if a and a.tiltseries_id in tiltseries}
+
+    # filter out files that do not have a valid alignment / tiltseries / CTF parameters
+    removed_annotation_files = [file.id for file in annotation_files if file.alignment_id not in alignments]
+    if removed_annotation_files:
+        logger.error(f"Removed {len(removed_annotation_files)}/{len(annotation_files)} annotation files due to missing alignments / tiltseries / CTF parameters: {removed_annotation_files}")
+    annotation_files = [file for file in annotation_files if file.alignment_id in alignments]
+    if not annotation_files:
+        raise ValueError("No valid annotation files found. Ensure the annotations contain valid Point or OrientedPoint shapes, and their datasets have tiltseries and alignment information.")
+
+    logger.debug(f"Processing {len(annotation_files)} annotation files with {len(alignments)} alignments and {len(tiltseries)} tiltseries ...")
+
     with ThreadPoolExecutor(max_workers=THREAD_POOL_WORKER_COUNT) as thread_pool:
         futures = [thread_pool.submit(get_particles_df_optics_df_from_file, file, alignments[file.alignment_id], tiltseries[alignments[file.alignment_id].tiltseries_id]) for file in annotation_files]
 
@@ -472,7 +505,7 @@ def resolve_annotation_files(
 
 
 def generate_starfiles(
-    output_dir: Path,
+    output_dir: str | Path,
     deposition_ids: list[int] = None,
     deposition_titles: list[str] = None,
     dataset_ids: list[int] = None,
@@ -496,6 +529,8 @@ def generate_starfiles(
     Returns:
         tuple: A tuple containing the paths to the generated particles.star, tomograms.star, and the tiltseries folder.
     """
+    output_dir = Path(output_dir)
+
     if use_tqdm:
         handler = TqdmLoggingHandler()
         handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
@@ -532,11 +567,11 @@ def generate_starfiles(
 
 @click.command(help="Generate star files needed for subtomogram extraction from a CryoET Data Portal run.")
 @cli_options.data_portal_options()
-@click.option("--output-dir", type=click.Path(exists=True, file_okay=False, dir_okay=True, writable=True, resolve_path=True), required=True, help="Directory where star files will be saved.")
+@click.option("--output-dir", type=click.Path(file_okay=False, dir_okay=True, writable=True, resolve_path=True), required=True, help="Directory where star files will be saved.")
 @click.option("--debug", is_flag=True, help="Enable debug logging.")
 def cli(**kwargs):
     kwargs = cli_options.flatten_data_portal_args(kwargs)
-    generate_starfiles(output_dir=kwargs["output_dir"], **kwargs, debug=kwargs["debug"], use_tqdm=True)
+    generate_starfiles(**kwargs, use_tqdm=True)
 
 
 if __name__ == "__main__":

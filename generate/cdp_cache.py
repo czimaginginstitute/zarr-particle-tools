@@ -254,7 +254,8 @@ def get_per_section_alignments_by_alignment_id(alignment_ids: Union[list[int], i
 
 @hashable_lru_cache(maxsize=None)
 def get_per_section_parameters_by_tiltseries_id(tiltseries_ids: Union[list[int], int]) -> dict[int, list[PerSectionParameters]]:
-    return get_items_by_ids(
+    """Fetches per-section parameters (CTF information) by tiltseries ID. tiltseries with invalid / incomplete CTF parameters will have a None value in the returned dictionary."""
+    tiltseries_id_to_psp: dict[int, list[PerSectionParameters]] = get_items_by_ids(
         ids=tiltseries_ids,
         cache=per_section_parameters_cache,
         query_field=PerSectionParameters.tiltseries_id,
@@ -262,6 +263,10 @@ def get_per_section_parameters_by_tiltseries_id(tiltseries_ids: Union[list[int],
         key_extractor=lambda p: p.tiltseries_id,
         multiple_results=True,
     )
+    # filter out tiltseries that do not have valid CTF parameters
+    tiltseries_id_to_psp = {id: psp if all(p.major_defocus is not None for p in psp) else None for id, psp in tiltseries_id_to_psp.items()}
+
+    return tiltseries_id_to_psp
 
 
 @hashable_lru_cache(maxsize=None)

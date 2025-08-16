@@ -11,6 +11,8 @@ For each specified section, it generates:
    Fourier space.
 3. A statistical summary printed to the console.
 """
+import sys, os
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 import click
 import mrcfile
@@ -246,7 +248,7 @@ if __name__ == "__main__":
 
 
 # Example usage:
-# python tools/compare_mrcs.py \
+# python -m tools.compare_mrcs \
 # --mock-mrc-file tests/output/unroofing_noctf_nocirclecrop/Subtomograms/session1_16849/1_stack2d.mrcs \
 # --relion-mrc-file tests/data/relion_project_unroofing/relion_output_noctf_nocirclecrop/Subtomograms/session1_16849/1_stack2d.mrcs \
 # --sections 1,6,11,16,21,26,31

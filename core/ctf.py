@@ -2,6 +2,7 @@
 Helper functions for calculating the CTF and dose-weighting filters in Fourier space.
 """
 import numpy as np
+from functools import lru_cache
 from core.projection import project_3d_point_to_2d
 from core.dose import calculate_dose_weights
 
@@ -10,6 +11,63 @@ def get_depth_offset(tilt_projection_matrix: np.ndarray, coordinate: np.ndarray)
     projected_origin = project_3d_point_to_2d(np.array([0, 0, 0]), tilt_projection_matrix)
     return projected_point[2] - projected_origin[2]  # z coordinate in the projected space
 
+@lru_cache(maxsize=None)
+def _ctf_template(
+    voltage: float,
+    spherical_aberration: float,
+    amplitude_contrast: float,
+    handedness: int,
+    tiltseries_pixel_size: float,
+    phase_shift: float,
+    defocus_u: float,
+    defocus_v: float,
+    defocus_angle: float,
+    bfactor: float,
+    box_size: int,
+    bin: int,
+):
+    if amplitude_contrast < 0.0 or amplitude_contrast > 1.0:
+        raise ValueError("Amplitude contrast must be between 0 and 1.")
+    if handedness not in (1, -1):
+        raise ValueError("Handedness must be either 1 or -1.")
+    
+    voltage *= 1000  # kV to V
+    spherical_aberration *= 1e7  # mm to Angstroms
+    defocus_angle = np.deg2rad(defocus_angle)
+
+    # no longer used by latest RELION version, but kept for reference
+    # defocus_average = -1 * (defocus_u_corrected + defocus_v_corrected) / 2.0
+    # defocus_difference = -1 * (defocus_u_corrected - defocus_v_corrected) / 2.0
+
+    wavelength = 12.2643247 / np.sqrt(voltage * (1 + voltage * 0.978466e-6))
+
+    # constants, based on RELION's CTF::initialise
+    # K1 and K2: https://en.wikipedia.org/wiki/High-resolution_transmission_electron_microscopy#:~:text=transfer%20function.-,The%20phase%20contrast%20transfer%20function,-%5Bedit%5D
+    K1 = np.pi * wavelength
+    K2 = np.pi / 2 * spherical_aberration * wavelength**3
+    K3 = np.arctan(amplitude_contrast / np.sqrt(1 - amplitude_contrast**2))
+    K4 = -1 * bfactor / 4.0 # not used
+    K5 = np.deg2rad(phase_shift)
+
+    # for astigmatism correction
+    Q = np.array([
+        [np.cos(defocus_angle), np.sin(defocus_angle)],
+        [-np.sin(defocus_angle), np.cos(defocus_angle)]
+    ])
+    Q_t = np.array([
+        [np.cos(defocus_angle), -np.sin(defocus_angle)],
+        [np.sin(defocus_angle), np.cos(defocus_angle)]
+    ])
+
+    # fourier space coordinates
+    ky = np.fft.fftfreq(box_size, d=tiltseries_pixel_size * bin)
+    kx = np.fft.rfftfreq(box_size, d=tiltseries_pixel_size * bin)
+    ky_grid, kx_grid = np.meshgrid(ky, kx, indexing='ij')
+
+    u2 = kx_grid**2 + ky_grid**2
+    u4 = u2**2
+
+    return K1, K2, K3, K5, ky_grid, kx_grid, u2, u4, Q, Q_t
 
 def calculate_ctf(
     coordinate: np.ndarray,
@@ -53,47 +111,22 @@ def calculate_ctf(
         np.ndarray: A 2D array representing the CTF in Fourier space.
 
     """
-    if amplitude_contrast < 0.0 or amplitude_contrast > 1.0:
-        raise ValueError("Amplitude contrast must be between 0 and 1.")
-    if handedness != 1 and handedness != -1:
-        raise ValueError("Handedness must be either 1 or -1.")
     if abs(defocus_u) < 1e-6 and abs(defocus_v) < 1e-6 and abs(amplitude_contrast) < 1e-6 and abs(spherical_aberration) < 1e-6:
         raise ValueError("CTF parameters are 0, please check your inputs.")
-
-    voltage *= 1000  # kV to V
-    spherical_aberration *= 1e7  # mm to Angstroms
-    defocus_angle = np.deg2rad(defocus_angle)
 
     depth_offset = get_depth_offset(tilt_projection_matrix, coordinate)
     # TODO: implement defocus slope (rlnTomoDefocusSlope), for now just assume 1
     defocus_offset = handedness * depth_offset
-
     defocus_u_corrected = defocus_u + defocus_offset
     defocus_v_corrected = defocus_v + defocus_offset
 
-    # no longer used by latest RELION version, but kept for reference
-    # defocus_average = -1 * (defocus_u_corrected + defocus_v_corrected) / 2.0
-    # defocus_difference = -1 * (defocus_u_corrected - defocus_v_corrected) / 2.0
+    K1, K2, K3, K5, ky_grid, kx_grid, u2, u4, Q, Q_t = _ctf_template(
+        voltage, spherical_aberration, amplitude_contrast, handedness,
+        tiltseries_pixel_size, phase_shift, defocus_u, defocus_v,
+        defocus_angle, bfactor, box_size, bin
+    )
 
-    wavelength = 12.2643247 / np.sqrt(voltage * (1 + voltage * 0.978466e-6))
-
-    # constants, based on RELION's CTF::initialise
-    # K1 and K2: https://en.wikipedia.org/wiki/High-resolution_transmission_electron_microscopy#:~:text=transfer%20function.-,The%20phase%20contrast%20transfer%20function,-%5Bedit%5D
-    K1 = np.pi * wavelength
-    K2 = np.pi / 2 * spherical_aberration * wavelength**3
-    K3 = np.arctan(amplitude_contrast / np.sqrt(1 - amplitude_contrast**2))
-    K4 = -1 * bfactor / 4.0 # not used
-    K5 = np.deg2rad(phase_shift)
-
-    # for astigmatism correction
-    Q = np.array([
-        [np.cos(defocus_angle), np.sin(defocus_angle)],
-        [-np.sin(defocus_angle), np.cos(defocus_angle)]
-    ])
-    Q_t = np.array([
-        [np.cos(defocus_angle), -np.sin(defocus_angle)],
-        [np.sin(defocus_angle), np.cos(defocus_angle)]
-    ])
+    # astigmatism correction
     D = np.array([
         [-defocus_u_corrected, 0],
         [0, -defocus_v_corrected]
@@ -104,16 +137,6 @@ def calculate_ctf(
     Ayy = A[1, 1]
 
     # TODO: support gamma offset here
-    s = box_size
-
-    # fourier space coordinates
-    ky = np.fft.fftfreq(s, d=tiltseries_pixel_size * bin)
-    kx = np.fft.rfftfreq(s, d=tiltseries_pixel_size * bin)
-    ky_grid, kx_grid = np.meshgrid(ky, kx, indexing='ij')
-
-    u2 = kx_grid**2 + ky_grid**2
-    u4 = u2**2
-
     # phase shift (gamma)
     gamma = K1 * (Axx * kx_grid**2 + 2.0 * Axy * kx_grid * ky_grid + Ayy * ky_grid**2) + K2 * u4 - K5 - K3
     ctf = -1 * np.sin(gamma)

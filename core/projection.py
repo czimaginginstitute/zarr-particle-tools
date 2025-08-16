@@ -34,6 +34,7 @@ def calculate_projection_matrix(rot: float, gmag: float, tx: float, ty: float, t
         tilt = np.radians(tilt)
         x_tilt = np.radians(x_tilt)
 
+    # fmt: off
     M_2d_translation = np.array([
         [1, 0, 0, tx],
         [0, 1, 0, ty],
@@ -68,6 +69,7 @@ def calculate_projection_matrix(rot: float, gmag: float, tx: float, ty: float, t
         [0, np.sin(x_tilt), np.cos(x_tilt), 0],
         [0, 0, 0, 1]
     ])
+    # fmt: on
 
     return M_2d_translation @ M_magnification @ M_axis_rot @ M_stage_tilt @ M_x_tilt
 
@@ -95,6 +97,7 @@ def project_3d_point_to_2d(point_3d: np.ndarray, projection_matrix: np.ndarray) 
     projected_point /= projected_point[3]
     return projected_point
 
+
 # NOTE: Not currently used, but may be useful in the future.
 def calculate_projection_matrix_from_aretomo_aln(aln: AreTomo3ALN, tiltseries_pixel_size: float = 1.0) -> list[np.ndarray]:
     """
@@ -113,7 +116,7 @@ def calculate_projection_matrix_from_aretomo_aln(aln: AreTomo3ALN, tiltseries_pi
         tx = section.tx * tiltseries_pixel_size
         ty = section.ty * tiltseries_pixel_size
         tilt = section.tilt
-        
+
         # AreTomo3 has no x_tilt
         projection_matrix = calculate_projection_matrix(rot, gmag, tx, ty, tilt, x_tilt=0.0, radians=False)
         projection_matrices.append(projection_matrix)
@@ -133,7 +136,7 @@ def calculate_projection_matrix_from_starfile_df(tiltseries_df: pd.DataFrame) ->
     projection_matrices = []
     for _, tilt in tiltseries_df.iterrows():
         rot = tilt["rlnTomoZRot"]
-        gmag = 1.0 # Assuming no magnification change
+        gmag = 1.0  # Assuming no magnification change
         tx = tilt["rlnTomoXShiftAngst"]
         ty = tilt["rlnTomoYShiftAngst"]
         tilt_angle = tilt["rlnTomoYTilt"]
@@ -141,13 +144,13 @@ def calculate_projection_matrix_from_starfile_df(tiltseries_df: pd.DataFrame) ->
 
         projection_matrix = calculate_projection_matrix(rot, gmag, tx, ty, tilt_angle, x_tilt=x_tilt, radians=False)
         projection_matrices.append(projection_matrix)
-        
+
     return projection_matrices
 
 
 # can likely be parallelized
 def get_particles_to_tiltseries_coordinates(
-    filtered_particles_df: pd.DataFrame, tiltseries_df: pd.DataFrame, projection_matrices: list[np.ndarray]
+    filtered_particles_df: pd.DataFrame, filtered_trajectories_dict: dict[int, pd.DataFrame] | None, tiltseries_df: pd.DataFrame, projection_matrices: list[np.ndarray]
 ) -> dict[int, dict[int, tuple[np.ndarray, np.ndarray]]]:
     """
     Maps particle indices to their 2D coordinates in each of the tilts (projected from their 3D coordinates via the projection matrices).
@@ -159,19 +162,34 @@ def get_particles_to_tiltseries_coordinates(
         projection_matrix = projection_matrices[section - 1]
 
         # match 1-indexing of RELION
-        for particle_count, particle in enumerate(filtered_particles_df.itertuples(), start=1):
+        for default_particle_id, particle in enumerate(filtered_particles_df.itertuples(), start=1):
+            # rlnOriginXAngst/YAngst/ZAngst are already included in the coordinate
             coordinate = np.array([particle.rlnCenteredCoordinateXAngst, particle.rlnCenteredCoordinateYAngst, particle.rlnCenteredCoordinateZAngst])
+            particle_id = int(particle.rlnTomoParticleName.split("/")[-1]) if "rlnTomoParticleName" in filtered_particles_df.columns else default_particle_id
+            # add motion correction if available
+            if filtered_trajectories_dict is not None:
+                if particle.rlnTomoParticleName not in filtered_trajectories_dict:
+                    raise ValueError(f"Particle {particle.rlnTomoParticleName} not found in trajectories.")
+                else:
+                    trajectory = filtered_trajectories_dict[particle.rlnTomoParticleName]
+                    tilt_trajectory = trajectory.iloc[section - 1]  # section is 1-indexed
+                    coordinate[0] += tilt_trajectory["rlnOriginXAngst"]
+                    coordinate[1] += tilt_trajectory["rlnOriginYAngst"]
+                    coordinate[2] += tilt_trajectory["rlnOriginZAngst"]
+
             projected_point = project_3d_point_to_2d(coordinate, projection_matrix)[:2]
 
-            if particle_count not in particles_to_tiltseries_coordinates:
-                particles_to_tiltseries_coordinates[particle_count] = {}
+            if particle_id not in particles_to_tiltseries_coordinates:
+                particles_to_tiltseries_coordinates[particle_id] = {}
 
-            particles_to_tiltseries_coordinates[particle_count][section] = (coordinate, projected_point)
+            particles_to_tiltseries_coordinates[particle_id][section] = (coordinate, projected_point)
 
     return particles_to_tiltseries_coordinates
 
 
-def get_particle_crop_and_visibility(tiltseries_data: DataReader, particle_id: int, sections: dict, tiltseries_x: int, tiltseries_y: int, tiltseries_pixel_size: float, pre_bin_box_size: int) -> tuple[list[dict], list[int]]:
+def get_particle_crop_and_visibility(
+    tiltseries_data: DataReader, particle_id: int, sections: dict, tiltseries_x: int, tiltseries_y: int, tiltseries_pixel_size: float, pre_bin_box_size: int
+) -> tuple[list[dict], list[int]]:
     """
     Process the calculated (Angstrom) 2D coordinate of the particle to pixel coordinates and perform cropping.
 
@@ -209,18 +227,9 @@ def get_particle_crop_and_visibility(tiltseries_data: DataReader, particle_id: i
         tiltseries_data.slice_data(slice_key)
 
         visible_sections.append(1)
-        particle_data.append(
-            {
-                "particle_id": particle_id,
-                "coordinate": coordinate,
-                "section": section,
-                "tiltseries_slice_key": slice_key,
-                "subpixel_shift": (shift_y, shift_x)
-            }
-        )
+        particle_data.append({"particle_id": particle_id, "coordinate": coordinate, "section": section, "tiltseries_slice_key": slice_key, "subpixel_shift": (shift_y, shift_x)})
 
     return particle_data, visible_sections
-
 
 
 def fourier_crop(fft_image_stack: np.ndarray, factor: float) -> np.ndarray:
@@ -241,10 +250,10 @@ def fourier_crop(fft_image_stack: np.ndarray, factor: float) -> np.ndarray:
 
     h1_top = (h1 + 1) // 2
     h1_bottom = h1 // 2
-    
+
     cropped_w = fft_image_stack[:, :wh1]
     top_slice = cropped_w[:h1_top, :]
-    bottom_slice = cropped_w[h0 - h1_bottom:, :]
+    bottom_slice = cropped_w[h0 - h1_bottom :, :]
 
     binned_fft_stack = np.concatenate((top_slice, bottom_slice), axis=0)
     return binned_fft_stack

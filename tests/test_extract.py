@@ -1,12 +1,11 @@
 # TODO: create more focused tests for individual functions?
 # TODO: create a highly sensitive cross-correlation test for MRCs? (better represents the testing we're trying to do)
 # TODO: don't store tiltseries / RELION *.mrcs data in the repository, but host them on zenodo
-import sys
 import pytest
 import shutil
 from pathlib import Path
 from click.testing import CliRunner
-from data_portal_subtomo_extract import extract_subtomograms, cli
+from subtomo_extract import extract_subtomograms, cli
 
 DATASET_CONFIGS = {
     "synthetic": {
@@ -60,15 +59,15 @@ def test_extract_local_subtomograms_parametrized(
         shutil.rmtree(output_dir)
 
     extract_subtomograms(
-        particles_starfile=data_root / "particles.star",
         box_size=extract_arguments.get("box_size"),
         bin=extract_arguments.get("bin"),
-        tiltseries_relative_dir=data_root,
-        tomograms_starfile=data_root / "tomograms.star",
         float16=float16,
         no_ctf=extract_arguments.get("no_ctf", False),
         no_circle_crop=extract_arguments.get("no_circle_crop", False),
         output_dir=output_dir,
+        particles_starfile=data_root / "particles.star",
+        tiltseries_relative_dir=data_root,
+        tomograms_starfile=data_root / "tomograms.star",
     )
 
     validate_optimisation_set_starfile(output_dir / "optimisation_set.star")
@@ -136,7 +135,3 @@ def test_cli_extract_local(monkeypatch, tmp_path, compare_mrcs_dirs, dataset, ex
         compare_mrcs_dirs(relion_dir, subtomo_dir, tol=dataset_config["tol"] * 100)
     else:
         compare_mrcs_dirs(relion_dir, subtomo_dir, tol=dataset_config["tol"])
-
-
-# def test_cli_extract_data_portal(monkeypatch, tmp_path, compare_mrcs_dirs, dataset, extract_suffix):
-#     pass

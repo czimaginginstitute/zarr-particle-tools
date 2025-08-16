@@ -25,7 +25,7 @@ pip install -r requirements.txt
 
 ## Example runs
 ```
-python data_portal_subtomo_extract.py local \
+python subtomo_extract.py local \
   --particles-starfile tests/data/relion_project_synthetic/particles.star \
   --tomograms-starfile tests/data/relion_project_synthetic/tomograms.star \
   --tiltseries-relative-dir tests/data/relion_project_synthetic/ \
@@ -34,7 +34,7 @@ python data_portal_subtomo_extract.py local \
 ```
 
 ```
-python data_portal_subtomo_extract.py local \
+python subtomo_extract.py local \
   --particles-starfile tests/data/relion_project_unroofing/particles.star \
   --tomograms-starfile tests/data/relion_project_unroofing/tomograms.star \
   --tiltseries-relative-dir tests/data/relion_project_unroofing/ \
@@ -64,7 +64,9 @@ To ensure that the subtomogram extraction matches RELION's subtomogram extractio
 - Does not support min_frames or max_dose flags
 - Does not write any other *.mrcs files other than the 2D stacks themselves
 - Does not support defocus slope (rlnTomoDefocusSlope)
-- Does not (currently) support particle orientations / offsets (rlnAngleRot, rlnAngleTilt, rlnAnglePsi, rlnOriginXAngst, rlnOriginYAngst, rlnOriginZAngst)
+- Does not support particle subtomogram orientation (rlnTomoSubtomogramRot, rlnTomoSubtomogramTilt, rlnTomoSubtomogramPsi)
+- Does not support --apply_orientations
+- Does not support --dont_apply_offsets
 - Does not (currently) support multiple optics groups
 - Does not support CTF_BFACTOR (rlnCtfBfactor) or CTF_BFACTOR_PERELECTRONDOSE (rlnCtfBfactorPerElectronDose)
 - Does not support motion trajectories

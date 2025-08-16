@@ -64,7 +64,7 @@ class DataReader:
             else:
                 logger.debug(f"Loading S3 MRC file: {self.locator}")
                 with self._get_s3fs().open(self.locator, "rb") as f:
-                    with mrcfile.open(f) as mrc:
+                    with mrcfile.mmap(f, mode='r') as mrc:
                         return mrc.data
         else:
             if self.is_zarr:
@@ -72,7 +72,7 @@ class DataReader:
                 return da.from_zarr(self.locator)
             else:
                 logger.debug(f"Loading local MRC file: {self.locator}")
-                with mrcfile.open(self.locator) as mrc:
+                with mrcfile.mmap(self.locator, mode='r') as mrc:
                     return mrc.data
 
     def slice_data(self, key) -> None:

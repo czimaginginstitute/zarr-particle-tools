@@ -1,3 +1,4 @@
+import logging
 import pytest
 import starfile
 import os
@@ -5,16 +6,25 @@ from pathlib import Path
 from tests.helpers.compare import mrcs_equal, df_equal
 
 
+@pytest.fixture(autouse=True)
+def fail_on_log_warning_or_error(caplog):
+    caplog.set_level(logging.WARNING)
+    yield
+    bad_logs = [rec for rec in caplog.records if rec.levelno >= logging.WARNING]
+    if bad_logs:
+        msgs = "\n".join(f"{rec.levelname}: {rec.getMessage()}" for rec in bad_logs)
+        pytest.fail(f"Unexpected warning/error logs were emitted:\n{msgs}")
+
+
 @pytest.fixture
 def validate_optimisation_set_starfile():
     def _validate_starfile(star_file: Path):
-        df = starfile.read(star_file)
-        assert len(df) == 1, f"Expected exactly one row in {star_file}, found {len(df)}"
-        assert len(df.columns) == 2, f"Expected exactly two columns in {star_file}, found {len(df.columns)}"
-        assert "rlnTomoTomogramsFile" in df.columns
-        assert "rlnTomoParticlesFile" in df.columns
-        assert os.path.exists(df["rlnTomoTomogramsFile"].iloc[0])
-        assert os.path.exists(df["rlnTomoParticlesFile"].iloc[0])
+        optimisation_dict = starfile.read(star_file)
+        assert len(optimisation_dict) == 2, f"Expected exactly two rows in {star_file}, found {len(optimisation_dict)}"
+        assert "rlnTomoTomogramsFile" in optimisation_dict
+        assert "rlnTomoParticlesFile" in optimisation_dict
+        assert os.path.exists(optimisation_dict["rlnTomoTomogramsFile"])
+        assert os.path.exists(optimisation_dict["rlnTomoParticlesFile"])
 
     return _validate_starfile
 

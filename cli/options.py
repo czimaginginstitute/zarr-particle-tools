@@ -29,7 +29,7 @@ def common_options():
 
 def local_options():
     opts = [
-        click.option("--particles-starfile", type=click.Path(exists=True, dir_okay=False, path_type=Path), required=True, help="Path to the particles *.star file."),
+        click.option("--particles-starfile", type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None, help="Path to the particles *.star file."),
         click.option(
             "--tiltseries-relative-dir",
             type=click.Path(file_okay=True, path_type=Path),
@@ -40,9 +40,21 @@ def local_options():
         click.option(
             "--tomograms-starfile",
             type=click.Path(exists=True, dir_okay=False, path_type=Path),
-            required=True,
+            default=None,
             help="Path to the tomograms.star file (containing all tiltseries entries, with entries as tiltseries).",
         ),
+        click.option(
+            "--trajectories-starfile",
+            type=click.Path(exists=True, dir_okay=False, path_type=Path),
+            default=None,
+            help="Path to the trajectories motion.star file for motion correction",
+        ),
+        click.option(
+            "--optimisation-set-starfile",
+            type=click.Path(exists=True, dir_okay=False, path_type=Path),
+            default=None,
+            help="Path to the optimisation set star file for optimisation set generation.",
+        )
     ]
     return compose_options(opts)
 
@@ -107,6 +119,7 @@ def data_portal_options():
         )
 
     return compose_options(options)
+
 
 def flatten_data_portal_args(kwargs: dict) -> dict:
     "Flattens the data portal arguments from lists of lists to a single list."
