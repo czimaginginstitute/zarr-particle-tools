@@ -24,6 +24,8 @@ pip install -r requirements.txt
 ```
 
 ## Example runs
+See full options with `python subtomo_extract.py local --help` and `python subtomo_extract.py data-portal --help`. For RELION projects, a `--tiltseries-relative-dir` is not needed if this script is run from the RELION project directory root.
+
 ```
 python subtomo_extract.py local \
   --particles-starfile tests/data/relion_project_synthetic/particles.star \
@@ -67,9 +69,7 @@ To ensure that the subtomogram extraction matches RELION's subtomogram extractio
 - Does not support particle subtomogram orientation (rlnTomoSubtomogramRot, rlnTomoSubtomogramTilt, rlnTomoSubtomogramPsi)
 - Does not support --apply_orientations
 - Does not support --dont_apply_offsets
-- Does not (currently) support multiple optics groups
 - Does not support CTF_BFACTOR (rlnCtfBfactor) or CTF_BFACTOR_PERELECTRONDOSE (rlnCtfBfactorPerElectronDose)
-- Does not support motion trajectories
 - Does not support Anisotropic magnification matrix (EMDL_IMAGE_MAG_MATRIX_00, EMDL_IMAGE_MAG_MATRIX_01, EMDL_IMAGE_MAG_MATRIX_10, EMDL_IMAGE_MAG_MATRIX_11)
 
 ## Project roadmap
