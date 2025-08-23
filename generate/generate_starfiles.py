@@ -27,7 +27,7 @@ from scipy.spatial.transform import Rotation
 
 import generate.cdp_cache as cdp_cache
 import cli.options as cli_options
-from generate.constants import (
+from core.constants import (
     THREAD_POOL_WORKER_COUNT,
     TILTSERIES_MRCS_PLACEHOLDER,
     TILTSERIES_URI_RELION_COLUMN,
@@ -38,9 +38,9 @@ from generate.constants import (
     INDIVIDUAL_TOMOGRAM_COLUMNS,
     INDIVIDUAL_TOMOGRAM_CTF_COLUMNS,
     INDIVIDUAL_TOMOGRAM_ALN_COLUMNS,
-    NOISY_LOGGERS,
 )
-from generate.helpers import TqdmLoggingHandler, suppress_noisy_loggers, get_data, get_filter
+from core.helpers import get_filter, setup_logging
+from core.data import get_data
 from core.projection import in_plane_rotation_to_tilt_axis_rotation
 
 logger = logging.getLogger(__name__)
@@ -127,6 +127,7 @@ def get_particles_df_optics_df_from_file(annotation_file: cdp.AnnotationFile, al
             "rlnCenteredCoordinateZAngst": c[2],
             "rlnOpticsGroupName": optics_group_name,
             "rlnOpticsGroup": 1,
+            "cdpAnnotationShapeId": annotation_file.annotation_shape_id,
         }
         for p, c, e in zip(pixel_coordinates, centered_coordinates, euler_angles)
     ]
@@ -137,12 +138,11 @@ def get_particles_df_optics_df_from_file(annotation_file: cdp.AnnotationFile, al
     return optics_df, particles_df
 
 
-def get_particles_df_optics_df(annotation_files: list[cdp.AnnotationFile], use_tqdm: bool = True) -> tuple[pd.DataFrame, pd.DataFrame]:
+def get_particles_df_optics_df(annotation_files: list[cdp.AnnotationFile]) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Creates particles and optics dataframes necessary for a particles.star file from CryoET Data Portal annotations.
     Args:
         annotation_files (list[AnnotationFile]): List of annotation files to process.
-        use_tqdm (bool): Whether to use tqdm for progress tracking (and print it out to the console).
     Returns:
         tuple: A tuple containing the optics dataframe and particles dataframe (combined from all Point and OrientedPoint annotations).
     """
@@ -184,18 +184,12 @@ def get_particles_df_optics_df(annotation_files: list[cdp.AnnotationFile], use_t
     with ThreadPoolExecutor(max_workers=THREAD_POOL_WORKER_COUNT) as thread_pool:
         futures = [thread_pool.submit(get_particles_df_optics_df_from_file, file, alignments[file.alignment_id], tiltseries[alignments[file.alignment_id].tiltseries_id]) for file in annotation_files]
 
-        pbar = tqdm(total=len(futures), desc="Downloading particle data") if use_tqdm else None
-        for fut in as_completed(futures):
+        for fut in tqdm(as_completed(futures), total=len(futures), desc="Downloading particle data"):
             optics_df, particles_df = fut.result()
             if optics_df.empty or particles_df.empty:
                 continue
             all_optics_dfs.append(optics_df)
             all_particles_dfs.append(particles_df)
-            if pbar:
-                pbar.update(1)
-
-        if pbar:
-            pbar.close()
 
     # filter out empty dataframes
     all_optics_dfs = [df for df in all_optics_dfs if not df.empty]
@@ -267,19 +261,17 @@ def generate_individual_tomogram_starfile(alignment: cdp.Alignment, voxel_spacin
     tiltseries = list(cdp_cache.get_tiltseries(alignment.tiltseries_id).values())[0]
     per_section_parameters = list(cdp_cache.get_per_section_parameters_by_tiltseries_id(tiltseries.id).values())[0]
     per_section_alignment_parameters = list(cdp_cache.get_per_section_alignments_by_alignment_id(alignment.id).values())[0]
-    frames = list(cdp_cache.get_frames_by_run_id(alignment.run_id).values())[0]
-
-    if len(per_section_parameters) != len(per_section_alignment_parameters):
+    if len(per_section_parameters) < len(per_section_alignment_parameters):
         raise ValueError(
-            f"[Run {alignment.run_id}, TiltSeries {tiltseries.id}, Alignment {alignment.id}] Mismatch between CTF and alignment parameters {len(per_section_parameters)} CTF != {len(per_section_alignment_parameters)} alignment parameters."
+            f"[Run {alignment.run_id}, TiltSeries {tiltseries.id}, Alignment {alignment.id}] Should not have more alignment parameters ({len(per_section_alignment_parameters)}) than CTF parameters ({len(per_section_parameters)})."
         )
+    frames = list(cdp_cache.get_frames_by_run_id(alignment.run_id).values())[0]
 
     per_section_parameters_df = pd.DataFrame(columns=INDIVIDUAL_TOMOGRAM_CTF_COLUMNS)
     for param in per_section_parameters:
         frame = next((f for f in frames if f.id == param.frame_id), None)
         per_section_parameters_df.loc[len(per_section_parameters_df)] = {
-            "z_index": param.z_index,
-            "acquisition_order": frame.acquisition_order + 1,  # match RELION's 1-based indexing
+            "z_index": param.z_index + 1,  # match RELION's 1-based indexing
             "rlnDefocusU": param.major_defocus,
             "rlnDefocusV": param.minor_defocus,
             "rlnDefocusAngle": param.astigmatic_angle,
@@ -292,7 +284,7 @@ def generate_individual_tomogram_starfile(alignment: cdp.Alignment, voxel_spacin
         columns=INDIVIDUAL_TOMOGRAM_ALN_COLUMNS,
         data=[
             {
-                "z_index": param.z_index,
+                "z_index": param.z_index + 1,  # match RELION's 1-based indexing
                 "rlnTomoXTilt": param.volume_x_rotation,  # param.x_rotation offset (AreTomo3 beta) is not applied, as per AreTomo3 convention
                 "rlnTomoYTilt": param.tilt_angle,  # already accounts for any tilt offset (AreTomo3 alpha)
                 "rlnTomoZRot": in_plane_rotation_to_tilt_axis_rotation(np.array(param.in_plane_rotation)),
@@ -303,17 +295,20 @@ def generate_individual_tomogram_starfile(alignment: cdp.Alignment, voxel_spacin
         ],
     )
 
-    individual_tomogram_df = pd.merge(per_section_parameters_df, per_section_alignment_parameters_df, on="z_index", how="outer")
-    if len(individual_tomogram_df) != len(per_section_parameters_df):
+    individual_tomogram_df = pd.merge(per_section_parameters_df, per_section_alignment_parameters_df, on="z_index", how="inner")
+    unmatched_alignments = per_section_alignment_parameters_df[~per_section_alignment_parameters_df["z_index"].isin(per_section_parameters_df["z_index"])]
+    if not unmatched_alignments.empty:
+        raise ValueError(f"[Run {alignment.run_id}, TiltSeries {tiltseries.id}, Alignment {alignment.id}] Found {len(unmatched_alignments)} alignment parameters that do not match CTF parameters.")
+    if len(individual_tomogram_df) != len(per_section_alignment_parameters_df):
         raise ValueError(
             f"[Run {alignment.run_id}, TiltSeries {tiltseries.id}, Alignment {alignment.id}] Mismatch between CTF and alignment parameters after merge {len(individual_tomogram_df)} merged != {len(per_section_parameters_df)} CTF != {len(per_section_alignment_parameters_df)} alignment parameters."
         )
 
     # reorder rows and columns to match RELION format
-    individual_tomogram_df.sort_values(by="acquisition_order", inplace=True)
-    individual_tomogram_df["rlnMicrographName"] = individual_tomogram_df["acquisition_order"].apply(lambda x: f"{str(int(x))}@{TILTSERIES_MRCS_PLACEHOLDER}")
+    individual_tomogram_df.sort_values(by="z_index", inplace=True)
+    individual_tomogram_df["rlnMicrographName"] = individual_tomogram_df["z_index"].apply(lambda x: f"{str(int(x))}@{TILTSERIES_MRCS_PLACEHOLDER}")
     individual_tomogram_df[TILTSERIES_URI_RELION_COLUMN] = tiltseries.s3_omezarr_dir
-    individual_tomogram_df = individual_tomogram_df.drop(columns=["z_index", "acquisition_order"])
+    individual_tomogram_df = individual_tomogram_df.drop(columns=["z_index"])
     individual_tomogram_df = individual_tomogram_df[INDIVIDUAL_TOMOGRAM_COLUMNS]
 
     # generate empty placeholder tiltseries mrc (relative path)
@@ -331,18 +326,17 @@ def generate_individual_tomogram_starfile(alignment: cdp.Alignment, voxel_spacin
     tomo_name = f"run_{alignment.run_id}_tiltseries_{tiltseries.id}_alignment_{alignment.id}_spacing_{voxel_spacing.id}"
     output_path = output_dir / "tiltseries" / f"{tomo_name}.star"
     starfile.write({tomo_name: individual_tomogram_df}, output_path, overwrite=True)
-    logger.debug(f"[Run {alignment.run_id}, TiltSeries {tiltseries.id}, Alignment {alignment.id}] Wrote individual tomogram star file to {output_path}")
+    logger.debug(f"[Run {alignment.run_id}, TiltSeries {tiltseries.id}, Alignment {alignment.id}] Wrote individual tomogram star file to {output_path} ({voxel_spacing.voxel_spacing} Å)")
 
     return individual_tomogram_df, tomo_name
 
 
-def generate_individual_tomogram_starfiles(alignment_and_voxel_spacing_ids: list[tuple[int, int]], output_dir: Path, use_tqdm: bool = True) -> list[pd.DataFrame]:
+def generate_individual_tomogram_starfiles(alignment_and_voxel_spacing_ids: list[tuple[int, int]], output_dir: Path) -> list[pd.DataFrame]:
     """
     Generates individual tomogram star files for each tuple of alignment ID and voxel spacing ID.
     Args:
         alignment_and_voxel_spacing_ids (list[tuple[int, int]]): List of tuples containing alignment IDs and their corresponding voxel spacing IDs that specify the tomograms to generate.
         output_dir (Path): Directory where the individual tomogram star files will be saved.
-        use_tqdm (bool): Whether to use tqdm for progress tracking (and print it out to the console).
     Returns:
         list[pd.DataFrame]: List of DataFrames containing the individual tomogram data.
     """
@@ -359,35 +353,28 @@ def generate_individual_tomogram_starfiles(alignment_and_voxel_spacing_ids: list
     with ThreadPoolExecutor(max_workers=THREAD_POOL_WORKER_COUNT) as thread_pool:
         futures = [thread_pool.submit(generate_individual_tomogram_starfile, alignment, voxel_spacing, output_dir) for alignment, voxel_spacing in zip(all_alignments, all_voxel_spacings)]
 
-        pbar = tqdm(total=len(futures), desc="Generating individual tomogram star files") if use_tqdm else None
-        for fut in as_completed(futures):
+        for fut in tqdm(as_completed(futures), total=len(futures), desc="Generating individual tomogram star files"):
             individual_tomogram_df, tomo_name = fut.result()
             if individual_tomogram_df is not None:
                 individual_tomograms_dfs.append(individual_tomogram_df)
                 tomo_names.append(tomo_name)
-            if pbar:
-                pbar.update(1)
-
-        if pbar:
-            pbar.close()
 
     return individual_tomograms_dfs, tomo_names
 
 
-def generate_starfiles_from_annotation_files(annotation_files: list[cdp.AnnotationFile], output_dir: Path, use_tqdm: bool = True) -> tuple[Path, Path]:
+def generate_starfiles_from_annotation_files(annotation_files: list[cdp.AnnotationFile], output_dir: Path) -> tuple[Path, Path]:
     """
     Generates particles.star, tomograms.star, and individual tomogram star files from the given annotation files.
     Args:
         annotation_files (list[cdp.AnnotationFile]): List of annotation files to generate star files from.
         output_dir (Path): Directory where the star files will be saved.
-        use_tqdm (bool): Whether to use tqdm for progress tracking (and print it out to the console).
     Returns:
         tuple: A tuple containing the paths to the generated particles.star, tomograms.star, and the tiltseries folder.
     """
     start_time = time.time()
-    optics_df, particles_df = get_particles_df_optics_df(annotation_files, use_tqdm=use_tqdm)
+    optics_df, particles_df = get_particles_df_optics_df(annotation_files)
     tomograms_df, alignment_and_voxel_spacing_ids = get_tomograms_df(optics_df, particles_df)
-    _, tomo_names = generate_individual_tomogram_starfiles(alignment_and_voxel_spacing_ids, output_dir, use_tqdm=use_tqdm)
+    _, tomo_names = generate_individual_tomogram_starfiles(alignment_and_voxel_spacing_ids, output_dir)
     # filter out invalid tomograms from optics, particles, and tomograms dataframes
     particles_df = particles_df[particles_df["rlnTomoName"].isin(tomo_names)]
     tomograms_df = tomograms_df[tomograms_df["rlnTomoName"].isin(tomo_names)]
@@ -405,8 +392,8 @@ def generate_starfiles_from_annotation_files(annotation_files: list[cdp.Annotati
     tiltseries_folder_path = output_dir / "tiltseries"
     starfile.write({"optics": optics_df, "particles": particles_df}, particles_path, overwrite=True)
     starfile.write({"global": tomograms_df}, tomograms_path, overwrite=True)
-    logger.info(f"Wrote {len(optics_df)} optics group(s) and {len(particles_df)} particle(s) to {output_dir / 'particles.star'}")
-    logger.info(f"Wrote {len(tomograms_df)} tomogram(s) to {output_dir / 'tomograms.star'}")
+    logger.info(f"Wrote {len(optics_df)} optics group(s) and {len(particles_df)} particle(s) to {particles_path}")
+    logger.info(f"Wrote {len(tomograms_df)} tomogram(s) to {tomograms_path}")
 
     end_time = time.time()
     logger.info(f"Finished generating star files in {end_time - start_time:.2f} seconds.")
@@ -522,7 +509,6 @@ def generate_starfiles(
     annotation_names: list[str] = None,
     inexact_match: bool = False,
     debug: bool = False,
-    use_tqdm: bool = True,
 ) -> tuple[Path, Path]:
     """
     Generates star files for annotations based on the specified filters. First resolves all annotation IDs based on the provided filters, then generates the star files given the resolved annotation IDs.
@@ -530,17 +516,6 @@ def generate_starfiles(
         tuple: A tuple containing the paths to the generated particles.star, tomograms.star, and the tiltseries folder.
     """
     output_dir = Path(output_dir)
-
-    if use_tqdm:
-        handler = TqdmLoggingHandler()
-        handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-        logger.addHandler(handler)
-        logger.propagate = False
-
-    if debug:
-        logger.setLevel(logging.DEBUG)
-
-    suppress_noisy_loggers(NOISY_LOGGERS)
 
     (output_dir / "tiltseries").mkdir(parents=True, exist_ok=True)
 
@@ -562,7 +537,7 @@ def generate_starfiles(
         inexact_match=inexact_match,
     )
 
-    return generate_starfiles_from_annotation_files(annotation_files, output_dir, use_tqdm=use_tqdm)
+    return generate_starfiles_from_annotation_files(annotation_files, output_dir)
 
 
 @click.command(help="Generate star files needed for subtomogram extraction from a CryoET Data Portal run.")
@@ -571,10 +546,11 @@ def generate_starfiles(
 @click.option("--debug", is_flag=True, help="Enable debug logging.")
 def cli(**kwargs):
     kwargs = cli_options.flatten_data_portal_args(kwargs)
-    generate_starfiles(**kwargs, use_tqdm=True)
+    generate_starfiles(**kwargs)
 
 
 if __name__ == "__main__":
+    setup_logging()
     cli()
 
 # Example usage:

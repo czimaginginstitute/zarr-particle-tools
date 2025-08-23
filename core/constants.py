@@ -1,3 +1,16 @@
+NOISY_LOGGERS = [
+    "gql",
+    "s3fs",
+    "urllib3",
+    "botocore",
+    "aiobotocore",
+    "fsspec",
+    "asyncio",
+    "numcodecs",
+]
+
+
+# ================== starfile generation related constants =================
 THREAD_POOL_WORKER_COUNT = 8  # tested to work best
 TILTSERIES_MRCS_PLACEHOLDER = "tiltseries/tiltseries_placeholder.mrcs"
 TILTSERIES_URI_RELION_COLUMN = "tomoTiltSeriesURI"
@@ -16,6 +29,7 @@ PARTICLES_DF_COLUMNS = [
     "rlnCenteredCoordinateZAngst",
     "rlnOpticsGroupName",
     "rlnOpticsGroup",
+    "cdpAnnotationShapeId",
 ]
 # NOTE: tomograms.star columns are based on OPTICS_DF_COLUMNS, but with additional columns for tomogram metadata (see get_tomograms_df)
 OPTICS_DF_COLUMNS = ["rlnOpticsGroup", "rlnOpticsGroupName", "rlnSphericalAberration", "rlnVoltage", "rlnAmplitudeContrast", "rlnTomoTiltSeriesPixelSize"]
@@ -37,7 +51,6 @@ INDIVIDUAL_TOMOGRAM_COLUMNS = [
 ]
 INDIVIDUAL_TOMOGRAM_CTF_COLUMNS = [
     "z_index",
-    "acquisition_order",
     "rlnDefocusU",
     "rlnDefocusV",
     "rlnDefocusAngle",
@@ -63,14 +76,3 @@ INDIVIDUAL_TOMOGRAM_ALN_COLUMNS = [
 # "rlnAccumMotionLate",
 # "rlnCtfFigureOfMerit",
 # "rlnCtfIceRingDensity",
-
-NOISY_LOGGERS = [
-    "gql",
-    "s3fs",
-    "urllib3",
-    "botocore",
-    "aiobotocore",
-    "fsspec",
-    "asyncio",
-    "numcodecs",
-]

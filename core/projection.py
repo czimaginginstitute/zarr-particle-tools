@@ -157,9 +157,9 @@ def get_particles_to_tiltseries_coordinates(
     The output is a dictionary where the keys are particle indices and the values are another dictionary with tilt section indices as keys and tuples of (3D coordinate, projected 2D coordinate) as values.
     """
     particles_to_tiltseries_coordinates = {}
-    for _, tilt in tiltseries_df.iterrows():
+    for i, tilt in tiltseries_df.iterrows():
         section = int(tilt["rlnMicrographName"].split("@")[0])
-        projection_matrix = projection_matrices[section - 1]
+        projection_matrix = projection_matrices[i]
 
         # match 1-indexing of RELION
         for default_particle_id, particle in enumerate(filtered_particles_df.itertuples(), start=1):
@@ -172,7 +172,7 @@ def get_particles_to_tiltseries_coordinates(
                     raise ValueError(f"Particle {particle.rlnTomoParticleName} not found in trajectories.")
                 else:
                     trajectory = filtered_trajectories_dict[particle.rlnTomoParticleName]
-                    tilt_trajectory = trajectory.iloc[section - 1]  # section is 1-indexed
+                    tilt_trajectory = trajectory.iloc[i]
                     coordinate[0] += tilt_trajectory["rlnOriginXAngst"]
                     coordinate[1] += tilt_trajectory["rlnOriginYAngst"]
                     coordinate[2] += tilt_trajectory["rlnOriginZAngst"]

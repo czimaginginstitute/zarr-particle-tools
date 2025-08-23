@@ -1,6 +1,6 @@
 """
 Primary entry point for extracting subtomograms from a CryoET Data Portal run.
-Run python data_portal_subtomo_extract.py --help for usage instructions.
+Run python subtomo_extract.py --help for usage instructions.
 """
 
 import logging
@@ -24,7 +24,8 @@ from core.dose import calculate_dose_weight_image
 from core.ctf import calculate_ctf
 from core.data import DataReader
 from generate.generate_starfiles import generate_starfiles
-from generate.constants import TILTSERIES_URI_RELION_COLUMN
+from core.constants import TILTSERIES_URI_RELION_COLUMN
+from core.helpers import setup_logging
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +141,7 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
     start_time = time.time()
     tiltseries_data.compute_crops()  # compute all cached slices
     end_time = time.time()
-    logger.debug(f"Downloading crops took {end_time - start_time:.2f} seconds")
+    logger.debug(f"Downloading {len(particles_to_tiltseries_coordinates)} crops for {individual_tiltseries_path} took {end_time - start_time:.2f} seconds.")
 
     def process_particle_data(particle_data):
         particle_id = particle_data[0]["particle_id"]
@@ -153,7 +154,6 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
 
         new_fourier_tilt_stack = np.zeros((len(particle_data), box_size, box_size // 2 + 1), dtype=np.complex64)
         for tilt in range(len(particle_data)):
-            section: int = particle_data[tilt]["section"]
             tiltseries_slice_key: tuple[int, slice, slice] = particle_data[tilt]["tiltseries_slice_key"]
             subpixel_shift: tuple[int, int] = particle_data[tilt]["subpixel_shift"]
             coordinate: np.ndarray = particle_data[tilt]["coordinate"]
@@ -169,22 +169,22 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
             if not no_ctf:
                 ctf_weights = calculate_ctf(
                     coordinate=coordinate,
-                    tilt_projection_matrix=projection_matrices[section - 1],
+                    tilt_projection_matrix=projection_matrices[tilt],
                     voltage=voltage,
                     spherical_aberration=spherical_aberration,
                     amplitude_contrast=amplitude_contrast,
                     handedness=handedness,
                     tiltseries_pixel_size=tiltseries_pixel_size,
                     phase_shift=phase_shift,
-                    defocus_u=defocus_u[section - 1],
-                    defocus_v=defocus_v[section - 1],
-                    defocus_angle=defocus_angle[section - 1],
-                    dose=doses[section - 1],
-                    bfactor=bfactor_per_electron_dose[section - 1],
+                    defocus_u=defocus_u[tilt],
+                    defocus_v=defocus_v[tilt],
+                    defocus_angle=defocus_angle[tilt],
+                    dose=doses[tilt],
+                    bfactor=bfactor_per_electron_dose[tilt],
                     box_size=box_size,
                     bin=bin,
                 )
-                fourier_tilt *= dose_weights[section - 1, :, :] * ctf_weights
+                fourier_tilt *= dose_weights[tilt, :, :] * ctf_weights
             fourier_tilt *= -1  # phase flip for RELION compatibility
             fourier_tilt /= float(bin) ** 2  # normalize by binning factor
             new_fourier_tilt_stack[tilt] = fourier_tilt
@@ -273,6 +273,7 @@ def extract_subtomograms(
     Returns:
         tuple: Number of particles extracted, number of skipped particles, number of tiltseries processed.
     """
+    logger.debug(f"Starting subtomogram extraction, reading file {particles_starfile} and {tomograms_starfile}")
     particles_star_file = starfile.read(particles_starfile)
     particles_df = particles_star_file["particles"]
     trajectories_dict = starfile.read(trajectories_starfile) if trajectories_starfile else None
@@ -338,18 +339,11 @@ def extract_subtomograms(
 def validate_and_setup(
     box_size: int,
     output_dir: Path,
-    debug: bool,
 ) -> None:
     if box_size % 2 != 0:
         raise click.BadParameter(f"Box size must be an even number, got {box_size}.")
 
     (output_dir / "Subtomograms").mkdir(parents=True, exist_ok=True)
-
-    logging.basicConfig(
-        level=logging.DEBUG if debug else logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s",
-    )
-
 
 def parse_extract_local_subtomograms(
     box_size: int,
@@ -358,7 +352,6 @@ def parse_extract_local_subtomograms(
     no_ctf: bool,
     no_circle_crop: bool,
     output_dir: Path,
-    debug: bool,
     particles_starfile: Path = None,
     trajectories_starfile: Path = None,
     tiltseries_relative_dir: Path = None,
@@ -366,7 +359,7 @@ def parse_extract_local_subtomograms(
     optimisation_set_starfile: Path = None,
 ) -> None:
     start_time = time.time()
-    validate_and_setup(box_size, output_dir, debug)
+    validate_and_setup(box_size, output_dir)
 
     if optimisation_set_starfile and (particles_starfile or tomograms_starfile or trajectories_starfile):
         raise click.BadParameter("Cannot specify both optimisation set star file and individual star files. Please provide only one of them.")
@@ -410,7 +403,7 @@ def parse_extract_data_portal_subtomograms(
     **data_portal_args,
 ) -> None:
     start_time = time.time()
-    validate_and_setup(box_size, output_dir, debug)
+    validate_and_setup(box_size, output_dir)
 
     particles_path, tomograms_path, _ = generate_starfiles(
         output_dir=output_dir,
@@ -452,6 +445,7 @@ def cli():
 @cli_options.local_options()
 @cli_options.common_options()
 def cmd_local(**kwargs):
+    setup_logging(debug=kwargs.get("debug", False))
     parse_extract_local_subtomograms(**kwargs)
 
 
@@ -459,6 +453,7 @@ def cmd_local(**kwargs):
 @cli_options.common_options()
 @cli_options.data_portal_options()
 def cmd_data_portal(**kwargs):
+    setup_logging(debug=kwargs.get("debug", False))
     kwargs = cli_options.flatten_data_portal_args(kwargs)
     parse_extract_data_portal_subtomograms(**kwargs)
 

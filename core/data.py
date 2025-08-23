@@ -1,16 +1,15 @@
-import os
-from io import BytesIO
 import mrcfile
 import s3fs
 import numpy as np
 import dask.array as da
 import logging
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
+from functools import lru_cache
+from dask.core import flatten
 
 logger = logging.getLogger(__name__)
 
+global_fs = s3fs.S3FileSystem(anon=True)
 
 class DataReader:
     """
@@ -64,7 +63,7 @@ class DataReader:
             else:
                 logger.debug(f"Loading S3 MRC file: {self.locator}")
                 with self._get_s3fs().open(self.locator, "rb") as f:
-                    with mrcfile.mmap(f, mode='r') as mrc:
+                    with mrcfile.mmap(f, mode="r") as mrc:
                         return mrc.data
         else:
             if self.is_zarr:
@@ -72,7 +71,7 @@ class DataReader:
                 return da.from_zarr(self.locator)
             else:
                 logger.debug(f"Loading local MRC file: {self.locator}")
-                with mrcfile.mmap(self.locator, mode='r') as mrc:
+                with mrcfile.mmap(self.locator, mode="r") as mrc:
                     return mrc.data
 
     def slice_data(self, key) -> None:
@@ -81,7 +80,7 @@ class DataReader:
         For Zarr data, this method adds a slice (lazily) to the cache if it doesn't exist yet.
             Data slice will be computed the next time compute_crops() is called.
         """
-        if not self.is_zarr:
+        if not self.is_zarr or isinstance(self.data, np.ndarray):
             return
 
         if type(self.zarr_data_crops.get(key)) is np.ndarray:
@@ -96,7 +95,7 @@ class DataReader:
         If the data is a Zarr store, it returns a Dask array if not computed yet,
         or a NumPy array if computed.
         """
-        if not self.is_zarr:
+        if not self.is_zarr or isinstance(self.data, np.ndarray):
             return self.data[key]
 
         self.slice_data(key)
@@ -110,7 +109,32 @@ class DataReader:
         For MRC data, this method is a no-op since MRC files are loaded fully into memory.
         Computes the cropped data for all cached Zarr slices (and updates the cache with the computed data).
         """
-        if not self.is_zarr:
+        if not self.is_zarr or isinstance(self.data, np.ndarray):
             return
 
-        self.zarr_data_crops = da.compute(self.zarr_data_crops)[0]
+        total_chunks = sum(chunks_per_crop(self.zarr_data_crops).values())
+        logger.debug(f"Total chunks to compute: {total_chunks}")
+        # TODO: tune this threshold
+        if total_chunks > 2000:
+            self.data = self.data.compute()
+        else:
+            self.zarr_data_crops = da.compute(self.zarr_data_crops)[0]
+
+
+def chunks_per_crop(crops: dict) -> dict:
+    out = {}
+    for k, v in crops.items():
+        if isinstance(v, da.Array):
+            out[k] = len(list(flatten(v.__dask_keys__())))
+        elif isinstance(v, np.ndarray):
+            out[k] = 0
+        else:
+            raise TypeError(f"Unsupported type for {k}: {type(v)}")
+    return out
+
+
+@lru_cache(maxsize=None)
+def get_data(s3_uri: str, as_bytes: bool = False) -> bytes | str:
+    mode = "rb" if as_bytes else "r"
+    with global_fs.open(s3_uri, mode) as f:
+        return f.read()

@@ -1,11 +1,10 @@
 import logging
 from tqdm import tqdm
-import s3fs
-from functools import lru_cache
+from core.constants import NOISY_LOGGERS
 
-fs = s3fs.S3FileSystem(anon=True)
 
 logger = logging.getLogger(__name__)
+
 
 class TqdmLoggingHandler(logging.Handler):
     def emit(self, record):
@@ -16,16 +15,26 @@ class TqdmLoggingHandler(logging.Handler):
         except Exception:
             self.handleError(record)
 
+
 def suppress_noisy_loggers(loggers, level=logging.WARNING):
     for name in loggers:
         logging.getLogger(name).setLevel(level)
 
-@lru_cache(maxsize=None)
-def get_data(s3_uri: str, as_bytes: bool = False) -> bytes | str:
-    mode = "rb" if as_bytes else "r"
-    with fs.open(s3_uri, mode) as f:
-        return f.read()
-    
+
+def setup_logging(debug: bool = False):
+    logger = logging.getLogger()
+    logger.setLevel(logging.DEBUG if debug else logging.INFO)
+    handler = TqdmLoggingHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    logger.addHandler(handler)
+    logger.propagate = False
+
+    if debug:
+        logger.setLevel(logging.DEBUG)
+
+    suppress_noisy_loggers(NOISY_LOGGERS)
+
+
 def get_filter(values, field, inexact_match, label=""):
     """Helper to append filters depending on inexact_match."""
     if not values:

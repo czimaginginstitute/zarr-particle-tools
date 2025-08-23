@@ -45,18 +45,19 @@ python subtomo_extract.py local \
 ```
 
 ```
-python data_portal_subtomo_extract.py data-portal \
+python subtomo_extract.py data-portal \
   --run-id 16463 \
   --annotation-names "ribosome" \
   --inexact-match \
   --output-dir tests/output/sample_data_portal_test/ \
-  --box-size 320
+  --box-size 128
 ```
 
 ## Pytest
 To ensure that the subtomogram extraction matches RELION's subtomogram extraction, we have a set of tests that compare the output of this script with RELION 5.0's output and ensure that they match within reasonable numerical precision. float16 data has a more relaxed tolerance due to the reduced precision of the data type, and the real experimental data has a more relaxed tolerance due to the noisier nature of the data.
 
 ## Known Limitations
+- Does not (yet) support --crop (output box size different than --box-size)
 - Does not support gamma offset
 - Does not support spherical aberration correction
 - Does not support circle precrop
