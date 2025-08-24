@@ -141,7 +141,7 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
     start_time = time.time()
     tiltseries_data.compute_crops()  # compute all cached slices
     end_time = time.time()
-    logger.debug(f"Downloading {len(particles_to_tiltseries_coordinates)} crops for {individual_tiltseries_path} took {end_time - start_time:.2f} seconds.")
+    logger.debug(f"Downloading crops for {individual_tiltseries_path} took {end_time - start_time:.2f} seconds.")
 
     def process_particle_data(particle_data):
         particle_id = particle_data[0]["particle_id"]
@@ -342,6 +342,9 @@ def validate_and_setup(
 ) -> None:
     if box_size % 2 != 0:
         raise click.BadParameter(f"Box size must be an even number, got {box_size}.")
+    
+    if output_dir.exists() and any(output_dir.iterdir()):
+        raise FileExistsError(f"Output directory {output_dir} already exists and is not empty. Please specify an empty or non-existent directory.")
 
     (output_dir / "Subtomograms").mkdir(parents=True, exist_ok=True)
 

@@ -99,6 +99,13 @@ def data_portal_options():
             help="Filter using case-insensitive 'contains' search for string fields.",
         )
     )
+    options.append(
+        click.option(
+            "--ground-truth",
+            is_flag=True,
+            help="If set, only particles from annotations marked as ground truth will be extracted.",
+        )
+    )
 
     for arg, py_type in DATA_PORTAL_ARGS:
         field_name = arg.lstrip("--").split("-")[0]

@@ -417,6 +417,7 @@ def resolve_annotation_files(
     annotation_ids: list[int] = None,
     annotation_names: list[str] = None,
     inexact_match: bool = False,
+    ground_truth: bool = False,
 ) -> list[cdp.AnnotationFile]:
     client = cdp.Client()
 
@@ -432,6 +433,9 @@ def resolve_annotation_files(
     annotation_query_filters.append(get_filter(run_names, cdp.Annotation.run.name, inexact_match, "run names"))
     annotation_query_filters.append(get_filter(annotation_ids, cdp.Annotation.id, False, "annotation IDs"))
     annotation_query_filters.append(get_filter(annotation_names, cdp.Annotation.object_name, inexact_match, "annotation names"))
+    if ground_truth:
+        logger.info("Filtering for ONLY ground truth annotations.")
+        annotation_query_filters.append(cdp.Annotation.ground_truth_status == True)
     annotation_query_filters = [f for f in annotation_query_filters if f is not None]
 
     # Then filter with information related to the AnnotationFile class
@@ -508,6 +512,7 @@ def generate_starfiles(
     annotation_ids: list[int] = None,
     annotation_names: list[str] = None,
     inexact_match: bool = False,
+    ground_truth: bool = False,
     debug: bool = False,
 ) -> tuple[Path, Path]:
     """
@@ -535,6 +540,7 @@ def generate_starfiles(
         annotation_ids=annotation_ids,
         annotation_names=annotation_names,
         inexact_match=inexact_match,
+        ground_truth=ground_truth,
     )
 
     return generate_starfiles_from_annotation_files(annotation_files, output_dir)

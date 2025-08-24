@@ -24,7 +24,9 @@ poetry install
 ```
 
 ## Example runs
-See full options with `python subtomo_extract.py local --help` and `python subtomo_extract.py data-portal --help`. For RELION projects, a `--tiltseries-relative-dir` is not needed if this script is run from the RELION project directory root.
+### See full options with `python subtomo_extract.py local --help` and `python subtomo_extract.py data-portal --help`. 
+
+For RELION projects, a `--tiltseries-relative-dir` is not needed if this script is run from the RELION project directory root.
 
 ```
 python subtomo_extract.py local \
@@ -51,6 +53,15 @@ python subtomo_extract.py data-portal \
   --inexact-match \
   --output-dir tests/output/sample_data_portal_test/ \
   --box-size 128
+```
+
+```
+python subtomo_extract.py data-portal \
+  --run-id 17700 \
+  --annotation-names "ferritin complex" \
+  --ground-truth \
+  --output-dir tests/output/sample_data_portal_test/ \
+  --box-size 32
 ```
 
 ## Pytest

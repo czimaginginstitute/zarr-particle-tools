@@ -7,7 +7,7 @@ class _BaseListType(click.ParamType):
     name = "list"
 
     def _split(self, raw: str) -> list[str]:
-        return [p for p in re.split(r"[,\s]+", raw.strip()) if p]
+        raise NotImplementedError
 
     def _coerce_many(self, seq: Iterable[str]) -> list[Any]:
         raise NotImplementedError
@@ -30,12 +30,18 @@ class _BaseListType(click.ParamType):
 class IntList(_BaseListType):
     name = "int-list"
 
+    def _split(self, raw: str) -> list[str]:
+        return [p for p in re.split(r"[,\s]+", raw.strip()) if p]
+
     def _coerce_many(self, seq: Iterable[str]) -> list[int]:
         return [int(x) for x in seq]
 
 
 class StrList(_BaseListType):
     name = "str-list"
+
+    def _split(self, raw: str) -> list[str]:
+        return [p for p in re.split(r"[,]+", raw.strip()) if p]
 
     def _coerce_many(self, seq: Iterable[str]) -> list[str]:
         return list(seq)
