@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import mrcfile
 import time
+import shutil
 import multiprocessing as mp
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -62,6 +63,7 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
         filtered_particles_df,
         filtered_trajectories_dict,
         box_size,
+        crop_size,
         bin,
         individual_tiltseries_path,
         tiltseries_row_entry,
@@ -71,7 +73,9 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
         no_circle_crop,
         output_dir,
     ) = args
-    pre_bin_box_size = box_size * bin
+    # following RELION convention
+    pre_bin_box_size = int(round(box_size * bin))
+    pre_bin_crop_size = crop_size * bin
 
     if not individual_tiltseries_path.exists():
         raise FileNotFoundError(f"Tiltseries file {individual_tiltseries_path} does not exist. Please check the path and try again.")
@@ -97,8 +101,8 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
     tiltseries_data = DataReader(str(tiltseries_data_locator))
 
     # projection-relevant variables
-    background_mask = circular_mask(box_size) == 0.0
-    soft_mask = circular_soft_mask(box_size, falloff=5.0)
+    background_mask = circular_mask(crop_size) == 0.0
+    soft_mask = circular_soft_mask(crop_size, falloff=5.0)
     tiltseries_pixel_size = tiltseries_row_entry["rlnTomoTiltSeriesPixelSize"]
     tiltseries_x = tiltseries_data.data.shape[2]
     tiltseries_y = tiltseries_data.data.shape[1]
@@ -127,7 +131,9 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
     all_visible_sections_relion_column = []
 
     for particle_id, sections in particles_to_tiltseries_coordinates.items():
-        particle_data, visible_sections = get_particle_crop_and_visibility(tiltseries_data, particle_id, sections, tiltseries_x, tiltseries_y, tiltseries_pixel_size, pre_bin_box_size)
+        particle_data, visible_sections = get_particle_crop_and_visibility(
+            tiltseries_data, particle_id, sections, tiltseries_x, tiltseries_y, tiltseries_pixel_size, pre_bin_box_size, pre_bin_crop_size
+        )
 
         # RELION by default only requires one tilt to be visible, so only skip if all sections are out of bounds (and also don't append since the entry doesn't exist in the particles.star file)
         if len(particle_data) == 0:
@@ -149,11 +155,17 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
         tilt_stack = np.zeros((len(particle_data), pre_bin_box_size, pre_bin_box_size), dtype=np.float32)
         for tilt in range(len(particle_data)):
             tiltseries_slice_key = particle_data[tilt]["tiltseries_slice_key"]
-            tilt_stack[tilt] = tiltseries_data[tiltseries_slice_key]
+            x_pre_padding = particle_data[tilt]["x_pre_padding"]
+            y_pre_padding = particle_data[tilt]["y_pre_padding"]
+            x_post_padding = particle_data[tilt]["x_post_padding"]
+            y_post_padding = particle_data[tilt]["y_post_padding"]
+            padded_crop = np.pad(tiltseries_data[tiltseries_slice_key], ((y_pre_padding, y_post_padding), (x_pre_padding, x_post_padding)), mode="edge")
+            tilt_stack[tilt] = padded_crop
         fourier_tilt_stack = np.fft.rfft2(tilt_stack, norm="ortho", axes=(-2, -1))
 
         new_fourier_tilt_stack = np.zeros((len(particle_data), box_size, box_size // 2 + 1), dtype=np.complex64)
         for tilt in range(len(particle_data)):
+            section: int = particle_data[tilt]["section"]
             tiltseries_slice_key: tuple[int, slice, slice] = particle_data[tilt]["tiltseries_slice_key"]
             subpixel_shift: tuple[int, int] = particle_data[tilt]["subpixel_shift"]
             coordinate: np.ndarray = particle_data[tilt]["coordinate"]
@@ -169,22 +181,22 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
             if not no_ctf:
                 ctf_weights = calculate_ctf(
                     coordinate=coordinate,
-                    tilt_projection_matrix=projection_matrices[tilt],
+                    tilt_projection_matrix=projection_matrices[section - 1],
                     voltage=voltage,
                     spherical_aberration=spherical_aberration,
                     amplitude_contrast=amplitude_contrast,
                     handedness=handedness,
                     tiltseries_pixel_size=tiltseries_pixel_size,
                     phase_shift=phase_shift,
-                    defocus_u=defocus_u[tilt],
-                    defocus_v=defocus_v[tilt],
-                    defocus_angle=defocus_angle[tilt],
-                    dose=doses[tilt],
-                    bfactor=bfactor_per_electron_dose[tilt],
+                    defocus_u=defocus_u[section - 1],
+                    defocus_v=defocus_v[section - 1],
+                    defocus_angle=defocus_angle[section - 1],
+                    dose=doses[section - 1],
+                    bfactor=bfactor_per_electron_dose[section - 1],
                     box_size=box_size,
                     bin=bin,
                 )
-                fourier_tilt *= dose_weights[tilt, :, :] * ctf_weights
+                fourier_tilt *= dose_weights[section - 1, :, :] * ctf_weights
             fourier_tilt *= -1  # phase flip for RELION compatibility
             fourier_tilt /= float(bin) ** 2  # normalize by binning factor
             new_fourier_tilt_stack[tilt] = fourier_tilt
@@ -196,9 +208,12 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
             new_tilt_stack -= background_mean[:, None, None]
             new_tilt_stack *= soft_mask
 
+        # crop to final desired size
+        cropped_tilt_stack = new_tilt_stack[:, (box_size - crop_size) // 2 : (box_size + crop_size) // 2, (box_size - crop_size) // 2 : (box_size + crop_size) // 2]
+
         output_path = output_folder / f"{particle_id}_stack2d.mrcs"
-        with mrcfile.new(output_path, overwrite=True) as mrc:
-            mrc.set_data(new_tilt_stack.astype(np.float16 if float16 else np.float32))
+        with mrcfile.new(output_path) as mrc:
+            mrc.set_data(cropped_tilt_stack.astype(np.float16 if float16 else np.float32))
             mrc.voxel_size = (tiltseries_pixel_size * bin, tiltseries_pixel_size * bin, 1.0)
 
     start_time = time.time()
@@ -218,7 +233,7 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
 
 
 def write_starfiles(
-    merged_particles_df: pd.DataFrame, particle_optics_df: pd.DataFrame, tomograms_starfile: str, box_size: int, bin: int, no_ctf: bool, output_dir: Path, trajectories_starfile: str = None
+    merged_particles_df: pd.DataFrame, particle_optics_df: pd.DataFrame, tomograms_starfile: str, crop_size: int, bin: int, no_ctf: bool, output_dir: Path, trajectories_starfile: str = None
 ) -> None:
     """
     Writes the updated particles and optimisation set star files, as per RELION expected format & outputs.
@@ -232,7 +247,7 @@ def write_starfiles(
     updated_optics_df["rlnImageDimensionality"] = 2
     updated_optics_df["rlnTomoSubtomogramBinning"] = float(bin)
     updated_optics_df["rlnImagePixelSize"] = updated_optics_df["rlnTomoTiltSeriesPixelSize"] * bin
-    updated_optics_df["rlnImageSize"] = box_size
+    updated_optics_df["rlnImageSize"] = crop_size
 
     general_df = {"rlnTomoSubTomosAre2DStacks": 1}
     starfile.write(
@@ -250,7 +265,7 @@ def write_starfiles(
     if trajectories_starfile:
         optimisation_set_dict["rlnTomoTrajectoriesFile"] = trajectories_starfile.resolve()
 
-    starfile.write(optimisation_set_dict, output_dir / "optimisation_set.star", overwrite=True)
+    starfile.write(optimisation_set_dict, output_dir / "optimisation_set.star")
 
 
 def extract_subtomograms(
@@ -260,9 +275,10 @@ def extract_subtomograms(
     no_ctf: bool,
     no_circle_crop: bool,
     output_dir: Path,
-    particles_starfile: Path = None,
+    particles_starfile: Path,
+    tomograms_starfile: Path,
+    crop_size: int = None,
     tiltseries_relative_dir: Path = None,
-    tomograms_starfile: Path = None,
     trajectories_starfile: Path = None,
 ) -> tuple[int, int, int]:
     """
@@ -273,6 +289,9 @@ def extract_subtomograms(
     Returns:
         tuple: Number of particles extracted, number of skipped particles, number of tiltseries processed.
     """
+    if crop_size is None:
+        crop_size = box_size
+
     logger.debug(f"Starting subtomogram extraction, reading file {particles_starfile} and {tomograms_starfile}")
     particles_star_file = starfile.read(particles_starfile)
     particles_df = particles_star_file["particles"]
@@ -300,6 +319,7 @@ def extract_subtomograms(
             filtered_particles_df,
             filtered_trajectories_dict,
             box_size,
+            crop_size,
             bin,
             individual_tiltseries_path,
             tiltseries_row_entry,
@@ -331,7 +351,7 @@ def extract_subtomograms(
 
     merged_particles_df = pd.concat(particles_df_results, ignore_index=True)
     # update all the relevant star files
-    write_starfiles(merged_particles_df, particles_star_file["optics"], tomograms_starfile, box_size, bin, no_ctf, output_dir, trajectories_starfile)
+    write_starfiles(merged_particles_df, particles_star_file["optics"], tomograms_starfile, crop_size, bin, no_ctf, output_dir, trajectories_starfile)
 
     return len(merged_particles_df), total_skipped_count, len(tomograms_df)
 
@@ -339,14 +359,26 @@ def extract_subtomograms(
 def validate_and_setup(
     box_size: int,
     output_dir: Path,
+    crop_size: int = None,
+    overwrite: bool = False,
 ) -> None:
     if box_size % 2 != 0:
         raise click.BadParameter(f"Box size must be an even number, got {box_size}.")
-    
-    if output_dir.exists() and any(output_dir.iterdir()):
-        raise FileExistsError(f"Output directory {output_dir} already exists and is not empty. Please specify an empty or non-existent directory.")
 
-    (output_dir / "Subtomograms").mkdir(parents=True, exist_ok=True)
+    if crop_size is not None:
+        if crop_size % 2 != 0:
+            raise click.BadParameter(f"Crop size must be an even number, got {crop_size}.")
+        if crop_size > box_size:
+            raise click.BadParameter(f"Crop size cannot be greater than box size, got crop size {crop_size} and box size {box_size}.")
+
+    if output_dir.exists() and any(output_dir.iterdir()) and not overwrite:
+        raise FileExistsError(f"Output directory {output_dir} already exists and is not empty. Use --overwrite to overwrite existing files.")
+
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+
+    (output_dir / "Subtomograms").mkdir(parents=True)
+
 
 def parse_extract_local_subtomograms(
     box_size: int,
@@ -355,14 +387,16 @@ def parse_extract_local_subtomograms(
     no_ctf: bool,
     no_circle_crop: bool,
     output_dir: Path,
+    crop_size: int = None,
     particles_starfile: Path = None,
     trajectories_starfile: Path = None,
     tiltseries_relative_dir: Path = None,
     tomograms_starfile: Path = None,
     optimisation_set_starfile: Path = None,
+    overwrite: bool = False,
 ) -> None:
     start_time = time.time()
-    validate_and_setup(box_size, output_dir)
+    validate_and_setup(box_size, output_dir, crop_size, overwrite)
 
     if optimisation_set_starfile and (particles_starfile or tomograms_starfile or trajectories_starfile):
         raise click.BadParameter("Cannot specify both optimisation set star file and individual star files. Please provide only one of them.")
@@ -379,6 +413,7 @@ def parse_extract_local_subtomograms(
 
     particles_count, total_skipped_count, individual_tiltseries_count = extract_subtomograms(
         box_size=box_size,
+        crop_size=crop_size,
         bin=bin,
         float16=float16,
         no_ctf=no_ctf,
@@ -403,10 +438,13 @@ def parse_extract_data_portal_subtomograms(
     no_circle_crop: bool,
     output_dir: Path,
     debug: bool,
+    crop_size: int = None,
+    dry_run: bool = False,
+    overwrite: bool = False,
     **data_portal_args,
 ) -> None:
     start_time = time.time()
-    validate_and_setup(box_size, output_dir)
+    validate_and_setup(box_size, output_dir, crop_size, overwrite)
 
     particles_path, tomograms_path, _ = generate_starfiles(
         output_dir=output_dir,
@@ -419,6 +457,10 @@ def parse_extract_data_portal_subtomograms(
 
     if not tomograms_path.exists():
         raise ValueError(f"Starfile generation failed. Expected tomograms star file at {tomograms_path} does not exist.")
+    
+    if dry_run:
+        logger.info(f"Dry run enabled, skipping subtomogram extraction. Generated star files at {particles_path} and {tomograms_path}.")
+        return
 
     particles_count, total_skipped_count, individual_tiltseries_count = extract_subtomograms(
         particles_starfile=particles_path,
@@ -426,6 +468,7 @@ def parse_extract_data_portal_subtomograms(
         tiltseries_relative_dir=output_dir,
         tomograms_starfile=tomograms_path,
         box_size=box_size,
+        crop_size=crop_size,
         bin=bin,
         float16=float16,
         no_ctf=no_ctf,
@@ -449,6 +492,7 @@ def cli():
 @cli_options.common_options()
 def cmd_local(**kwargs):
     setup_logging(debug=kwargs.get("debug", False))
+    del kwargs["debug"]
     parse_extract_local_subtomograms(**kwargs)
 
 

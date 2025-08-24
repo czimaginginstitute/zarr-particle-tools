@@ -18,12 +18,16 @@ def mrcs_equal(file1: Path, file2: Path, tol: float) -> bool:
     return True
 
 def np_arrays_equal(arr1: np.ndarray, arr2: np.ndarray, tol: float, metadata: str, percentile: float = 99.5) -> bool:
-    assert arr1.shape == arr2.shape, f"Arrays must have the same shape. {arr1.shape} != {arr2.shape}"
+    if arr1.shape != arr2.shape:
+        print(f"Arrays must have the same shape. {arr1.shape} != {arr2.shape}")
+        return False
 
     abs_diff = np.abs(arr1 - arr2)
     threshold = np.percentile(abs_diff, percentile)
     mask = abs_diff <= threshold
-    assert np.allclose(arr1[mask], arr2[mask], atol=tol), f"{metadata} Arrays differ beyond tolerance: {np.max(abs_diff[mask])} at {np.unravel_index(np.argmax(abs_diff[mask]), arr1.shape)}"
+    if not np.allclose(arr1[mask], arr2[mask], atol=tol):
+        print(f"{metadata} Arrays differ beyond tolerance: {np.max(abs_diff[mask])} at {np.unravel_index(np.argmax(abs_diff[mask]), arr1.shape)}")
+        return False
 
     return True
 

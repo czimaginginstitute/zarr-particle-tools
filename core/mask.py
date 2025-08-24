@@ -1,20 +1,21 @@
 import numpy as np
 
-def circular_mask(box_size: int) -> np.ndarray:
-    """Return a centered circular mask within a square of given box size (in pixels)."""
-    y, x = np.ogrid[-box_size // 2 : box_size // 2, -box_size // 2 : box_size // 2]
-    mask = (x * x + y * y) <= (box_size // 2) ** 2
+
+def circular_mask(crop_size: float) -> np.ndarray:
+    """Return a centered circular mask within a square of given crop size (in pixels)."""
+    y, x = np.ogrid[-crop_size // 2 : crop_size // 2, -crop_size // 2 : crop_size // 2]
+    mask = (x * x + y * y) <= (crop_size // 2) ** 2
     return mask
 
 
-def circular_soft_mask(box_size: int, falloff: float) -> np.ndarray:
-    """Return a centered circular soft mask within a square of given box size (in pixels) (based on RELION soft mask)."""
-    y, x = np.ogrid[-box_size // 2 : box_size // 2, -box_size // 2 : box_size // 2]
-    mask = np.zeros((box_size, box_size))
+def circular_soft_mask(crop_size: float, falloff: float) -> np.ndarray:
+    """Return a centered circular soft mask within a square of given crop size (in pixels) (based on RELION soft mask)."""
+    y, x = np.ogrid[-crop_size // 2 : crop_size // 2, -crop_size // 2 : crop_size // 2]
+    mask = np.zeros((crop_size, crop_size))
     r = np.sqrt(x * x + y * y)
-    mask[r < box_size / 2.0 - falloff] = 1.0
-    falloff_zone = (r >= box_size / 2.0 - falloff) & (r < box_size / 2.0)
-    mask[falloff_zone] = 0.5 - 0.5 * np.cos(np.pi * ((box_size / 2.0) - r[falloff_zone]) / falloff)
+    mask[r < crop_size / 2.0 - falloff] = 1.0
+    falloff_zone = (r >= crop_size / 2.0 - falloff) & (r < crop_size / 2.0)
+    mask[falloff_zone] = 0.5 - 0.5 * np.cos(np.pi * ((crop_size / 2.0) - r[falloff_zone]) / falloff)
     return mask
 
 
@@ -33,6 +34,6 @@ def nyquist_filter_mask(box_size):
     freq_radius_pix = np.sqrt(kx_grid**2 + ky_grid**2)
     # nyquist is at 2 * pixel_size in Angstroms, in pixels it's pixel_size / (2 * pixel_size) = 0.5
     freq_cutoff_pix = 0.5
-    mask = (freq_radius_pix < freq_cutoff_pix)
-    
+    mask = freq_radius_pix < freq_cutoff_pix
+
     return mask

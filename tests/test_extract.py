@@ -1,3 +1,4 @@
+# TODO: add tests for crop size parameter
 # TODO: create more focused tests for individual functions?
 # TODO: create a highly sensitive cross-correlation test for MRCs? (better represents the testing we're trying to do)
 # TODO: don't store tiltseries / RELION *.mrcs data in the repository, but host them on zenodo

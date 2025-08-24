@@ -188,7 +188,7 @@ def get_particles_to_tiltseries_coordinates(
 
 
 def get_particle_crop_and_visibility(
-    tiltseries_data: DataReader, particle_id: int, sections: dict, tiltseries_x: int, tiltseries_y: int, tiltseries_pixel_size: float, pre_bin_box_size: int
+    tiltseries_data: DataReader, particle_id: int, sections: dict, tiltseries_x: int, tiltseries_y: int, tiltseries_pixel_size: float, pre_bin_box_size: int, pre_bin_crop_size: float
 ) -> tuple[list[dict], list[int]]:
     """
     Process the calculated (Angstrom) 2D coordinate of the particle to pixel coordinates and perform cropping.
@@ -209,12 +209,15 @@ def get_particle_crop_and_visibility(
         y_start_px_float = y_px_float - pre_bin_box_size / 2.0
         x_start_px = int(round(x_start_px_float))
         y_start_px = int(round(y_start_px_float))
-        x_end_px_float = x_start_px_float + pre_bin_box_size
-        y_end_px_float = y_start_px_float + pre_bin_box_size
         x_end_px = x_start_px + pre_bin_box_size
         y_end_px = y_start_px + pre_bin_box_size
+        # for checking visibility and cropping later
+        x_crop_start_px_float = x_px_float - pre_bin_crop_size / 2.0
+        y_crop_start_px_float = y_px_float - pre_bin_crop_size / 2.0
+        x_crop_end_px_float = x_crop_start_px_float + pre_bin_crop_size
+        y_crop_end_px_float = y_crop_start_px_float + pre_bin_crop_size
 
-        if x_start_px_float < 0 or x_end_px_float > tiltseries_x or y_start_px_float < 0 or y_end_px_float > tiltseries_y:
+        if x_crop_start_px_float < 0 or x_crop_end_px_float > tiltseries_x or y_crop_start_px_float < 0 or y_crop_end_px_float > tiltseries_y:
             visible_sections.append(0)
             continue
 
@@ -222,12 +225,12 @@ def get_particle_crop_and_visibility(
         shift_x = x_start_px - x_start_px_float
         shift_y = y_start_px - y_start_px_float
 
-        slice_key = (section - 1, slice(y_start_px, y_end_px), slice(x_start_px, x_end_px))
+        slice_key = (section - 1, slice(max(y_start_px, 0), min(y_end_px, tiltseries_y)), slice(max(x_start_px, 0), min(x_end_px, tiltseries_x)))
         # add it to the DataReader cache to be computed later
         tiltseries_data.slice_data(slice_key)
 
         visible_sections.append(1)
-        particle_data.append({"particle_id": particle_id, "coordinate": coordinate, "section": section, "tiltseries_slice_key": slice_key, "subpixel_shift": (shift_y, shift_x)})
+        particle_data.append({"particle_id": particle_id, "coordinate": coordinate, "section": section, "tiltseries_slice_key": slice_key, "subpixel_shift": (shift_y, shift_x), "x_pre_padding": max(0, -x_start_px), "y_pre_padding": max(0, -y_start_px), "x_post_padding": max(0, x_end_px - tiltseries_x), "y_post_padding": max(0, y_end_px - tiltseries_y)})
 
     return particle_data, visible_sections
 

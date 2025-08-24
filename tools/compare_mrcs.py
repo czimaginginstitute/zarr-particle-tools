@@ -235,6 +235,9 @@ def cli(
     """
     Main function to parse arguments and run the comparison.
     """
+    if output_dir.exists():
+        raise FileExistsError(f"Output directory {output_dir} already exists. Please specify a different directory or remove the existing one.")
+
     compare_mrcs(
         mock_mrc_file=mock_mrc_file,
         relion_mrc_file=relion_mrc_file,
@@ -252,3 +255,8 @@ if __name__ == "__main__":
 # --mock-mrc-file tests/output/unroofing_noctf_nocirclecrop/Subtomograms/session1_16849/1_stack2d.mrcs \
 # --relion-mrc-file tests/data/relion_project_unroofing/relion_output_noctf_nocirclecrop/Subtomograms/session1_16849/1_stack2d.mrcs \
 # --sections 1,6,11,16,21,26,31
+
+# python -m tools.compare_mrcs \
+# --mock-mrc-file tests/output/synthetic_baseline/Subtomograms/session1_TS_1/17_stack2d.mrcs \
+# --relion-mrc-file tests/data/relion_project_synthetic/relion_output_baseline/Subtomograms/session1_TS_1/17_stack2d.mrcs \
+# --sections 1,6,11,14,16,21,26,31
