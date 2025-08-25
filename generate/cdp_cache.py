@@ -32,7 +32,7 @@ tomograms_cache: dict[int, Tomogram] = {}
 # alignment id to tomogram id
 alignment_to_tomograms_cache: dict[int, list[int]] = defaultdict(list)
 # tomogram voxel spacing id to tomogram id
-tomogram_voxel_spacing_to_tomogram_cache: dict[int, list[int]] = defaultdict(list)
+tomogram_voxel_spacing_to_tomograms_cache: dict[int, list[int]] = defaultdict(list)
 # alignment id to per section alignments
 per_section_alignments_cache: dict[int, list[PerSectionAlignmentParameters]] = defaultdict(list)
 # tiltseries id to per section parameters
@@ -228,7 +228,7 @@ def get_tomograms_by_alignment_id(alignment_ids: Union[list[int], int]) -> dict[
 def get_tomograms_by_voxel_spacing_id(voxel_spacing_ids: Union[list[int], int]) -> dict[int, list[Tomogram]]:
     return get_items_by_ids(
         ids=voxel_spacing_ids,
-        cache=tomogram_voxel_spacing_to_tomogram_cache,
+        cache=tomogram_voxel_spacing_to_tomograms_cache,
         query_field=Tomogram.tomogram_voxel_spacing_id,
         model_cls=Tomogram,
         key_extractor=lambda t: t.tomogram_voxel_spacing_id,

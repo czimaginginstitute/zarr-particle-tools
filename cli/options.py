@@ -96,7 +96,6 @@ DATA_PORTAL_ARGS = [
     ("--tiltseries-ids", int),
     ("--alignment-ids", int),
     ("--tomogram-ids", int),
-    ("--tomogram-names", str),
     ("--annotation-ids", int),
     ("--annotation-names", str),
 ]

@@ -493,7 +493,6 @@ def resolve_annotation_files(
     tiltseries_ids: list[int] = None,
     alignment_ids: list[int] = None,
     tomogram_ids: list[int] = None,
-    tomogram_names: list[str] = None,
     annotation_ids: list[int] = None,
     annotation_names: list[str] = None,
     inexact_match: bool = False,
@@ -547,11 +546,10 @@ def resolve_annotation_files(
     voxel_spacing_ids = []
     tomogram_query_filters = []
     tomogram_query_filters.append(get_filter(tomogram_ids, cdp.Tomogram.id, False, "tomogram IDs"))
-    tomogram_query_filters.append(get_filter(tomogram_names, cdp.Tomogram.name, inexact_match, "tomogram names"))
     tomogram_query_filters = [f for f in tomogram_query_filters if f is not None]
     if tomogram_query_filters:
         tomogram_list: list[cdp.Tomogram] = cdp.Tomogram.find(client, tomogram_query_filters)
-        cdp_cache.tomogram_cache = {**cdp_cache.tomogram_cache, **{t.id: t for t in tomogram_list}}
+        cdp_cache.tomograms_cache = {**cdp_cache.tomograms_cache, **{t.id: t for t in tomogram_list}}
         temp_alignment_ids = {t.alignment_id for t in tomogram_list}
         voxel_spacing_ids = [t.tomogram_voxel_spacing_id for t in tomogram_list]
         if not temp_alignment_ids:
@@ -584,9 +582,6 @@ def resolve_annotation_files(
     )
     annotation_file_query_filters = [f for f in annotation_file_query_filters if f is not None]
 
-    if not annotation_file_query_filters:
-        raise ValueError("No filtering is applied. Please provide at least one filter.")
-
     annotation_files: list[cdp.AnnotationFile] = cdp.AnnotationFile.find(client, annotation_file_query_filters)
     if not annotation_files:
         raise ValueError("No Point / Oriented Point annotation files found matching the provided filters.")
@@ -608,12 +603,10 @@ def generate_starfiles(
     tiltseries_ids: list[int] = None,
     alignment_ids: list[int] = None,
     tomogram_ids: list[int] = None,
-    tomogram_names: list[str] = None,
     annotation_ids: list[int] = None,
     annotation_names: list[str] = None,
     inexact_match: bool = False,
     ground_truth: bool = False,
-    debug: bool = False,
 ) -> tuple[Path, Path]:
     """
     Generates star files for annotations based on the specified filters. First resolves all annotation IDs based on the provided filters, then generates the star files given the resolved annotation IDs.
@@ -636,7 +629,6 @@ def generate_starfiles(
         tiltseries_ids=tiltseries_ids,
         alignment_ids=alignment_ids,
         tomogram_ids=tomogram_ids,
-        tomogram_names=tomogram_names,
         annotation_ids=annotation_ids,
         annotation_names=annotation_names,
         inexact_match=inexact_match,
@@ -656,12 +648,13 @@ def generate_starfiles(
 )
 @click.option("--debug", is_flag=True, help="Enable debug logging.")
 def cli(**kwargs):
+    debug = kwargs.pop("debug", False)
+    setup_logging(debug)
     kwargs = cli_options.flatten_data_portal_args(kwargs)
     generate_starfiles(**kwargs)
 
 
 if __name__ == "__main__":
-    setup_logging()
     cli()
 
 # Example usage:

@@ -530,7 +530,6 @@ def parse_extract_data_portal_subtomograms(
     no_ctf: bool,
     no_circle_crop: bool,
     output_dir: Path,
-    debug: bool,
     crop_size: int = None,
     dry_run: bool = False,
     overwrite: bool = False,
@@ -542,7 +541,6 @@ def parse_extract_data_portal_subtomograms(
     particles_path, tomograms_path, _ = generate_starfiles(
         output_dir=output_dir,
         **data_portal_args,
-        debug=debug,
     )
 
     if not particles_path.exists():
@@ -590,8 +588,7 @@ def cli():
 @cli_options.local_options()
 @cli_options.common_options()
 def cmd_local(**kwargs):
-    setup_logging(debug=kwargs.get("debug", False))
-    del kwargs["debug"]
+    setup_logging(debug=kwargs.pop("debug", False))
     parse_extract_local_subtomograms(**kwargs)
 
 
@@ -599,7 +596,7 @@ def cmd_local(**kwargs):
 @cli_options.common_options()
 @cli_options.data_portal_options()
 def cmd_data_portal(**kwargs):
-    setup_logging(debug=kwargs.get("debug", False))
+    setup_logging(debug=kwargs.pop("debug", False))
     kwargs = cli_options.flatten_data_portal_args(kwargs)
     parse_extract_data_portal_subtomograms(**kwargs)
 
