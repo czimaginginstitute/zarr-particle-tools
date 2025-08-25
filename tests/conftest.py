@@ -1,9 +1,11 @@
 import logging
-import pytest
-import starfile
 import os
 from pathlib import Path
-from tests.helpers.compare import mrcs_equal, df_equal
+
+import pytest
+import starfile
+
+from tests.helpers.compare import df_equal, mrcs_equal
 
 
 @pytest.fixture(autouse=True)

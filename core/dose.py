@@ -25,7 +25,9 @@ def calculate_dose_weights(k2: np.ndarray, dose: float, bfactor: float) -> np.nd
         return np.exp(-0.5 * dose / d0)
 
 
-def calculate_dose_weight_image(dose: float, tiltseries_pixel_size: float, box_size: int, bfactor_per_electron_dose: float) -> np.ndarray:
+def calculate_dose_weight_image(
+    dose: float, tiltseries_pixel_size: float, box_size: int, bfactor_per_electron_dose: float
+) -> np.ndarray:
     """
     Calculates a 2D dose-weighting filter in Fourier space for a single image. Based on the RELION implementation in Damage::weightImage.
 

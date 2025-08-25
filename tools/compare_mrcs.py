@@ -11,15 +11,20 @@ For each specified section, it generates:
    Fourier space.
 3. A statistical summary printed to the console.
 """
-import sys, os
+
+import os
+import sys
+
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
+from pathlib import Path
+
 import click
+import matplotlib.pyplot as plt
 import mrcfile
 import numpy as np
-import matplotlib.pyplot as plt
 import seaborn as sns
-from pathlib import Path
+
 from cli.types import INT_LIST
 
 
@@ -30,9 +35,14 @@ def print_statistics(name: str, data: np.ndarray, is_percent: bool = False) -> N
     p25, p75 = np.percentile(data, [25, 75])
 
     if is_percent:
-        print(f"  - {name}: Median={median:.2f}%, IQR=({p25:.8f}% to {p75:.8f}%), Min={min:.8f}%, Max={max:.8f}%", flush=True)
+        print(
+            f"  - {name}: Median={median:.2f}%, IQR=({p25:.8f}% to {p75:.8f}%), Min={min:.8f}%, Max={max:.8f}%",
+            flush=True,
+        )
     else:
-        print(f"  - {name}: Median={median:.4f}, IQR=({p25:.8f} to {p75:.8f}), Min={min:.8f}, Max={max:.8f}", flush=True)
+        print(
+            f"  - {name}: Median={median:.4f}, IQR=({p25:.8f} to {p75:.8f}), Min={min:.8f}, Max={max:.8f}", flush=True
+        )
 
 
 def plot_heatmaps(
@@ -58,23 +68,38 @@ def plot_heatmaps(
 
     # Calculate percentile ranges and plot each heatmap
     vmin_mock, vmax_mock = np.percentile(mock_data, [0, 100])
-    sns.heatmap(mock_data, ax=axes[0, 0], cmap="viridis", vmin=vmin_mock, vmax=vmax_mock, **heatmap_kwargs).set_title("Mock Data")
+    sns.heatmap(mock_data, ax=axes[0, 0], cmap="viridis", vmin=vmin_mock, vmax=vmax_mock, **heatmap_kwargs).set_title(
+        "Mock Data"
+    )
     axes[0, 0].set_aspect("equal")
 
     vmin_relion, vmax_relion = np.percentile(relion_data, [0, 100])
-    sns.heatmap(relion_data, ax=axes[0, 1], cmap="viridis", vmin=vmin_relion, vmax=vmax_relion, **heatmap_kwargs).set_title("RELION Data")
+    sns.heatmap(
+        relion_data, ax=axes[0, 1], cmap="viridis", vmin=vmin_relion, vmax=vmax_relion, **heatmap_kwargs
+    ).set_title("RELION Data")
     axes[0, 1].set_aspect("equal")
 
     vmin_diff, vmax_diff = np.percentile(difference, [0, 100])
-    sns.heatmap(difference, ax=axes[1, 0], cmap="hot", vmin=vmin_diff, vmax=vmax_diff, **heatmap_kwargs).set_title("Absolute Difference")
+    sns.heatmap(difference, ax=axes[1, 0], cmap="hot", vmin=vmin_diff, vmax=vmax_diff, **heatmap_kwargs).set_title(
+        "Absolute Difference"
+    )
     axes[1, 0].set_aspect("equal")
 
     vmin_pdiff, vmax_pdiff = np.percentile(percent_diff, [0, 100])
-    sns.heatmap(percent_diff, ax=axes[1, 1], cmap="hot", vmin=vmin_pdiff, vmax=vmax_pdiff, **heatmap_kwargs).set_title("Percent Difference (%)")
+    sns.heatmap(percent_diff, ax=axes[1, 1], cmap="hot", vmin=vmin_pdiff, vmax=vmax_pdiff, **heatmap_kwargs).set_title(
+        "Percent Difference (%)"
+    )
     axes[1, 1].set_aspect("equal")
 
     vmin_transformed, vmax_transformed = np.percentile(transformed_difference, [0, 100])
-    sns.heatmap(transformed_difference, ax=axes[2, 0], cmap="hot", vmin=vmin_transformed, vmax=vmax_transformed, **heatmap_kwargs).set_title("Transformed/Inverse Transformed Difference")
+    sns.heatmap(
+        transformed_difference,
+        ax=axes[2, 0],
+        cmap="hot",
+        vmin=vmin_transformed,
+        vmax=vmax_transformed,
+        **heatmap_kwargs,
+    ).set_title("Transformed/Inverse Transformed Difference")
     axes[2, 0].set_aspect("equal")
 
     # delete [2, 1] as it is not used
@@ -86,12 +111,16 @@ def plot_heatmaps(
     plt.close(fig)
 
     fig, axes = plt.subplots()
-    sns.heatmap(mock_data, ax=axes, cmap="viridis", vmin=vmin_mock, vmax=vmax_mock, **heatmap_kwargs).set_title("Mock Data")
+    sns.heatmap(mock_data, ax=axes, cmap="viridis", vmin=vmin_mock, vmax=vmax_mock, **heatmap_kwargs).set_title(
+        "Mock Data"
+    )
     plt.savefig(output_dir / f"section_{section_num}_{space_name}_mock_data.png")
     plt.close(fig)
 
     fig, axes = plt.subplots()
-    sns.heatmap(relion_data, ax=axes, cmap="viridis", vmin=vmin_relion, vmax=vmax_relion, **heatmap_kwargs).set_title("RELION Data")
+    sns.heatmap(relion_data, ax=axes, cmap="viridis", vmin=vmin_relion, vmax=vmax_relion, **heatmap_kwargs).set_title(
+        "RELION Data"
+    )
     plt.savefig(output_dir / f"section_{section_num}_{space_name}_relion_data.png")
     plt.close(fig)
 
@@ -131,7 +160,16 @@ def analyze_space(
     print_statistics("Difference", difference.real)
     print_statistics("Percent Difference", percent_difference.real, is_percent=True)
     print_statistics("Transformed/Inverse Transformed Difference", transformed_difference.real, is_percent=True)
-    plot_heatmaps(np.abs(data1), np.abs(data2), np.abs(difference), percent_difference.real, np.abs(transformed_difference), space_name, section_num, output_dir)
+    plot_heatmaps(
+        np.abs(data1),
+        np.abs(data2),
+        np.abs(difference),
+        percent_difference.real,
+        np.abs(transformed_difference),
+        space_name,
+        section_num,
+        output_dir,
+    )
 
 
 def compare_section(
@@ -178,13 +216,18 @@ def compare_mrcs(
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    with mrcfile.open(mock_mrc_file, permissive=True) as mock_mrc, mrcfile.open(relion_mrc_file, permissive=True) as relion_mrc:
+    with (
+        mrcfile.open(mock_mrc_file, permissive=True) as mock_mrc,
+        mrcfile.open(relion_mrc_file, permissive=True) as relion_mrc,
+    ):
 
         mock_data = mock_mrc.data
         relion_data = relion_mrc.data
 
         if mock_data.shape != relion_data.shape:
-            raise ValueError(f"MRC files must have the same shape. " f"Mock: {mock_data.shape}, RELION: {relion_data.shape}")
+            raise ValueError(
+                f"MRC files must have the same shape. " f"Mock: {mock_data.shape}, RELION: {relion_data.shape}"
+            )
 
         for section in sections:
             print(f"\n{'='*20} Processing Section {section} {'='*20}")
@@ -236,7 +279,9 @@ def cli(
     Main function to parse arguments and run the comparison.
     """
     if output_dir.exists():
-        raise FileExistsError(f"Output directory {output_dir} already exists. Please specify a different directory or remove the existing one.")
+        raise FileExistsError(
+            f"Output directory {output_dir} already exists. Please specify a different directory or remove the existing one."
+        )
 
     compare_mrcs(
         mock_mrc_file=mock_mrc_file,

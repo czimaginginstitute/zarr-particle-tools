@@ -2,11 +2,13 @@
 # TODO: create more focused tests for individual functions?
 # TODO: create a highly sensitive cross-correlation test for MRCs? (better represents the testing we're trying to do)
 # TODO: don't store tiltseries / RELION *.mrcs data in the repository, but host them on zenodo
-import pytest
 import shutil
 from pathlib import Path
+
+import pytest
 from click.testing import CliRunner
-from subtomo_extract import extract_subtomograms, cli
+
+from subtomo_extract import cli, extract_subtomograms
 
 DATASET_CONFIGS = {
     "synthetic": {
@@ -32,9 +34,16 @@ EXTRACTION_PARAMETERS = {
     "box16_bin4_noctf": {"box_size": 16, "bin": 4, "no_ctf": True},
     "box16_bin4_nocirclecrop": {"box_size": 16, "bin": 4, "no_circle_crop": True},
     "box16_bin4_noctf_nocirclecrop": {"box_size": 16, "bin": 4, "no_ctf": True, "no_circle_crop": True},
+    "box128_crop64": {"box_size": 128, "bin": 1, "crop_size": 64},
+    "box64_bin2_crop32": {"box_size": 64, "bin": 2, "crop_size": 32},
+    "box32_bin6_crop16": {"box_size": 32, "bin": 6, "crop_size": 16},
 }
 
-PARAMS = [(dataset, dataset_config, extract_suffix, extract_arguments) for dataset, dataset_config in DATASET_CONFIGS.items() for extract_suffix, extract_arguments in EXTRACTION_PARAMETERS.items()]
+PARAMS = [
+    (dataset, dataset_config, extract_suffix, extract_arguments)
+    for dataset, dataset_config in DATASET_CONFIGS.items()
+    for extract_suffix, extract_arguments in EXTRACTION_PARAMETERS.items()
+]
 
 
 @pytest.mark.parametrize(
@@ -61,6 +70,7 @@ def test_extract_local_subtomograms_parametrized(
 
     extract_subtomograms(
         box_size=extract_arguments.get("box_size"),
+        crop_size=extract_arguments.get("crop_size"),
         bin=extract_arguments.get("bin"),
         float16=float16,
         no_ctf=extract_arguments.get("no_ctf", False),
@@ -94,7 +104,7 @@ def test_extract_local_subtomograms_parametrized(
     ],
     ids=["unroofing_baseline", "synthetic_box16_bin4_noctf_nocirclecrop"],
 )
-def test_cli_extract_local(monkeypatch, tmp_path, compare_mrcs_dirs, dataset, extract_suffix):
+def test_cli_extract_local(tmp_path, compare_mrcs_dirs, dataset, extract_suffix):
     dataset_config = DATASET_CONFIGS[dataset]
     extract_arguments = EXTRACTION_PARAMETERS[extract_suffix]
 

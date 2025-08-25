@@ -1,17 +1,21 @@
 """
 Helper functions for calculating the CTF and dose-weighting filters in Fourier space.
 """
+
+from functools import cache
+
 import numpy as np
-from functools import lru_cache
+
 from core.projection import project_3d_point_to_2d
-from core.dose import calculate_dose_weights
+
 
 def get_depth_offset(tilt_projection_matrix: np.ndarray, coordinate: np.ndarray) -> float:
     projected_point = project_3d_point_to_2d(coordinate, tilt_projection_matrix)
     projected_origin = project_3d_point_to_2d(np.array([0, 0, 0]), tilt_projection_matrix)
     return projected_point[2] - projected_origin[2]  # z coordinate in the projected space
 
-@lru_cache(maxsize=None)
+
+@cache
 def _ctf_template(
     voltage: float,
     spherical_aberration: float,
@@ -30,7 +34,7 @@ def _ctf_template(
         raise ValueError("Amplitude contrast must be between 0 and 1.")
     if handedness not in (1, -1):
         raise ValueError("Handedness must be either 1 or -1.")
-    
+
     voltage *= 1000  # kV to V
     spherical_aberration *= 1e7  # mm to Angstroms
     defocus_angle = np.deg2rad(defocus_angle)
@@ -46,28 +50,23 @@ def _ctf_template(
     K1 = np.pi * wavelength
     K2 = np.pi / 2 * spherical_aberration * wavelength**3
     K3 = np.arctan(amplitude_contrast / np.sqrt(1 - amplitude_contrast**2))
-    K4 = -1 * bfactor / 4.0 # not used
+    K4 = -1 * bfactor / 4.0  # noqa: F841
     K5 = np.deg2rad(phase_shift)
 
     # for astigmatism correction
-    Q = np.array([
-        [np.cos(defocus_angle), np.sin(defocus_angle)],
-        [-np.sin(defocus_angle), np.cos(defocus_angle)]
-    ])
-    Q_t = np.array([
-        [np.cos(defocus_angle), -np.sin(defocus_angle)],
-        [np.sin(defocus_angle), np.cos(defocus_angle)]
-    ])
+    Q = np.array([[np.cos(defocus_angle), np.sin(defocus_angle)], [-np.sin(defocus_angle), np.cos(defocus_angle)]])
+    Q_t = np.array([[np.cos(defocus_angle), -np.sin(defocus_angle)], [np.sin(defocus_angle), np.cos(defocus_angle)]])
 
     # fourier space coordinates
     ky = np.fft.fftfreq(box_size, d=tiltseries_pixel_size * bin)
     kx = np.fft.rfftfreq(box_size, d=tiltseries_pixel_size * bin)
-    ky_grid, kx_grid = np.meshgrid(ky, kx, indexing='ij')
+    ky_grid, kx_grid = np.meshgrid(ky, kx, indexing="ij")
 
     u2 = kx_grid**2 + ky_grid**2
     u4 = u2**2
 
     return K1, K2, K3, K5, ky_grid, kx_grid, u2, u4, Q, Q_t
+
 
 def calculate_ctf(
     coordinate: np.ndarray,
@@ -111,7 +110,12 @@ def calculate_ctf(
         np.ndarray: A 2D array representing the CTF in Fourier space.
 
     """
-    if abs(defocus_u) < 1e-6 and abs(defocus_v) < 1e-6 and abs(amplitude_contrast) < 1e-6 and abs(spherical_aberration) < 1e-6:
+    if (
+        abs(defocus_u) < 1e-6
+        and abs(defocus_v) < 1e-6
+        and abs(amplitude_contrast) < 1e-6
+        and abs(spherical_aberration) < 1e-6
+    ):
         raise ValueError("CTF parameters are 0, please check your inputs.")
 
     depth_offset = get_depth_offset(tilt_projection_matrix, coordinate)
@@ -121,16 +125,22 @@ def calculate_ctf(
     defocus_v_corrected = defocus_v + defocus_offset
 
     K1, K2, K3, K5, ky_grid, kx_grid, u2, u4, Q, Q_t = _ctf_template(
-        voltage, spherical_aberration, amplitude_contrast, handedness,
-        tiltseries_pixel_size, phase_shift, defocus_u, defocus_v,
-        defocus_angle, bfactor, box_size, bin
+        voltage,
+        spherical_aberration,
+        amplitude_contrast,
+        handedness,
+        tiltseries_pixel_size,
+        phase_shift,
+        defocus_u,
+        defocus_v,
+        defocus_angle,
+        bfactor,
+        box_size,
+        bin,
     )
 
     # astigmatism correction
-    D = np.array([
-        [-defocus_u_corrected, 0],
-        [0, -defocus_v_corrected]
-    ])
+    D = np.array([[-defocus_u_corrected, 0], [0, -defocus_v_corrected]])
     A = Q_t @ D @ Q
     Axx = A[0, 0]
     Axy = A[0, 1]

@@ -1,17 +1,17 @@
 import numpy as np
 
 
-def circular_mask(crop_size: float) -> np.ndarray:
-    """Return a centered circular mask within a square of given crop size (in pixels)."""
-    y, x = np.ogrid[-crop_size // 2 : crop_size // 2, -crop_size // 2 : crop_size // 2]
+def circular_mask(box_size: int, crop_size: float) -> np.ndarray:
+    """Return a centered circular mask of radius crop_size within a square of length box_size (in pixels)."""
+    y, x = np.ogrid[-box_size // 2 : box_size // 2, -box_size // 2 : box_size // 2]
     mask = (x * x + y * y) <= (crop_size // 2) ** 2
     return mask
 
 
-def circular_soft_mask(crop_size: float, falloff: float) -> np.ndarray:
-    """Return a centered circular soft mask within a square of given crop size (in pixels) (based on RELION soft mask)."""
-    y, x = np.ogrid[-crop_size // 2 : crop_size // 2, -crop_size // 2 : crop_size // 2]
-    mask = np.zeros((crop_size, crop_size))
+def circular_soft_mask(box_size: int, crop_size: float, falloff: float) -> np.ndarray:
+    """Return a centered circular soft mask of radius crop_size within a square of length box_size (in pixels) (based on RELION soft mask)."""
+    y, x = np.ogrid[-box_size // 2 : box_size // 2, -box_size // 2 : box_size // 2]
+    mask = np.zeros((box_size, box_size))
     r = np.sqrt(x * x + y * y)
     mask[r < crop_size / 2.0 - falloff] = 1.0
     falloff_zone = (r >= crop_size / 2.0 - falloff) & (r < crop_size / 2.0)

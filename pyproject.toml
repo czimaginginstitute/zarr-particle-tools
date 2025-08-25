@@ -26,6 +26,19 @@ dependencies = [
     "click",
 ]
 
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = [
+  "E501",
+]
+
+[tool.black]
+line-length = 120
+target-version = ["py39"]
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

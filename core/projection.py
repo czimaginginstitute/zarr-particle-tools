@@ -2,9 +2,10 @@
 Helper functions for calculating projection matrices, projecting 3D points to 2D coordinates, and creating masks.
 """
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 from cryoet_alignment.io.aretomo3 import AreTomo3ALN
+
 from core.data import DataReader
 
 
@@ -13,7 +14,9 @@ def in_plane_rotation_to_tilt_axis_rotation(rotation_matrix: list[list[float]]) 
     return np.degrees(np.arctan2(np_matrix[1, 0], np_matrix[0, 0]))
 
 
-def calculate_projection_matrix(rot: float, gmag: float, tx: float, ty: float, tilt: float, x_tilt: float = 0.0, radians: bool = False) -> np.ndarray:
+def calculate_projection_matrix(
+    rot: float, gmag: float, tx: float, ty: float, tilt: float, x_tilt: float = 0.0, radians: bool = False
+) -> np.ndarray:
     """
     Calculates a 4x4 projection matrix based on the given rotation, translation, and tilt parameters (based on AreTomo .aln file).
     Calculations are based on affine projections in 3D space.
@@ -99,7 +102,9 @@ def project_3d_point_to_2d(point_3d: np.ndarray, projection_matrix: np.ndarray) 
 
 
 # NOTE: Not currently used, but may be useful in the future.
-def calculate_projection_matrix_from_aretomo_aln(aln: AreTomo3ALN, tiltseries_pixel_size: float = 1.0) -> list[np.ndarray]:
+def calculate_projection_matrix_from_aretomo_aln(
+    aln: AreTomo3ALN, tiltseries_pixel_size: float = 1.0
+) -> list[np.ndarray]:
     """
     Calculates the projection matrices for each section in the given AreTomo3ALN object.
 
@@ -150,7 +155,10 @@ def calculate_projection_matrix_from_starfile_df(tiltseries_df: pd.DataFrame) ->
 
 # can likely be parallelized
 def get_particles_to_tiltseries_coordinates(
-    filtered_particles_df: pd.DataFrame, filtered_trajectories_dict: dict[int, pd.DataFrame] | None, tiltseries_df: pd.DataFrame, projection_matrices: list[np.ndarray]
+    filtered_particles_df: pd.DataFrame,
+    filtered_trajectories_dict: dict[int, pd.DataFrame] | None,
+    tiltseries_df: pd.DataFrame,
+    projection_matrices: list[np.ndarray],
 ) -> dict[int, dict[int, tuple[np.ndarray, np.ndarray]]]:
     """
     Maps particle indices to their 2D coordinates in each of the tilts (projected from their 3D coordinates via the projection matrices).
@@ -164,8 +172,18 @@ def get_particles_to_tiltseries_coordinates(
         # match 1-indexing of RELION
         for default_particle_id, particle in enumerate(filtered_particles_df.itertuples(), start=1):
             # rlnOriginXAngst/YAngst/ZAngst are already included in the coordinate
-            coordinate = np.array([particle.rlnCenteredCoordinateXAngst, particle.rlnCenteredCoordinateYAngst, particle.rlnCenteredCoordinateZAngst])
-            particle_id = int(particle.rlnTomoParticleName.split("/")[-1]) if "rlnTomoParticleName" in filtered_particles_df.columns else default_particle_id
+            coordinate = np.array(
+                [
+                    particle.rlnCenteredCoordinateXAngst,
+                    particle.rlnCenteredCoordinateYAngst,
+                    particle.rlnCenteredCoordinateZAngst,
+                ]
+            )
+            particle_id = (
+                int(particle.rlnTomoParticleName.split("/")[-1])
+                if "rlnTomoParticleName" in filtered_particles_df.columns
+                else default_particle_id
+            )
             # add motion correction if available
             if filtered_trajectories_dict is not None:
                 if particle.rlnTomoParticleName not in filtered_trajectories_dict:
@@ -188,7 +206,14 @@ def get_particles_to_tiltseries_coordinates(
 
 
 def get_particle_crop_and_visibility(
-    tiltseries_data: DataReader, particle_id: int, sections: dict, tiltseries_x: int, tiltseries_y: int, tiltseries_pixel_size: float, pre_bin_box_size: int, pre_bin_crop_size: float
+    tiltseries_data: DataReader,
+    particle_id: int,
+    sections: dict,
+    tiltseries_x: int,
+    tiltseries_y: int,
+    tiltseries_pixel_size: float,
+    pre_bin_box_size: int,
+    pre_bin_crop_size: float,
 ) -> tuple[list[dict], list[int]]:
     """
     Process the calculated (Angstrom) 2D coordinate of the particle to pixel coordinates and perform cropping.
@@ -217,7 +242,12 @@ def get_particle_crop_and_visibility(
         x_crop_end_px_float = x_crop_start_px_float + pre_bin_crop_size
         y_crop_end_px_float = y_crop_start_px_float + pre_bin_crop_size
 
-        if x_crop_start_px_float < 0 or x_crop_end_px_float > tiltseries_x or y_crop_start_px_float < 0 or y_crop_end_px_float > tiltseries_y:
+        if (
+            x_crop_start_px_float < 0
+            or x_crop_end_px_float > tiltseries_x
+            or y_crop_start_px_float < 0
+            or y_crop_end_px_float > tiltseries_y
+        ):
             visible_sections.append(0)
             continue
 
@@ -225,12 +255,28 @@ def get_particle_crop_and_visibility(
         shift_x = x_start_px - x_start_px_float
         shift_y = y_start_px - y_start_px_float
 
-        slice_key = (section - 1, slice(max(y_start_px, 0), min(y_end_px, tiltseries_y)), slice(max(x_start_px, 0), min(x_end_px, tiltseries_x)))
+        slice_key = (
+            section - 1,
+            slice(max(y_start_px, 0), min(y_end_px, tiltseries_y)),
+            slice(max(x_start_px, 0), min(x_end_px, tiltseries_x)),
+        )
         # add it to the DataReader cache to be computed later
         tiltseries_data.slice_data(slice_key)
 
         visible_sections.append(1)
-        particle_data.append({"particle_id": particle_id, "coordinate": coordinate, "section": section, "tiltseries_slice_key": slice_key, "subpixel_shift": (shift_y, shift_x), "x_pre_padding": max(0, -x_start_px), "y_pre_padding": max(0, -y_start_px), "x_post_padding": max(0, x_end_px - tiltseries_x), "y_post_padding": max(0, y_end_px - tiltseries_y)})
+        particle_data.append(
+            {
+                "particle_id": particle_id,
+                "coordinate": coordinate,
+                "section": section,
+                "tiltseries_slice_key": slice_key,
+                "subpixel_shift": (shift_y, shift_x),
+                "x_pre_padding": max(0, -x_start_px),
+                "y_pre_padding": max(0, -y_start_px),
+                "x_post_padding": max(0, x_end_px - tiltseries_x),
+                "y_post_padding": max(0, y_end_px - tiltseries_y),
+            }
+        )
 
     return particle_data, visible_sections
 

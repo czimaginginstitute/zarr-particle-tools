@@ -1,21 +1,26 @@
 from pathlib import Path
+
 import mrcfile
 import numpy as np
 import pandas as pd
+
 
 def mrcs_equal(file1: Path, file2: Path, tol: float) -> bool:
     # should not compare the same file
     if file1 == file2:
         raise ValueError("Cannot compare the same file.")
-    
+
     # check if both files exist
     if not file1.exists() or not file2.exists():
         raise FileNotFoundError(f"One of the files does not exist: {file1}, {file2}")
 
-    with mrcfile.open(file1, mode='r') as mrc1, mrcfile.open(file2, mode='r') as mrc2:
-        assert np_arrays_equal(mrc1.data, mrc2.data, tol=tol, metadata=f"Comparing MRC files {file1.name} and {file2.name}.")
+    with mrcfile.open(file1, mode="r") as mrc1, mrcfile.open(file2, mode="r") as mrc2:
+        assert np_arrays_equal(
+            mrc1.data, mrc2.data, tol=tol, metadata=f"Comparing MRC files {file1.name} and {file2.name}."
+        )
 
     return True
+
 
 def np_arrays_equal(arr1: np.ndarray, arr2: np.ndarray, tol: float, metadata: str, percentile: float = 99.5) -> bool:
     if arr1.shape != arr2.shape:
@@ -26,10 +31,13 @@ def np_arrays_equal(arr1: np.ndarray, arr2: np.ndarray, tol: float, metadata: st
     threshold = np.percentile(abs_diff, percentile)
     mask = abs_diff <= threshold
     if not np.allclose(arr1[mask], arr2[mask], atol=tol):
-        print(f"{metadata} Arrays differ beyond tolerance: {np.max(abs_diff[mask])} at {np.unravel_index(np.argmax(abs_diff[mask]), arr1.shape)}")
+        print(
+            f"{metadata} Arrays differ beyond tolerance: {np.max(abs_diff[mask])} at {np.unravel_index(np.argmax(abs_diff[mask]), arr1.shape)}"
+        )
         return False
 
     return True
+
 
 def df_equal(df1, df2):
     df1_sorted = df1.sort_index(axis=1).sort_values(by=df1.columns.tolist()).reset_index(drop=True)

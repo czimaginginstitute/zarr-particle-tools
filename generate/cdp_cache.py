@@ -1,9 +1,19 @@
-from cryoet_data_portal import Client, Run, Alignment, TiltSeries, Tomogram, TomogramVoxelSpacing, AnnotationShape, PerSectionAlignmentParameters, PerSectionParameters, AnnotationFile, Frame
-from functools import lru_cache, wraps
-from typing import Union, Callable, Any
-from collections import defaultdict
 import logging
+from collections import defaultdict
+from functools import lru_cache, wraps
+from typing import Any, Callable, Union
 
+from cryoet_data_portal import (
+    Alignment,
+    Client,
+    Frame,
+    PerSectionAlignmentParameters,
+    PerSectionParameters,
+    Run,
+    TiltSeries,
+    Tomogram,
+    TomogramVoxelSpacing,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +75,9 @@ def get_items_by_ids(
     Returns:
         dict[int, Any]: A dictionary where keys are item IDs and values are the fetched items.
     """
-    if (derived_cache is not None and derived_cache_callable is None) or (derived_cache is None and derived_cache_callable is not None):
+    if (derived_cache is not None and derived_cache_callable is None) or (
+        derived_cache is None and derived_cache_callable is not None
+    ):
         raise ValueError("Both derived_cache and derived_cache_callable must be provided or neither.")
 
     if isinstance(ids, int):
@@ -149,27 +161,53 @@ def hashable_lru_cache(maxsize: int = None) -> Callable:
 
 @hashable_lru_cache(maxsize=None)
 def get_runs(run_ids: Union[list[int], int]) -> dict[int, Run]:
-    return get_items_by_ids(ids=run_ids, cache=run_cache, query_field=Run.id, model_cls=Run, key_extractor=lambda r: r.id)
+    return get_items_by_ids(
+        ids=run_ids, cache=run_cache, query_field=Run.id, model_cls=Run, key_extractor=lambda r: r.id
+    )
 
 
 @hashable_lru_cache(maxsize=None)
 def get_tiltseries(tiltseries_ids: Union[list[int], int]) -> dict[int, TiltSeries]:
-    return get_items_by_ids(ids=tiltseries_ids, cache=tiltseries_cache, query_field=TiltSeries.id, model_cls=TiltSeries, key_extractor=lambda t: t.id)
+    return get_items_by_ids(
+        ids=tiltseries_ids,
+        cache=tiltseries_cache,
+        query_field=TiltSeries.id,
+        model_cls=TiltSeries,
+        key_extractor=lambda t: t.id,
+    )
 
 
 @hashable_lru_cache(maxsize=None)
 def get_alignments(alignment_ids: Union[list[int], int]) -> dict[int, Alignment]:
-    return get_items_by_ids(ids=alignment_ids, cache=alignment_cache, query_field=Alignment.id, model_cls=Alignment, key_extractor=lambda a: a.id)
+    return get_items_by_ids(
+        ids=alignment_ids,
+        cache=alignment_cache,
+        query_field=Alignment.id,
+        model_cls=Alignment,
+        key_extractor=lambda a: a.id,
+    )
 
 
 @hashable_lru_cache(maxsize=None)
 def get_voxel_spacings(voxel_spacing_ids: Union[list[int], int]) -> dict[int, TomogramVoxelSpacing]:
-    return get_items_by_ids(ids=voxel_spacing_ids, cache=voxel_spacing_cache, query_field=TomogramVoxelSpacing.id, model_cls=TomogramVoxelSpacing, key_extractor=lambda v: v.id)
+    return get_items_by_ids(
+        ids=voxel_spacing_ids,
+        cache=voxel_spacing_cache,
+        query_field=TomogramVoxelSpacing.id,
+        model_cls=TomogramVoxelSpacing,
+        key_extractor=lambda v: v.id,
+    )
 
 
 @hashable_lru_cache(maxsize=None)
 def get_tomograms(tomogram_ids: Union[list[int], int]) -> dict[int, Tomogram]:
-    return get_items_by_ids(ids=tomogram_ids, cache=tomograms_cache, query_field=Tomogram.id, model_cls=Tomogram, key_extractor=lambda t: t.id)
+    return get_items_by_ids(
+        ids=tomogram_ids,
+        cache=tomograms_cache,
+        query_field=Tomogram.id,
+        model_cls=Tomogram,
+        key_extractor=lambda t: t.id,
+    )
 
 
 @hashable_lru_cache(maxsize=None)
@@ -201,7 +239,9 @@ def get_tomograms_by_voxel_spacing_id(voxel_spacing_ids: Union[list[int], int]) 
 
 
 @hashable_lru_cache(maxsize=None)
-def get_tomograms_by_alignment_id_and_voxel_spacing_id(alignment_and_voxel_spacing_ids: Union[list[tuple[int, int]], tuple[int, int]]) -> dict[tuple[int, int], list[Tomogram]]:
+def get_tomograms_by_alignment_id_and_voxel_spacing_id(
+    alignment_and_voxel_spacing_ids: Union[list[tuple[int, int]], tuple[int, int]],
+) -> dict[tuple[int, int], list[Tomogram]]:
     """
     Fetch tomograms by alignment ID and voxel spacing ID (tuple of alignment ID and voxel spacing ID).
     Does two lookups: one for the tomograms by alignment ID and one for the tomograms by voxel spacing ID.
@@ -221,7 +261,9 @@ def get_tomograms_by_alignment_id_and_voxel_spacing_id(alignment_and_voxel_spaci
     for alignment_id, voxel_spacing_id in alignment_and_voxel_spacing_ids:
         tomogram_key = (alignment_id, voxel_spacing_id)
         if alignment_id not in tomograms_by_alignment or voxel_spacing_id not in tomograms_by_voxel_spacing:
-            logger.warning(f"Tomogram with alignment ID {alignment_id} and voxel spacing ID {voxel_spacing_id} not found.")
+            logger.warning(
+                f"Tomogram with alignment ID {alignment_id} and voxel spacing ID {voxel_spacing_id} not found."
+            )
             tomograms[tomogram_key] = None
             continue
 
@@ -229,19 +271,25 @@ def get_tomograms_by_alignment_id_and_voxel_spacing_id(alignment_and_voxel_spaci
         tomograms_by_voxel_spacing_list = tomograms_by_voxel_spacing[voxel_spacing_id]
 
         # Find the intersection of the two lists
-        tomograms[tomogram_key] = [t for t in tomograms_by_alignment_list if t.id in [v.id for v in tomograms_by_voxel_spacing_list]]
+        tomograms[tomogram_key] = [
+            t for t in tomograms_by_alignment_list if t.id in [v.id for v in tomograms_by_voxel_spacing_list]
+        ]
 
         if tomograms[tomogram_key]:
             tomograms[tomogram_key] = tomograms[tomogram_key]
         else:
-            logger.warning(f"Tomogram with alignment ID {alignment_id} and voxel spacing ID {voxel_spacing_id} not found.")
+            logger.warning(
+                f"Tomogram with alignment ID {alignment_id} and voxel spacing ID {voxel_spacing_id} not found."
+            )
             tomograms[tomogram_key] = []
 
     return tomograms
 
 
 @hashable_lru_cache(maxsize=None)
-def get_per_section_alignments_by_alignment_id(alignment_ids: Union[list[int], int]) -> dict[int, list[PerSectionAlignmentParameters]]:
+def get_per_section_alignments_by_alignment_id(
+    alignment_ids: Union[list[int], int],
+) -> dict[int, list[PerSectionAlignmentParameters]]:
     return get_items_by_ids(
         ids=alignment_ids,
         cache=per_section_alignments_cache,
@@ -253,7 +301,9 @@ def get_per_section_alignments_by_alignment_id(alignment_ids: Union[list[int], i
 
 
 @hashable_lru_cache(maxsize=None)
-def get_per_section_parameters_by_tiltseries_id(tiltseries_ids: Union[list[int], int]) -> dict[int, list[PerSectionParameters]]:
+def get_per_section_parameters_by_tiltseries_id(
+    tiltseries_ids: Union[list[int], int],
+) -> dict[int, list[PerSectionParameters]]:
     """Fetches per-section parameters (CTF information) by tiltseries ID. tiltseries with invalid / incomplete CTF parameters will have a None value in the returned dictionary."""
     tiltseries_id_to_psp: dict[int, list[PerSectionParameters]] = get_items_by_ids(
         ids=tiltseries_ids,
@@ -264,11 +314,20 @@ def get_per_section_parameters_by_tiltseries_id(tiltseries_ids: Union[list[int],
         multiple_results=True,
     )
     # filter out tiltseries that do not have valid CTF parameters
-    tiltseries_id_to_psp = {id: psp if all(p.major_defocus is not None for p in psp) else None for id, psp in tiltseries_id_to_psp.items()}
+    tiltseries_id_to_psp = {
+        id: psp if all(p.major_defocus is not None for p in psp) else None for id, psp in tiltseries_id_to_psp.items()
+    }
 
     return tiltseries_id_to_psp
 
 
 @hashable_lru_cache(maxsize=None)
 def get_frames_by_run_id(run_ids: Union[list[int], int]) -> dict[int, list[Frame]]:
-    return get_items_by_ids(ids=run_ids, cache=run_to_frames_cache, query_field=Frame.run_id, model_cls=Frame, key_extractor=lambda f: f.run_id, multiple_results=True)
+    return get_items_by_ids(
+        ids=run_ids,
+        cache=run_to_frames_cache,
+        query_field=Frame.run_id,
+        model_cls=Frame,
+        key_extractor=lambda f: f.run_id,
+        multiple_results=True,
+    )

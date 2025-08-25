@@ -1,15 +1,17 @@
-import mrcfile
-import s3fs
-import numpy as np
-import dask.array as da
 import logging
+from functools import cache
 from pathlib import Path
-from functools import lru_cache
+
+import dask.array as da
+import mrcfile
+import numpy as np
+import s3fs
 from dask.core import flatten
 
 logger = logging.getLogger(__name__)
 
 global_fs = s3fs.S3FileSystem(anon=True)
+
 
 class DataReader:
     """
@@ -133,7 +135,7 @@ def chunks_per_crop(crops: dict) -> dict:
     return out
 
 
-@lru_cache(maxsize=None)
+@cache
 def get_data(s3_uri: str, as_bytes: bool = False) -> bytes | str:
     mode = "rb" if as_bytes else "r"
     with global_fs.open(s3_uri, mode) as f:

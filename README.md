@@ -47,6 +47,15 @@ python subtomo_extract.py local \
 ```
 
 ```
+python subtomo_extract.py local \
+  --particles-starfile tests/data/relion_project_synthetic/particles.star \
+  --tomograms-starfile tests/data/relion_project_synthetic/tomograms.star \
+  --tiltseries-relative-dir tests/data/relion_project_synthetic/ \
+  --output-dir tests/output/sample_local_test/ \
+  --box-size 128 --crop-size 64 --bin 1 --overwrite
+```
+
+```
 python subtomo_extract.py data-portal \
   --run-id 16463 \
   --annotation-names "ribosome" \

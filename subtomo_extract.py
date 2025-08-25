@@ -4,44 +4,62 @@ Run python subtomo_extract.py --help for usage instructions.
 """
 
 import logging
-import click
-import starfile
-import numpy as np
-import pandas as pd
-import mrcfile
-import time
-import shutil
 import multiprocessing as mp
+import shutil
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from scipy.ndimage import fourier_shift
 from typing import Union
+
+import click
+import mrcfile
+import numpy as np
+import pandas as pd
+import starfile
+from scipy.ndimage import fourier_shift
 from tqdm import tqdm
 
 import cli.options as cli_options
-from core.projection import get_particles_to_tiltseries_coordinates, fourier_crop, get_particle_crop_and_visibility, calculate_projection_matrix_from_starfile_df
-from core.mask import circular_mask, circular_soft_mask
-from core.dose import calculate_dose_weight_image
+from core.constants import TILTSERIES_URI_RELION_COLUMN
 from core.ctf import calculate_ctf
 from core.data import DataReader
-from generate.generate_starfiles import generate_starfiles
-from core.constants import TILTSERIES_URI_RELION_COLUMN
+from core.dose import calculate_dose_weight_image
 from core.helpers import setup_logging
+from core.mask import circular_mask, circular_soft_mask
+from core.projection import (
+    calculate_projection_matrix_from_starfile_df,
+    fourier_crop,
+    get_particle_crop_and_visibility,
+    get_particles_to_tiltseries_coordinates,
+)
+from generate.generate_starfiles import generate_starfiles
 
 logger = logging.getLogger(__name__)
 
 
-def update_particles_df(particles_df: pd.DataFrame, output_folder: Path, all_visible_sections_relion_column: list, skipped_particles: set) -> pd.DataFrame:
+def update_particles_df(
+    particles_df: pd.DataFrame, output_folder: Path, all_visible_sections_relion_column: list, skipped_particles: set
+) -> pd.DataFrame:
     """Updates the particles DataFrame to include the new columns and values for RELION format."""
     updated_particles_df = particles_df.copy()
-    updated_particles_df = updated_particles_df.drop(columns=["rlnCoordinateX", "rlnCoordinateY", "rlnCoordinateZ"], errors="ignore")
+    updated_particles_df = updated_particles_df.drop(
+        columns=["rlnCoordinateX", "rlnCoordinateY", "rlnCoordinateZ"], errors="ignore"
+    )
     if "rlnTomoParticleName" not in updated_particles_df.columns and "rlnImageName" not in updated_particles_df.columns:
         updated_particles_df = updated_particles_df.reset_index(drop=True)
         updated_particles_df.index += 1  # increment index by 1 to match RELION's 1-indexing
-        updated_particles_df["rlnTomoParticleName"] = updated_particles_df["rlnTomoName"] + "/" + updated_particles_df.index.astype(str)
-        updated_particles_df["rlnImageName"] = updated_particles_df.index.to_series().apply(lambda idx: (output_folder / f"{idx}_stack2d.mrcs").resolve())
+        updated_particles_df["rlnTomoParticleName"] = (
+            updated_particles_df["rlnTomoName"] + "/" + updated_particles_df.index.astype(str)
+        )
+        updated_particles_df["rlnImageName"] = updated_particles_df.index.to_series().apply(
+            lambda idx: (output_folder / f"{idx}_stack2d.mrcs").resolve()
+        )
     # drop rows by particle_id that were skipped
-    updated_particles_df = updated_particles_df.drop(updated_particles_df.index[updated_particles_df["rlnTomoParticleName"].str.split("/").str[-1].astype(int).isin(skipped_particles)])
+    updated_particles_df = updated_particles_df.drop(
+        updated_particles_df.index[
+            updated_particles_df["rlnTomoParticleName"].str.split("/").str[-1].astype(int).isin(skipped_particles)
+        ]
+    )
     updated_particles_df["rlnTomoVisibleFrames"] = all_visible_sections_relion_column
     # offsets are applied to rlnCenteredCoordinateXAngst/YAngst/ZAngst beforehand if they exist, so they can be removed here
     updated_particles_df["rlnOriginXAngst"] = 0.0
@@ -78,37 +96,51 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
     pre_bin_crop_size = crop_size * bin
 
     if not individual_tiltseries_path.exists():
-        raise FileNotFoundError(f"Tiltseries file {individual_tiltseries_path} does not exist. Please check the path and try again.")
+        raise FileNotFoundError(
+            f"Tiltseries file {individual_tiltseries_path} does not exist. Please check the path and try again."
+        )
 
     particles_tomo_name = tiltseries_row_entry["rlnTomoName"]
     output_folder = output_dir / "Subtomograms" / particles_tomo_name
     output_folder.mkdir(parents=True, exist_ok=True)
-    logger.debug(f"Extracting subtomograms for {len(filtered_particles_df)} particles (filtered by rlnTomoName: {particles_tomo_name}) from tiltseries {individual_tiltseries_path}")
+    logger.debug(
+        f"Extracting subtomograms for {len(filtered_particles_df)} particles (filtered by rlnTomoName: {particles_tomo_name}) from tiltseries {individual_tiltseries_path}"
+    )
 
     individual_tiltseries_df = starfile.read(individual_tiltseries_path)
     if individual_tiltseries_df.empty:
-        raise ValueError(f"Tiltseries file {individual_tiltseries_path} is empty or does not contain the required columns. Please check the file.")
+        raise ValueError(
+            f"Tiltseries file {individual_tiltseries_path} is empty or does not contain the required columns. Please check the file."
+        )
 
     if TILTSERIES_URI_RELION_COLUMN in individual_tiltseries_df.columns:
         tiltseries_data_locators = individual_tiltseries_df[TILTSERIES_URI_RELION_COLUMN].to_list()
     else:
-        tiltseries_data_locators = individual_tiltseries_df["rlnMicrographName"].apply(lambda x: x.split("@")[1]).to_list()
+        tiltseries_data_locators = (
+            individual_tiltseries_df["rlnMicrographName"].apply(lambda x: x.split("@")[1]).to_list()
+        )
     if len(set(tiltseries_data_locators)) != 1:
-        raise ValueError(f"Multiple tiltseries data locators found: {set(tiltseries_data_locators)}. This is not supported.")
+        raise ValueError(
+            f"Multiple tiltseries data locators found: {set(tiltseries_data_locators)}. This is not supported."
+        )
     tiltseries_data_locator = tiltseries_data_locators[0]
-    if not tiltseries_data_locator.startswith("s3://") and not tiltseries_data_locator.startswith("/"):  # assume it's a local relative path, relative to the tiltseries file
+    if not tiltseries_data_locator.startswith("s3://") and not tiltseries_data_locator.startswith(
+        "/"
+    ):  # assume it's a local relative path, relative to the tiltseries file
         tiltseries_data_locator = individual_tiltseries_path.parent / tiltseries_data_locator
     tiltseries_data = DataReader(str(tiltseries_data_locator))
 
     # projection-relevant variables
-    background_mask = circular_mask(crop_size) == 0.0
-    soft_mask = circular_soft_mask(crop_size, falloff=5.0)
+    background_mask = circular_mask(box_size, crop_size) == 0.0
+    soft_mask = circular_soft_mask(box_size, crop_size, falloff=5.0)
     tiltseries_pixel_size = tiltseries_row_entry["rlnTomoTiltSeriesPixelSize"]
     tiltseries_x = tiltseries_data.data.shape[2]
     tiltseries_y = tiltseries_data.data.shape[1]
     logger.debug(f"Tiltseries data shape: {tiltseries_data.data.shape}, pixel size: {tiltseries_pixel_size}")
     projection_matrices = calculate_projection_matrix_from_starfile_df(individual_tiltseries_df)
-    particles_to_tiltseries_coordinates = get_particles_to_tiltseries_coordinates(filtered_particles_df, filtered_trajectories_dict, individual_tiltseries_df, projection_matrices)
+    particles_to_tiltseries_coordinates = get_particles_to_tiltseries_coordinates(
+        filtered_particles_df, filtered_trajectories_dict, individual_tiltseries_df, projection_matrices
+    )
 
     # ctf & dose-weighting parameters
     voltage = tiltseries_row_entry["rlnVoltage"]
@@ -121,9 +153,17 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
     defocus_angle = individual_tiltseries_df["rlnDefocusAngle"].values
     doses = individual_tiltseries_df["rlnMicrographPreExposure"].values
     bfactor_per_electron_dose = (
-        individual_tiltseries_df["rlnCtfBfactorPerElectronDose"] if "rlnCtfBfactorPerElectronDose" in individual_tiltseries_df.columns else [0.0] * len(individual_tiltseries_df)
+        individual_tiltseries_df["rlnCtfBfactorPerElectronDose"]
+        if "rlnCtfBfactorPerElectronDose" in individual_tiltseries_df.columns
+        else [0.0] * len(individual_tiltseries_df)
     )
-    dose_weights = np.stack([calculate_dose_weight_image(dose, tiltseries_pixel_size * bin, box_size, bfactor) for dose, bfactor in zip(doses, bfactor_per_electron_dose)], dtype=np.float32)
+    dose_weights = np.stack(
+        [
+            calculate_dose_weight_image(dose, tiltseries_pixel_size * bin, box_size, bfactor)
+            for dose, bfactor in zip(doses, bfactor_per_electron_dose)
+        ],
+        dtype=np.float32,
+    )
 
     all_particle_data = []
     skipped_particles = set()
@@ -132,7 +172,14 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
 
     for particle_id, sections in particles_to_tiltseries_coordinates.items():
         particle_data, visible_sections = get_particle_crop_and_visibility(
-            tiltseries_data, particle_id, sections, tiltseries_x, tiltseries_y, tiltseries_pixel_size, pre_bin_box_size, pre_bin_crop_size
+            tiltseries_data,
+            particle_id,
+            sections,
+            tiltseries_x,
+            tiltseries_y,
+            tiltseries_pixel_size,
+            pre_bin_box_size,
+            pre_bin_crop_size,
         )
 
         # RELION by default only requires one tilt to be visible, so only skip if all sections are out of bounds (and also don't append since the entry doesn't exist in the particles.star file)
@@ -159,7 +206,11 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
             y_pre_padding = particle_data[tilt]["y_pre_padding"]
             x_post_padding = particle_data[tilt]["x_post_padding"]
             y_post_padding = particle_data[tilt]["y_post_padding"]
-            padded_crop = np.pad(tiltseries_data[tiltseries_slice_key], ((y_pre_padding, y_post_padding), (x_pre_padding, x_post_padding)), mode="edge")
+            padded_crop = np.pad(
+                tiltseries_data[tiltseries_slice_key],
+                ((y_pre_padding, y_post_padding), (x_pre_padding, x_post_padding)),
+                mode="edge",
+            )
             tilt_stack[tilt] = padded_crop
         fourier_tilt_stack = np.fft.rfft2(tilt_stack, norm="ortho", axes=(-2, -1))
 
@@ -209,7 +260,11 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
             new_tilt_stack *= soft_mask
 
         # crop to final desired size
-        cropped_tilt_stack = new_tilt_stack[:, (box_size - crop_size) // 2 : (box_size + crop_size) // 2, (box_size - crop_size) // 2 : (box_size + crop_size) // 2]
+        cropped_tilt_stack = new_tilt_stack[
+            :,
+            (box_size - crop_size) // 2 : (box_size + crop_size) // 2,
+            (box_size - crop_size) // 2 : (box_size + crop_size) // 2,
+        ]
 
         output_path = output_folder / f"{particle_id}_stack2d.mrcs"
         with mrcfile.new(output_path) as mrc:
@@ -222,7 +277,9 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
         for future in as_completed(futures):
             future.result()
 
-    updated_filtered_particles_df = update_particles_df(filtered_particles_df, output_folder, all_visible_sections_relion_column, skipped_particles)
+    updated_filtered_particles_df = update_particles_df(
+        filtered_particles_df, output_folder, all_visible_sections_relion_column, skipped_particles
+    )
 
     end_time = time.time()
     logger.debug(
@@ -233,7 +290,14 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
 
 
 def write_starfiles(
-    merged_particles_df: pd.DataFrame, particle_optics_df: pd.DataFrame, tomograms_starfile: str, crop_size: int, bin: int, no_ctf: bool, output_dir: Path, trajectories_starfile: str = None
+    merged_particles_df: pd.DataFrame,
+    particle_optics_df: pd.DataFrame,
+    tomograms_starfile: str,
+    crop_size: int,
+    bin: int,
+    no_ctf: bool,
+    output_dir: Path,
+    trajectories_starfile: str = None,
 ) -> None:
     """
     Writes the updated particles and optimisation set star files, as per RELION expected format & outputs.
@@ -299,7 +363,11 @@ def extract_subtomograms(
     tomograms_df = starfile.read(tomograms_starfile)
 
     # apply alignment rlnOriginXAngst/YAngst/ZAngst to rlnCenteredCoordinateXAngst/YAngst/ZAngst, subtract to follow RELION's convention
-    if "rlnOriginXAngst" in particles_df.columns and "rlnOriginYAngst" in particles_df.columns and "rlnOriginZAngst" in particles_df.columns:
+    if (
+        "rlnOriginXAngst" in particles_df.columns
+        and "rlnOriginYAngst" in particles_df.columns
+        and "rlnOriginZAngst" in particles_df.columns
+    ):
         particles_df["rlnCenteredCoordinateXAngst"] -= particles_df["rlnOriginXAngst"]
         particles_df["rlnCenteredCoordinateYAngst"] -= particles_df["rlnOriginYAngst"]
         particles_df["rlnCenteredCoordinateZAngst"] -= particles_df["rlnOriginZAngst"]
@@ -309,12 +377,16 @@ def extract_subtomograms(
         individual_tiltseries_path = tiltseries_relative_dir / tiltseries_row_entry["rlnTomoTiltSeriesStarFile"]
         filtered_particles_df = particles_df[particles_df["rlnTomoName"] == tiltseries_row_entry["rlnTomoName"]]
         if filtered_particles_df.empty:
-            raise ValueError(f"No particles found for tomogram {tiltseries_row_entry["rlnTomoName"]} in {particles_starfile}. Please check the particles star file.")
+            raise ValueError(
+                f"No particles found for tomogram {tiltseries_row_entry['rlnTomoName']} in {particles_starfile}. Please check the particles star file."
+            )
         filtered_trajectories_dict = None
         if trajectories_dict:
             particle_names = filtered_particles_df["rlnTomoParticleName"].tolist()
             filtered_trajectories_dict = {k: v for k, v in trajectories_dict.items() if k in particle_names}
-        optics_row = particles_star_file["optics"][particles_star_file["optics"]["rlnOpticsGroupName"] == tiltseries_row_entry["rlnOpticsGroupName"]]
+        optics_row = particles_star_file["optics"][
+            particles_star_file["optics"]["rlnOpticsGroupName"] == tiltseries_row_entry["rlnOpticsGroupName"]
+        ]
         return (
             filtered_particles_df,
             filtered_trajectories_dict,
@@ -331,7 +403,9 @@ def extract_subtomograms(
         )
 
     if "rlnTomoTiltSeriesStarFile" not in tomograms_df.columns:
-        raise ValueError(f"Tomograms star file {tomograms_starfile} does not contain the required column 'rlnTomoTiltSeriesStarFile'. Please check the file.")
+        raise ValueError(
+            f"Tomograms star file {tomograms_starfile} does not contain the required column 'rlnTomoTiltSeriesStarFile'. Please check the file."
+        )
 
     args_list = [build_args(tiltseries_row_entry) for _, tiltseries_row_entry in tomograms_df.iterrows()]
 
@@ -341,7 +415,9 @@ def extract_subtomograms(
     cpu_count = min(32, mp.cpu_count(), len(tomograms_df))
     logger.info(f"Starting extraction of subtomograms from {len(tomograms_df)} tiltseries using {cpu_count} CPU cores.")
     with mp.Pool(processes=cpu_count) as pool:
-        for updated_filtered_particles_df, skipped_count in tqdm(pool.imap_unordered(process_tiltseries, args_list, chunksize=1), total=len(args_list)):
+        for updated_filtered_particles_df, skipped_count in tqdm(
+            pool.imap_unordered(process_tiltseries, args_list, chunksize=1), total=len(args_list)
+        ):
             if updated_filtered_particles_df is not None and not updated_filtered_particles_df.empty:
                 particles_df_results.append(updated_filtered_particles_df)
             total_skipped_count += skipped_count
@@ -351,7 +427,16 @@ def extract_subtomograms(
 
     merged_particles_df = pd.concat(particles_df_results, ignore_index=True)
     # update all the relevant star files
-    write_starfiles(merged_particles_df, particles_star_file["optics"], tomograms_starfile, crop_size, bin, no_ctf, output_dir, trajectories_starfile)
+    write_starfiles(
+        merged_particles_df,
+        particles_star_file["optics"],
+        tomograms_starfile,
+        crop_size,
+        bin,
+        no_ctf,
+        output_dir,
+        trajectories_starfile,
+    )
 
     return len(merged_particles_df), total_skipped_count, len(tomograms_df)
 
@@ -369,10 +454,14 @@ def validate_and_setup(
         if crop_size % 2 != 0:
             raise click.BadParameter(f"Crop size must be an even number, got {crop_size}.")
         if crop_size > box_size:
-            raise click.BadParameter(f"Crop size cannot be greater than box size, got crop size {crop_size} and box size {box_size}.")
+            raise click.BadParameter(
+                f"Crop size cannot be greater than box size, got crop size {crop_size} and box size {box_size}."
+            )
 
     if output_dir.exists() and any(output_dir.iterdir()) and not overwrite:
-        raise FileExistsError(f"Output directory {output_dir} already exists and is not empty. Use --overwrite to overwrite existing files.")
+        raise FileExistsError(
+            f"Output directory {output_dir} already exists and is not empty. Use --overwrite to overwrite existing files."
+        )
 
     if output_dir.exists():
         shutil.rmtree(output_dir)
@@ -399,10 +488,14 @@ def parse_extract_local_subtomograms(
     validate_and_setup(box_size, output_dir, crop_size, overwrite)
 
     if optimisation_set_starfile and (particles_starfile or tomograms_starfile or trajectories_starfile):
-        raise click.BadParameter("Cannot specify both optimisation set star file and individual star files. Please provide only one of them.")
+        raise click.BadParameter(
+            "Cannot specify both optimisation set star file and individual star files. Please provide only one of them."
+        )
 
     if not optimisation_set_starfile and not particles_starfile and not tomograms_starfile:
-        raise click.BadParameter("Either optimisation set star file or particles and tomograms star files must be provided.")
+        raise click.BadParameter(
+            "Either optimisation set star file or particles and tomograms star files must be provided."
+        )
 
     if optimisation_set_starfile:
         optimisation_dict = starfile.read(optimisation_set_starfile)
@@ -453,13 +546,19 @@ def parse_extract_data_portal_subtomograms(
     )
 
     if not particles_path.exists():
-        raise ValueError(f"Starfile generation failed. Expected particles star file at {particles_path} does not exist.")
+        raise ValueError(
+            f"Starfile generation failed. Expected particles star file at {particles_path} does not exist."
+        )
 
     if not tomograms_path.exists():
-        raise ValueError(f"Starfile generation failed. Expected tomograms star file at {tomograms_path} does not exist.")
-    
+        raise ValueError(
+            f"Starfile generation failed. Expected tomograms star file at {tomograms_path} does not exist."
+        )
+
     if dry_run:
-        logger.info(f"Dry run enabled, skipping subtomogram extraction. Generated star files at {particles_path} and {tomograms_path}.")
+        logger.info(
+            f"Dry run enabled, skipping subtomogram extraction. Generated star files at {particles_path} and {tomograms_path}."
+        )
         return
 
     particles_count, total_skipped_count, individual_tiltseries_count = extract_subtomograms(

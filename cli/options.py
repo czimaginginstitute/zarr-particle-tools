@@ -1,7 +1,9 @@
 # TODO: fuzzy matching for name fields?
 # TODO: globbing for all fields?
-import click
 from pathlib import Path
+
+import click
+
 from cli.types import PARAM_TYPE_FOR_TYPE
 
 
@@ -17,13 +19,29 @@ def compose_options(opts: list[click.Option]) -> callable:
 def common_options():
     opts = [
         click.option("--box-size", type=int, required=True, help="Box size of the extracted subtomograms in pixels."),
-        click.option("--crop-size", type=int, default=None, help="Crop size of the extracted subtomograms in pixels. If not specified, defaults to box-size."),
+        click.option(
+            "--crop-size",
+            type=int,
+            default=None,
+            help="Crop size of the extracted subtomograms in pixels. If not specified, defaults to box-size.",
+        ),
         click.option("--bin", type=int, default=1, show_default=True, help="Binning factor for the subtomograms."),
-        click.option("--float16", is_flag=True, help="Use float16 precision for the output mrcs files. Default is False (float32)."),
+        click.option(
+            "--float16",
+            is_flag=True,
+            help="Use float16 precision for the output mrcs files. Default is False (float32).",
+        ),
         click.option("--no-ctf", is_flag=True, help="Disable CTF premultiplication."),
         click.option("--no-circle-crop", is_flag=True, help="Disable circular cropping of the subtomograms."),
-        click.option("--output-dir", type=click.Path(file_okay=False, path_type=Path), required=True, help="Path to the output directory where the extracted subtomograms will be saved."),
-        click.option("--overwrite", is_flag=True, help="If set, existing output files will be overwritten. Default is False."),
+        click.option(
+            "--output-dir",
+            type=click.Path(file_okay=False, path_type=Path),
+            required=True,
+            help="Path to the output directory where the extracted subtomograms will be saved.",
+        ),
+        click.option(
+            "--overwrite", is_flag=True, help="If set, existing output files will be overwritten. Default is False."
+        ),
         click.option("--debug", is_flag=True, help="Enable debug logging."),
     ]
     return compose_options(opts)
@@ -31,7 +49,12 @@ def common_options():
 
 def local_options():
     opts = [
-        click.option("--particles-starfile", type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None, help="Path to the particles *.star file."),
+        click.option(
+            "--particles-starfile",
+            type=click.Path(exists=True, dir_okay=False, path_type=Path),
+            default=None,
+            help="Path to the particles *.star file.",
+        ),
         click.option(
             "--tiltseries-relative-dir",
             type=click.Path(file_okay=True, path_type=Path),
@@ -78,7 +101,7 @@ DATA_PORTAL_ARGS = [
     ("--annotation-names", str),
 ]
 
-DATA_PORTAL_ARG_REFS = [arg.lstrip("--").replace("-", "_") for arg, _ in DATA_PORTAL_ARGS] + ["inexact_match"]
+DATA_PORTAL_ARG_REFS = [arg.removeprefix("--").replace("-", "_") for arg, _ in DATA_PORTAL_ARGS] + ["inexact_match"]
 
 
 # NOTE: not robust since it assumes the plural form is just the singular form with an 's' at the end, which is currently the case but may not always be true
@@ -89,7 +112,7 @@ def arg_flags(plural: str) -> tuple[str, str]:
 
 def help_text(field_name: str, field_type: str, arg_type: type) -> str:
     return f"CryoET Data Portal {field_name} {field_type}(s) to filter picks (comma or space separated). \
-        {f' If --inexact-match is specified, filtering is case insensitive, "contains" search is used. NOTE: Not necessarily a unique identifier, results can span different datasets.' if arg_type is str else ''}"
+        {' If --inexact-match is specified, filtering is case insensitive, contains search is used. NOTE: Not necessarily a unique identifier, results can span different datasets.' if arg_type is str else ''}"
 
 
 def data_portal_options():
@@ -117,8 +140,8 @@ def data_portal_options():
     )
 
     for arg, py_type in DATA_PORTAL_ARGS:
-        field_name = arg.lstrip("--").split("-")[0]
-        field_type = arg.lstrip("--").split("-")[1].rstrip("s")
+        field_name = arg.removeprefix("--").split("-")[0]
+        field_type = arg.removeprefix("--").split("-")[1].rstrip("s")
         help_msg = help_text(field_name, field_type, py_type)
 
         plural_flag, singular_flag = arg_flags(arg)

@@ -32,7 +32,14 @@ PARTICLES_DF_COLUMNS = [
     "cdpAnnotationShapeId",
 ]
 # NOTE: tomograms.star columns are based on OPTICS_DF_COLUMNS, but with additional columns for tomogram metadata (see get_tomograms_df)
-OPTICS_DF_COLUMNS = ["rlnOpticsGroup", "rlnOpticsGroupName", "rlnSphericalAberration", "rlnVoltage", "rlnAmplitudeContrast", "rlnTomoTiltSeriesPixelSize"]
+OPTICS_DF_COLUMNS = [
+    "rlnOpticsGroup",
+    "rlnOpticsGroupName",
+    "rlnSphericalAberration",
+    "rlnVoltage",
+    "rlnAmplitudeContrast",
+    "rlnTomoTiltSeriesPixelSize",
+]
 # to keep track of columns and order
 INDIVIDUAL_TOMOGRAM_COLUMNS = [
     "rlnMicrographName",

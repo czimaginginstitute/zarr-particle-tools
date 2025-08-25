@@ -1,7 +1,8 @@
 import logging
-from tqdm import tqdm
-from core.constants import NOISY_LOGGERS
 
+from tqdm import tqdm
+
+from core.constants import NOISY_LOGGERS
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,9 @@ def get_filter(values, field, inexact_match, label=""):
         return None
     if inexact_match:
         if len(values) > 1:
-            raise ValueError(f"Cannot use inexact match with multiple values ({values}) for {label}. Please provide a single value.")
+            raise ValueError(
+                f"Cannot use inexact match with multiple values ({values}) for {label}. Please provide a single value."
+            )
         logger.info(f"Finding similar {label}: {values} (case insensitive, includes partial matches)")
         return field.ilike(f"%{values[0]}%")
     else:
