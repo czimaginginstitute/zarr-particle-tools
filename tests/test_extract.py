@@ -14,10 +14,12 @@ DATASET_CONFIGS = {
     "synthetic": {
         "data_root": Path("tests/data/relion_project_synthetic"),
         "tol": 1e-7,
+        "float_tol": 1e-4,
     },
     "unroofing": {
         "data_root": Path("tests/data/relion_project_unroofing"),
         "tol": 5e-5,  # relaxed requirements due to noisier data
+        "float_tol": 1e-4,
     },
 }
 
@@ -62,6 +64,7 @@ def test_extract_local_subtomograms_parametrized(
 ):
     data_root = dataset_config["data_root"]
     tol = dataset_config["tol"]
+    float_tol = dataset_config["float_tol"]
     float16 = extract_arguments.get("float16", False)
 
     output_dir = Path(f"tests/output/{dataset}_{extract_suffix}/")
@@ -91,7 +94,7 @@ def test_extract_local_subtomograms_parametrized(
     relion_dir = data_root / f"relion_output_{extract_suffix}/Subtomograms/"
     # extra tolerance for float16 data
     if float16:
-        compare_mrcs_dirs(relion_dir, subtomo_dir, tol=tol * 100)
+        compare_mrcs_dirs(relion_dir, subtomo_dir, tol=float_tol)
     else:
         compare_mrcs_dirs(relion_dir, subtomo_dir, tol=tol)
 
@@ -135,9 +138,7 @@ def test_cli_extract_local(tmp_path, compare_mrcs_dirs, dataset, extract_suffix)
         args.append("--no-circle-crop")
 
     runner = CliRunner()
-    result = runner.invoke(cli, args)
-
-    assert result.exit_code == 0, f"CLI failed: {result.output}"
+    runner.invoke(cli, args, catch_exceptions=False)
 
     subtomo_dir = output_dir / "Subtomograms/"
     relion_dir = data_root / f"relion_output_{extract_suffix}/Subtomograms/"

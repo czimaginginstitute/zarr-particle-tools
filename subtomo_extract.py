@@ -1,5 +1,6 @@
+# TODO: Add support for a consolidated tiltseries star file (where all the tiltseries entries are just in the tomograms.star file)
 """
-Primary entry point for extracting subtomograms from a CryoET Data Portal run.
+Primary entry point for extracting subtomograms from local files and the CryoET Data Portal.
 Run python subtomo_extract.py --help for usage instructions.
 """
 
@@ -32,7 +33,8 @@ from core.projection import (
     get_particle_crop_and_visibility,
     get_particles_to_tiltseries_coordinates,
 )
-from generate.generate_starfiles import generate_starfiles
+from generate.cdp_generate_starfiles import generate_starfiles as cdp_generate_starfiles
+from generate.copick_generate_starfiles import copick_picks_to_starfile, get_copick_picks
 
 logger = logging.getLogger(__name__)
 
@@ -124,9 +126,8 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
             f"Multiple tiltseries data locators found: {set(tiltseries_data_locators)}. This is not supported."
         )
     tiltseries_data_locator = tiltseries_data_locators[0]
-    if not tiltseries_data_locator.startswith("s3://") and not tiltseries_data_locator.startswith(
-        "/"
-    ):  # assume it's a local relative path, relative to the tiltseries file
+    if not tiltseries_data_locator.startswith("s3://") and not tiltseries_data_locator.startswith("/"):
+        # assume it's a local relative path, relative to the tiltseries file
         tiltseries_data_locator = individual_tiltseries_path.parent / tiltseries_data_locator
     tiltseries_data = DataReader(str(tiltseries_data_locator))
 
@@ -538,7 +539,7 @@ def parse_extract_data_portal_subtomograms(
     start_time = time.time()
     validate_and_setup(box_size, output_dir, crop_size, overwrite)
 
-    particles_path, tomograms_path, _ = generate_starfiles(
+    particles_path, tomograms_path, _ = cdp_generate_starfiles(
         output_dir=output_dir,
         **data_portal_args,
     )
@@ -579,12 +580,90 @@ def parse_extract_data_portal_subtomograms(
     )
 
 
-@click.group("Extract subtomograms from a provided particles *.star file, and tiltseries *.star files.")
+def parse_extract_data_portal_copick_subtomograms(
+    box_size: int,
+    bin: int,
+    float16: bool,
+    no_ctf: bool,
+    no_circle_crop: bool,
+    output_dir: Path,
+    copick_config: Path,
+    copick_name: str,
+    copick_session_id: str,
+    copick_user_id: str,
+    copick_run_names: list[str] = None,
+    crop_size: int = None,
+    dry_run: bool = False,
+    overwrite: bool = False,
+) -> None:
+    start_time = time.time()
+    validate_and_setup(box_size, output_dir, crop_size, overwrite)
+
+    if copick_run_names is None:
+        picks = get_copick_picks(copick_config, copick_name, copick_session_id, copick_user_id, copick_run_names)
+        copick_run_names = [p.run.name for p in picks]
+
+    particles_path, tomograms_path, _ = cdp_generate_starfiles(
+        output_dir=output_dir,
+        no_particles_starfile=True,  # particles will come from copick project
+        run_ids=copick_run_names,
+    )
+
+    if not particles_path.exists():
+        raise ValueError(
+            f"Starfile generation failed. Expected particles star file at {particles_path} does not exist."
+        )
+
+    if not tomograms_path.exists():
+        raise ValueError(
+            f"Starfile generation failed. Expected tomograms star file at {tomograms_path} does not exist."
+        )
+
+    if dry_run:
+        logger.info(
+            f"Dry run enabled, skipping subtomogram extraction. Generated star files at {particles_path} and {tomograms_path}."
+        )
+        return
+
+    # add copick particles to particles.star file
+    optics_df = starfile.read(particles_path)["optics"]
+    particles_df = copick_picks_to_starfile(
+        copick_config,
+        copick_name,
+        copick_session_id,
+        copick_user_id,
+        copick_run_names,
+        optics_df,
+        data_portal_runs=True,
+    )
+    starfile.write({"optics": optics_df, "particles": particles_df}, particles_path)
+
+    particles_count, total_skipped_count, individual_tiltseries_count = extract_subtomograms(
+        particles_starfile=particles_path,
+        trajectories_starfile=None,  # No trajectories data in Data Portal
+        tiltseries_relative_dir=output_dir,
+        tomograms_starfile=tomograms_path,
+        box_size=box_size,
+        crop_size=crop_size,
+        bin=bin,
+        float16=float16,
+        no_ctf=no_ctf,
+        no_circle_crop=no_circle_crop,
+        output_dir=output_dir,
+    )
+
+    end_time = time.time()
+    logger.info(
+        f"Subtomogram extraction completed in {end_time - start_time:.2f} seconds. Extracted {particles_count} particles from {individual_tiltseries_count} tiltseries, skipped {total_skipped_count} particles due to out-of-bounds coordinates."
+    )
+
+
+@click.group("Extract subtomograms.")
 def cli():
     pass
 
 
-@cli.command("local", help="Extract subtomograms from local files (particles, tiltseries, and alignment files).")
+@cli.command("local", help="Extract subtomograms from local files (particles and tiltseries).")
 @cli_options.local_options()
 @cli_options.common_options()
 def cmd_local(**kwargs):
@@ -592,13 +671,31 @@ def cmd_local(**kwargs):
     parse_extract_local_subtomograms(**kwargs)
 
 
-@cli.command("data-portal", help="Extract subtomograms from a CryoET Data Portal run.")
+@cli.command("local-copick", help="Extract subtomograms from local files (tiltseries) with copick particles.")
+@cli_options.local_options()
+@cli_options.copick_options()
+@cli_options.common_options()
+def cmd_local_copick(**kwargs):
+    setup_logging(debug=kwargs.pop("debug", False))
+    raise NotImplementedError("Local copick extraction is not yet implemented.")
+
+
+@cli.command("data-portal", help="Extract subtomograms from the CryoET Data Portal.")
 @cli_options.common_options()
 @cli_options.data_portal_options()
 def cmd_data_portal(**kwargs):
     setup_logging(debug=kwargs.pop("debug", False))
     kwargs = cli_options.flatten_data_portal_args(kwargs)
     parse_extract_data_portal_subtomograms(**kwargs)
+
+
+# TODO: write tests
+@cli.command("data-portal-copick", help="Extract subtomograms from CryoET Data Portal runs with copick particles.")
+@cli_options.common_options()
+@cli_options.copick_options()
+def cmd_data_portal_copick(**kwargs):
+    setup_logging(debug=kwargs.pop("debug", False))
+    parse_extract_data_portal_copick_subtomograms(**kwargs)
 
 
 if __name__ == "__main__":

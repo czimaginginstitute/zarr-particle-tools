@@ -1,7 +1,7 @@
 [project]
 name = "portal-particle-extraction"
 version = "0.1.0"
-description = "Subtomogram extraction from local and CryoET Data Portal datasets"
+description = "Subtomogram extraction from local files and the CryoET Data Portal"
 authors = [
     {name = "Daniel Ji"},
     {name = "Utz Ermel"}

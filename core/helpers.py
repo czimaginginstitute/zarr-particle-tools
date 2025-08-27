@@ -50,3 +50,11 @@ def get_filter(values, field, inexact_match, label=""):
     else:
         logger.info(f"Filtering by EXACT {label}: {values}")
         return field._in(values)
+
+
+def get_optics_group_name(run_id: int, tiltseries_id: int) -> str:
+    return f"run_{run_id}_tiltseries_{tiltseries_id}"
+
+
+def get_tomo_name(run_id: int, tiltseries_id: int, alignment_id: int, voxel_spacing_id: int) -> str:
+    return f"run_{run_id}_tiltseries_{tiltseries_id}_alignment_{alignment_id}_spacing_{voxel_spacing_id}"

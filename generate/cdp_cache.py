@@ -83,7 +83,7 @@ def get_items_by_ids(
     if isinstance(ids, int):
         ids = [ids]
 
-    if derived_cache:
+    if derived_cache is not None:
         # will later be used to fetch items from the derived cache
         result_ids: dict[int, list[int]] = defaultdict(list)
     else:
@@ -93,7 +93,7 @@ def get_items_by_ids(
     # for every item, check the cache first
     for item_id in ids:
         if item_id in cache:
-            if derived_cache:
+            if derived_cache is not None:
                 result_ids[item_id] = cache[item_id]
             else:
                 result_items[item_id] = cache[item_id]
@@ -106,7 +106,7 @@ def get_items_by_ids(
         for item in fetched_items:
             item_key = key_extractor(item)
             # first add them to the results being returned
-            if derived_cache:
+            if derived_cache is not None:
                 result_ids[item_key].append(item.id)
             else:
                 if multiple_results:
@@ -115,7 +115,7 @@ def get_items_by_ids(
                     result_items[item_key] = item
 
             # if there is a derived cache, that means this cache just holds the ids, while we need to add the actual item to the derived cache
-            if derived_cache:
+            if derived_cache is not None:
                 if multiple_results:
                     cache[item_key].append(item.id)
                 else:
@@ -128,8 +128,10 @@ def get_items_by_ids(
                     cache[item_key] = item
 
     # derived cache means that the result_items are actually ids of the derived cache, must hit the derived cache to get the actual items
-    if derived_cache:
-        result_items = derived_cache(result_ids)
+    if derived_cache is not None:
+        result_items = {
+            item_id: list(derived_cache_callable(item_ids).values()) for item_id, item_ids in result_ids.items()
+        }
 
     return result_items
 

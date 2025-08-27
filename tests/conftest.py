@@ -46,6 +46,24 @@ def validate_particles_starfile():
 
 
 @pytest.fixture
+def validate_starfile():
+    def _validate_starfile(star_file: Path, expected_starfile: Path):
+        star_file_data = starfile.read(star_file)
+        expected_data = starfile.read(expected_starfile)
+        assert type(star_file_data) is type(
+            expected_data
+        ), f"Type mismatch: {type(star_file_data)} vs {type(expected_data)}"
+        if type(star_file_data) is dict:
+            for key in expected_data:
+                assert key in star_file_data
+                assert df_equal(star_file_data[key], expected_data[key])
+        else:
+            assert df_equal(star_file_data, expected_data)
+
+    return _validate_starfile
+
+
+@pytest.fixture
 def compare_mrcs_dirs():
     def _compare_dirs(dir1: str, dir2: str, tol: float):
         dir1 = Path(dir1)

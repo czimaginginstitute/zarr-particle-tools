@@ -4,7 +4,7 @@ from pathlib import Path
 
 import click
 
-from cli.types import PARAM_TYPE_FOR_TYPE
+from cli.types import PARAM_TYPE_FOR_TYPE, STR_LIST
 
 
 def compose_options(opts: list[click.Option]) -> callable:
@@ -84,6 +84,28 @@ def local_options():
     return compose_options(opts)
 
 
+def copick_options():
+    opts = [
+        click.option(
+            "--copick-config",
+            type=click.Path(exists=True, dir_okay=False, path_type=Path),
+            required=True,
+            help="Path to the copick configuration file.",
+        ),
+        click.option("--copick-name", type=str, required=True, help="copick particle (object) name"),
+        click.option("--copick-session-id", type=str, required=True, help="copick session ID"),
+        click.option("--copick-user-id", type=str, required=True, help="copick user ID"),
+        click.option(
+            "--copick-run-names",
+            "--copick-run-name",
+            type=STR_LIST,
+            multiple=True,
+            help="copick run names (default: all runs)",
+        ),
+    ]
+    return compose_options(opts)
+
+
 DATA_PORTAL_ARGS = [
     ("--deposition-ids", int),
     ("--deposition-titles", str),
@@ -135,6 +157,13 @@ def data_portal_options():
             "--dry-run",
             is_flag=True,
             help="If set, do not extract subtomograms, only generate the starfiles needed for extraction.",
+        )
+    )
+    options.append(
+        click.option(
+            "--no-particles-starfile",
+            is_flag=True,
+            help="If set, do not generate the particles.star file.",
         )
     )
 

@@ -39,6 +39,7 @@ OPTICS_DF_COLUMNS = [
     "rlnVoltage",
     "rlnAmplitudeContrast",
     "rlnTomoTiltSeriesPixelSize",
+    "rlnTomoName",  # not usually in optics_df, but included so that tomograms.star generation from the optics_df is possible
 ]
 # to keep track of columns and order
 INDIVIDUAL_TOMOGRAM_COLUMNS = [
