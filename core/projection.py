@@ -2,6 +2,8 @@
 Helper functions for calculating projection matrices, projecting 3D points to 2D coordinates, and creating masks.
 """
 
+import json
+
 import numpy as np
 import pandas as pd
 from cryoet_alignment.io.aretomo3 import AreTomo3ALN
@@ -140,6 +142,19 @@ def calculate_projection_matrix_from_starfile_df(tiltseries_df: pd.DataFrame) ->
     """
     projection_matrices = []
     for _, tilt in tiltseries_df.iterrows():
+        if {"_rlnTomoProjX", "_rlnTomoProjY", "_rlnTomoProjZ", "_rlnTomoProjW"}.issubset(tilt.index):
+            projection_matrices.append(
+                np.array(
+                    [
+                        json.loads(tilt["_rlnTomoProjX"]),
+                        json.loads(tilt["_rlnTomoProjY"]),
+                        json.loads(tilt["_rlnTomoProjZ"]),
+                        json.loads(tilt["_rlnTomoProjW"]),
+                    ]
+                )
+            )
+            continue
+
         rot = tilt["rlnTomoZRot"]
         gmag = 1.0  # Assuming no magnification change
         tx = tilt["rlnTomoXShiftAngst"]

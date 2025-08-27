@@ -18,7 +18,7 @@ def compose_options(opts: list[click.Option]) -> callable:
 
 def common_options():
     opts = [
-        click.option("--box-size", type=int, required=True, help="Box size of the extracted subtomograms in pixels."),
+        click.option("--box-size", type=int, required=False, help="Box size of the extracted subtomograms in pixels."),
         click.option(
             "--crop-size",
             type=int,
@@ -78,7 +78,7 @@ def local_shared_options():
             type=click.Path(file_okay=True, path_type=Path),
             default=Path("./"),
             show_default=True,
-            help="The directory in which the tiltseries file paths are relative to.",
+            help="The directory in which the tiltseries file paths are relative to (not needed if absolute paths are used in the starfile or the tiltseries are in the tomograms.star file).",
         ),
         click.option(
             "--tomograms-starfile",
