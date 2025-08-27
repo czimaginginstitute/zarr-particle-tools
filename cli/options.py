@@ -50,11 +50,29 @@ def common_options():
 def local_options():
     opts = [
         click.option(
+            "--optimisation-set-starfile",
+            type=click.Path(exists=True, dir_okay=False, path_type=Path),
+            default=None,
+            help="Path to the optimisation set star file for optimisation set generation.",
+        ),
+        click.option(
             "--particles-starfile",
             type=click.Path(exists=True, dir_okay=False, path_type=Path),
             default=None,
             help="Path to the particles *.star file.",
         ),
+        click.option(
+            "--trajectories-starfile",
+            type=click.Path(exists=True, dir_okay=False, path_type=Path),
+            default=None,
+            help="Path to the trajectories motion.star file for motion correction",
+        ),
+    ]
+    return compose_options(opts)
+
+
+def local_shared_options():
+    opts = [
         click.option(
             "--tiltseries-relative-dir",
             type=click.Path(file_okay=True, path_type=Path),
@@ -68,19 +86,8 @@ def local_options():
             default=None,
             help="Path to the tomograms.star file (containing all tiltseries entries, with entries as tiltseries).",
         ),
-        click.option(
-            "--trajectories-starfile",
-            type=click.Path(exists=True, dir_okay=False, path_type=Path),
-            default=None,
-            help="Path to the trajectories motion.star file for motion correction",
-        ),
-        click.option(
-            "--optimisation-set-starfile",
-            type=click.Path(exists=True, dir_okay=False, path_type=Path),
-            default=None,
-            help="Path to the optimisation set star file for optimisation set generation.",
-        ),
     ]
+
     return compose_options(opts)
 
 

@@ -697,9 +697,9 @@ def generate_starfiles(
 )
 @click.option("--debug", is_flag=True, help="Enable debug logging.")
 def cli(**kwargs):
+    del kwargs["dry_run"]  # from main cli, not used here
     debug = kwargs.pop("debug", False)
     setup_logging(debug)
-    del kwargs["dry_run"]  # from main cli, not used here
     kwargs = cli_options.flatten_data_portal_args(kwargs)
     generate_starfiles(**kwargs)
 

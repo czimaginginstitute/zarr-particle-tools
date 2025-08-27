@@ -21,7 +21,7 @@ from scipy.ndimage import fourier_shift
 from tqdm import tqdm
 
 import cli.options as cli_options
-from core.constants import TILTSERIES_URI_RELION_COLUMN
+from core.constants import OPTICS_DF_COLUMNS, TILTSERIES_URI_RELION_COLUMN
 from core.ctf import calculate_ctf
 from core.data import DataReader
 from core.dose import calculate_dose_weight_image
@@ -449,13 +449,13 @@ def validate_and_setup(
     overwrite: bool = False,
 ) -> None:
     if box_size % 2 != 0:
-        raise click.BadParameter(f"Box size must be an even number, got {box_size}.")
+        raise ValueError(f"Box size must be an even number, got {box_size}.")
 
     if crop_size is not None:
         if crop_size % 2 != 0:
-            raise click.BadParameter(f"Crop size must be an even number, got {crop_size}.")
+            raise ValueError(f"Crop size must be an even number, got {crop_size}.")
         if crop_size > box_size:
-            raise click.BadParameter(
+            raise ValueError(
                 f"Crop size cannot be greater than box size, got crop size {crop_size} and box size {box_size}."
             )
 
@@ -484,19 +484,18 @@ def parse_extract_local_subtomograms(
     tomograms_starfile: Path = None,
     optimisation_set_starfile: Path = None,
     overwrite: bool = False,
+    no_logging: bool = False,
 ) -> None:
     start_time = time.time()
     validate_and_setup(box_size, output_dir, crop_size, overwrite)
 
     if optimisation_set_starfile and (particles_starfile or tomograms_starfile or trajectories_starfile):
-        raise click.BadParameter(
+        raise ValueError(
             "Cannot specify both optimisation set star file and individual star files. Please provide only one of them."
         )
 
     if not optimisation_set_starfile and not particles_starfile and not tomograms_starfile:
-        raise click.BadParameter(
-            "Either optimisation set star file or particles and tomograms star files must be provided."
-        )
+        raise ValueError("Either optimisation set star file or particles and tomograms star files must be provided.")
 
     if optimisation_set_starfile:
         optimisation_dict = starfile.read(optimisation_set_starfile)
@@ -519,8 +518,72 @@ def parse_extract_local_subtomograms(
         tomograms_starfile=tomograms_starfile,
     )
     end_time = time.time()
+    if not no_logging:
+        logger.info(
+            f"Subtomogram extraction completed in {end_time - start_time:.2f} seconds. Extracted {particles_count} particles from {individual_tiltseries_count} tiltseries, skipped {total_skipped_count} particles due to out-of-bounds coordinates."
+        )
+
+
+def parse_extract_local_copick_subtomograms(
+    box_size: int,
+    bin: int,
+    float16: bool,
+    no_ctf: bool,
+    no_circle_crop: bool,
+    output_dir: Path,
+    copick_config: Path,
+    copick_name: str,
+    copick_session_id: str,
+    copick_user_id: str,
+    copick_run_names: list[str] = None,
+    crop_size: int = None,
+    tiltseries_relative_dir: Path = None,
+    tomograms_starfile: Path = None,
+    overwrite: bool = False,
+) -> None:
+    start_time = time.time()
+    validate_and_setup(box_size, output_dir, crop_size, overwrite)
+
+    if copick_run_names is None:
+        picks = get_copick_picks(copick_config, copick_name, copick_session_id, copick_user_id, copick_run_names)
+        copick_run_names = [p.run.name for p in picks]
+
+    tomograms_df = starfile.read(tomograms_starfile)
+    optics_df = tomograms_df[OPTICS_DF_COLUMNS].drop_duplicates().reset_index(drop=True)
+
+    # add copick particles to particles.star file
+    particles_df = copick_picks_to_starfile(
+        copick_config,
+        copick_name,
+        copick_session_id,
+        copick_user_id,
+        copick_run_names,
+        optics_df,
+        data_portal_runs=True,
+    )
+    particles_path = output_dir / "particles.star"
+    starfile.write({"optics": optics_df, "particles": particles_df}, particles_path)
+
+    parse_extract_local_subtomograms(
+        box_size=box_size,
+        bin=bin,
+        float16=float16,
+        no_ctf=no_ctf,
+        no_circle_crop=no_circle_crop,
+        output_dir=output_dir,
+        crop_size=crop_size,
+        particles_starfile=particles_path,
+        trajectories_starfile=None,
+        tiltseries_relative_dir=tiltseries_relative_dir,
+        tomograms_starfile=tomograms_starfile,
+        optimisation_set_starfile=None,
+        overwrite=overwrite,
+        no_logging=True,
+    )
+
+    end_time = time.time()
     logger.info(
-        f"Subtomogram extraction completed in {end_time - start_time:.2f} seconds. Extracted {particles_count} particles from {individual_tiltseries_count} tiltseries, skipped {total_skipped_count} particles due to out-of-bounds coordinates."
+        f"Subtomogram extraction completed in {end_time - start_time:.2f} seconds. Extracted {len(particles_df)} particles from {len(tomograms_df)} tiltseries."
     )
 
 
@@ -619,12 +682,6 @@ def parse_extract_data_portal_copick_subtomograms(
             f"Starfile generation failed. Expected tomograms star file at {tomograms_path} does not exist."
         )
 
-    if dry_run:
-        logger.info(
-            f"Dry run enabled, skipping subtomogram extraction. Generated star files at {particles_path} and {tomograms_path}."
-        )
-        return
-
     # add copick particles to particles.star file
     optics_df = starfile.read(particles_path)["optics"]
     particles_df = copick_picks_to_starfile(
@@ -637,6 +694,12 @@ def parse_extract_data_portal_copick_subtomograms(
         data_portal_runs=True,
     )
     starfile.write({"optics": optics_df, "particles": particles_df}, particles_path)
+
+    if dry_run:
+        logger.info(
+            f"Dry run enabled, skipping subtomogram extraction. Generated star files at {particles_path} and {tomograms_path}."
+        )
+        return
 
     particles_count, total_skipped_count, individual_tiltseries_count = extract_subtomograms(
         particles_starfile=particles_path,
@@ -665,6 +728,7 @@ def cli():
 
 @cli.command("local", help="Extract subtomograms from local files (particles and tiltseries).")
 @cli_options.local_options()
+@cli_options.local_shared_options()
 @cli_options.common_options()
 def cmd_local(**kwargs):
     setup_logging(debug=kwargs.pop("debug", False))
@@ -672,12 +736,12 @@ def cmd_local(**kwargs):
 
 
 @cli.command("local-copick", help="Extract subtomograms from local files (tiltseries) with copick particles.")
-@cli_options.local_options()
+@cli_options.local_shared_options()
 @cli_options.copick_options()
 @cli_options.common_options()
 def cmd_local_copick(**kwargs):
     setup_logging(debug=kwargs.pop("debug", False))
-    raise NotImplementedError("Local copick extraction is not yet implemented.")
+    parse_extract_local_copick_subtomograms(**kwargs)
 
 
 @cli.command("data-portal", help="Extract subtomograms from the CryoET Data Portal.")

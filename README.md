@@ -97,4 +97,3 @@ To ensure that the subtomogram extraction matches RELION's subtomogram extractio
 - [ ] Write tests for generating star files and pulling from the CryoET Data Portal
 - [ ] Add copick support
 - [ ] Notify teamtomo of this work and possible integration into their codebase
-- [ ] Data Portal support (not downloading the entire tiltseries & using the API to pull relevant alignment & CTF information)
