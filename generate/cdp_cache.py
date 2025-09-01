@@ -28,17 +28,22 @@ alignment_cache: dict[int, Alignment] = {}
 voxel_spacing_cache: dict[int, TomogramVoxelSpacing] = {}
 # tomogram id to tomograms cache
 tomograms_cache: dict[int, Tomogram] = {}
-
-# alignment id to tomogram id
-alignment_to_tomograms_cache: dict[int, list[int]] = defaultdict(list)
-# tomogram voxel spacing id to tomogram id
-tomogram_voxel_spacing_to_tomograms_cache: dict[int, list[int]] = defaultdict(list)
 # alignment id to per section alignments
 per_section_alignments_cache: dict[int, list[PerSectionAlignmentParameters]] = defaultdict(list)
 # tiltseries id to per section parameters
 per_section_parameters_cache: dict[int, list[PerSectionParameters]] = defaultdict(list)
 # run id to frames
 run_to_frames_cache: dict[int, list[Frame]] = defaultdict(list)
+
+# derived caches
+# run id to alignment ids
+run_id_to_alignment_ids_cache: dict[int, list[int]] = defaultdict(list)
+# run id to voxel spacing ids
+run_id_to_voxel_spacing_ids_cache: dict[int, list[int]] = defaultdict(list)
+# alignment id to tomogram id
+alignment_to_tomograms_cache: dict[int, list[int]] = defaultdict(list)
+# tomogram voxel spacing id to tomogram id
+tomogram_voxel_spacing_to_tomograms_cache: dict[int, list[int]] = defaultdict(list)
 
 client = Client()
 
@@ -53,7 +58,8 @@ def get_items_by_ids(
     multiple_results: bool = False,
     derived_cache_callable: Callable[[Any], Any] = None,
     derived_cache: dict = None,
-) -> dict[int, Union[list[Any], Any]]:
+    as_dict: bool = False,
+) -> Union[Union[list[Any], Any], dict[int, Union[list[Any], Any]]]:
     """
     Fetch items from the cache or database by their IDs.
 
@@ -70,10 +76,11 @@ def get_items_by_ids(
         key_extractor (Callable[[Any], int]): A function to extract the key from the item for caching.
         multiple_results (bool, optional): Whether to return a list of items (True) or a single item (False) for a single ID in the returned dictionary. Defaults to False.
         derived_cache_callable (Callable[[Any], Any], optional): A callable to fetch items from the derived cache if needed. Defaults to None.
-        derived_cache (dict, optional): A dictionary for the derived cache. A derived cache must be a dictionary of a one-to-one mapping of IDs to items. Defaults to None.
+        derived_cache (dict, optional): A dictionary for the derived cache. A derived cache must be a dictionary of a one-to-one mapping of IDs to items. Defaults to None.4
+        as_dict (bool, optional): Return results as a dict, mapping the input ids to the result items. Defaults to False.
 
     Returns:
-        dict[int, Any]: A dictionary where keys are item IDs and values are the fetched items.
+        Union[Union[list[Any], Any], dict[int, Union[list[Any], Any]]]: A mapping of IDs to their corresponding items, or a list of items if as_dict is False.
     """
     if (derived_cache is not None and derived_cache_callable is None) or (
         derived_cache is None and derived_cache_callable is not None
@@ -129,11 +136,12 @@ def get_items_by_ids(
 
     # derived cache means that the result_items are actually ids of the derived cache, must hit the derived cache to get the actual items
     if derived_cache is not None:
-        result_items = {
-            item_id: list(derived_cache_callable(item_ids).values()) for item_id, item_ids in result_ids.items()
-        }
+        result_items = {item_id: derived_cache_callable(item_ids) for item_id, item_ids in result_ids.items()}
 
-    return result_items
+    if as_dict:
+        return result_items
+
+    return list(result_items.values())
 
 
 # To make the arguments of the function hashable, so that they can be used in the lru_cache
@@ -162,14 +170,14 @@ def hashable_lru_cache(maxsize: int = None) -> Callable:
 
 
 @hashable_lru_cache(maxsize=None)
-def get_runs(run_ids: Union[list[int], int]) -> dict[int, Run]:
+def get_runs(run_ids: Union[list[int], int]) -> list[Run]:
     return get_items_by_ids(
         ids=run_ids, cache=run_cache, query_field=Run.id, model_cls=Run, key_extractor=lambda r: r.id
     )
 
 
 @hashable_lru_cache(maxsize=None)
-def get_tiltseries(tiltseries_ids: Union[list[int], int]) -> dict[int, TiltSeries]:
+def get_tiltseries(tiltseries_ids: Union[list[int], int]) -> list[TiltSeries]:
     return get_items_by_ids(
         ids=tiltseries_ids,
         cache=tiltseries_cache,
@@ -180,7 +188,7 @@ def get_tiltseries(tiltseries_ids: Union[list[int], int]) -> dict[int, TiltSerie
 
 
 @hashable_lru_cache(maxsize=None)
-def get_alignments(alignment_ids: Union[list[int], int]) -> dict[int, Alignment]:
+def get_alignments(alignment_ids: Union[list[int], int]) -> list[Alignment]:
     return get_items_by_ids(
         ids=alignment_ids,
         cache=alignment_cache,
@@ -191,7 +199,22 @@ def get_alignments(alignment_ids: Union[list[int], int]) -> dict[int, Alignment]
 
 
 @hashable_lru_cache(maxsize=None)
-def get_voxel_spacings(voxel_spacing_ids: Union[list[int], int]) -> dict[int, TomogramVoxelSpacing]:
+def get_alignments_by_run_id(run_ids: Union[list[int], int]) -> dict[int, list[Alignment]]:
+    return get_items_by_ids(
+        ids=run_ids,
+        cache=run_id_to_alignment_ids_cache,
+        query_field=Alignment.run_id,
+        model_cls=Alignment,
+        key_extractor=lambda a: a.run_id,
+        multiple_results=True,
+        derived_cache_callable=get_alignments,
+        derived_cache=alignment_cache,
+        as_dict=True,
+    )
+
+
+@hashable_lru_cache(maxsize=None)
+def get_voxel_spacings(voxel_spacing_ids: Union[list[int], int]) -> list[TomogramVoxelSpacing]:
     return get_items_by_ids(
         ids=voxel_spacing_ids,
         cache=voxel_spacing_cache,
@@ -202,7 +225,22 @@ def get_voxel_spacings(voxel_spacing_ids: Union[list[int], int]) -> dict[int, To
 
 
 @hashable_lru_cache(maxsize=None)
-def get_tomograms(tomogram_ids: Union[list[int], int]) -> dict[int, Tomogram]:
+def get_voxel_spacings_by_run_id(run_ids: Union[list[int], int]) -> dict[int, list[TomogramVoxelSpacing]]:
+    return get_items_by_ids(
+        ids=run_ids,
+        cache=run_id_to_voxel_spacing_ids_cache,
+        query_field=TomogramVoxelSpacing.run_id,
+        model_cls=TomogramVoxelSpacing,
+        key_extractor=lambda v: v.run_id,
+        multiple_results=True,
+        derived_cache_callable=get_voxel_spacings,
+        derived_cache=voxel_spacing_cache,
+        as_dict=True,
+    )
+
+
+@hashable_lru_cache(maxsize=None)
+def get_tomograms(tomogram_ids: Union[list[int], int]) -> list[Tomogram]:
     return get_items_by_ids(
         ids=tomogram_ids,
         cache=tomograms_cache,
@@ -223,6 +261,7 @@ def get_tomograms_by_alignment_id(alignment_ids: Union[list[int], int]) -> dict[
         multiple_results=True,
         derived_cache_callable=get_tomograms,
         derived_cache=tomograms_cache,
+        as_dict=True,
     )
 
 
@@ -237,6 +276,7 @@ def get_tomograms_by_voxel_spacing_id(voxel_spacing_ids: Union[list[int], int]) 
         multiple_results=True,
         derived_cache_callable=get_tomograms,
         derived_cache=tomograms_cache,
+        as_dict=True,
     )
 
 
@@ -299,6 +339,7 @@ def get_per_section_alignments_by_alignment_id(
         model_cls=PerSectionAlignmentParameters,
         key_extractor=lambda p: p.alignment_id,
         multiple_results=True,
+        as_dict=True,
     )
 
 
@@ -314,6 +355,7 @@ def get_per_section_parameters_by_tiltseries_id(
         model_cls=PerSectionParameters,
         key_extractor=lambda p: p.tiltseries_id,
         multiple_results=True,
+        as_dict=True,
     )
     # filter out tiltseries that do not have valid CTF parameters
     tiltseries_id_to_psp = {
@@ -332,4 +374,41 @@ def get_frames_by_run_id(run_ids: Union[list[int], int]) -> dict[int, list[Frame
         model_cls=Frame,
         key_extractor=lambda f: f.run_id,
         multiple_results=True,
+        as_dict=True,
     )
+
+
+def validate_and_get_tomogram(alignment_id: int, voxel_spacing_id) -> tuple[int, int, int, float] | None:
+    """
+    Given a voxel spacing ID and alignment ID, retrieves the corresponding tomogram data.
+    Returns: A tuple containing the tomogram dimensions and voxel spacing (size_x, size_y, size_z, voxel_spacing) or None if no valid unique tomogram data is found.
+    """
+    tomogram_data = set(
+        (tomogram.size_x, tomogram.size_y, tomogram.size_z, tomogram.voxel_spacing)
+        for tomograms in get_tomograms_by_alignment_id_and_voxel_spacing_id((alignment_id, voxel_spacing_id)).values()
+        for tomogram in tomograms
+    )
+
+    if not tomogram_data:
+        logger.error(f"[Voxel Spacing {voxel_spacing_id}, Alignment {alignment_id}]: No valid tomogram data found.")
+        return None
+
+    if len(tomogram_data) != 1:
+        logger.error(
+            f"[Voxel Spacing {voxel_spacing_id}, Alignment {alignment_id}]: Expected tomograms to have the same size and voxel size, but found {len(tomogram_data)} unique values."
+        )
+        return None
+
+    return list(tomogram_data)[0]
+
+
+def validate_alignment_tiltseries(alignment_id: int, tiltseries_id: int) -> bool:
+    if not get_per_section_alignments_by_alignment_id(alignment_id):
+        logger.error(f"[Alignment {alignment_id}] Missing alignment information. Skipping file.")
+        return False
+
+    if not get_per_section_parameters_by_tiltseries_id(tiltseries_id):
+        logger.error(f"[TiltSeries {tiltseries_id}] Missing tiltseries CTF parameters. Skipping file.")
+        return False
+
+    return True

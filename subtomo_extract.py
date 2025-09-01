@@ -21,6 +21,7 @@ from scipy.ndimage import fourier_shift
 from tqdm import tqdm
 
 import cli.options as cli_options
+import generate.cdp_generate_starfiles as cdp_generate
 from core.constants import OPTICS_DF_COLUMNS, TILTSERIES_URI_RELION_COLUMN
 from core.ctf import calculate_ctf
 from core.data import DataReader
@@ -33,7 +34,6 @@ from core.projection import (
     get_particle_crop_and_visibility,
     get_particles_to_tiltseries_coordinates,
 )
-from generate.cdp_generate_starfiles import generate_starfiles as cdp_generate_starfiles
 from generate.copick_generate_starfiles import copick_picks_to_starfile, get_copick_picks
 
 logger = logging.getLogger(__name__)
@@ -92,8 +92,10 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
         float16,
         no_ctf,
         no_circle_crop,
+        no_ic,
         output_dir,
     ) = args
+    setup_logging(True)
     # following RELION convention
     pre_bin_box_size = int(round(box_size * bin))
     pre_bin_crop_size = crop_size * bin
@@ -138,11 +140,20 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
     spherical_aberration = tiltseries_row_entry["rlnSphericalAberration"]
     amplitude_contrast = tiltseries_row_entry["rlnAmplitudeContrast"]
     handedness = tiltseries_row_entry["rlnTomoHand"]
-    phase_shift = tiltseries_row_entry["rlnPhaseShift"] if "rlnPhaseShift" in optics_row.columns else 0.0
+    phase_shift = (
+        tiltseries_row_entry["rlnPhaseShift"]
+        if "rlnPhaseShift" in optics_row.columns
+        else [0.0] * len(individual_tiltseries_df)
+    )
     defocus_u = individual_tiltseries_df["rlnDefocusU"].values
     defocus_v = individual_tiltseries_df["rlnDefocusV"].values
     defocus_angle = individual_tiltseries_df["rlnDefocusAngle"].values
     doses = individual_tiltseries_df["rlnMicrographPreExposure"].values
+    ctf_scalefactor = (
+        individual_tiltseries_df["rlnCtfScalefactor"]
+        if "rlnCtfScalefactor" in individual_tiltseries_df.columns
+        else [1.0] * len(individual_tiltseries_df)
+    )
     bfactor_per_electron_dose = (
         individual_tiltseries_df["rlnCtfBfactorPerElectronDose"]
         if "rlnCtfBfactorPerElectronDose" in individual_tiltseries_df.columns
@@ -229,17 +240,19 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
                     amplitude_contrast=amplitude_contrast,
                     handedness=handedness,
                     tiltseries_pixel_size=tiltseries_pixel_size,
-                    phase_shift=phase_shift,
+                    phase_shift=phase_shift[section - 1],
                     defocus_u=defocus_u[section - 1],
                     defocus_v=defocus_v[section - 1],
                     defocus_angle=defocus_angle[section - 1],
                     dose=doses[section - 1],
+                    ctf_scalefactor=ctf_scalefactor[section - 1],
                     bfactor=bfactor_per_electron_dose[section - 1],
                     box_size=box_size,
                     bin=bin,
                 )
                 fourier_tilt *= dose_weights[section - 1, :, :] * ctf_weights
-            fourier_tilt *= -1  # phase flip for RELION compatibility
+            if not no_ic:
+                fourier_tilt *= -1  # phase flip for RELION compatibility
             fourier_tilt /= float(bin) ** 2  # normalize by binning factor
             new_fourier_tilt_stack[tilt] = fourier_tilt
 
@@ -332,6 +345,7 @@ def extract_subtomograms(
     float16: bool = False,
     no_ctf: bool = False,
     no_circle_crop: bool = False,
+    no_ic: bool = False,
     crop_size: int = None,
     tiltseries_relative_dir: Path = None,
     trajectories_starfile: Path = None,
@@ -413,6 +427,7 @@ def extract_subtomograms(
             float16,
             no_ctf,
             no_circle_crop,
+            no_ic,
             output_dir,
         )
 
@@ -487,6 +502,7 @@ def validate_and_setup(
     (output_dir / "Subtomograms").mkdir(parents=True)
 
 
+# TODO: compress all the common options into a model / kwargs?
 def parse_extract_local_subtomograms(
     box_size: int,
     output_dir: Path,
@@ -494,6 +510,7 @@ def parse_extract_local_subtomograms(
     float16: bool = False,
     no_ctf: bool = False,
     no_circle_crop: bool = False,
+    no_ic: bool = False,
     crop_size: int = None,
     particles_starfile: Path = None,
     trajectories_starfile: Path = None,
@@ -528,6 +545,7 @@ def parse_extract_local_subtomograms(
         float16=float16,
         no_ctf=no_ctf,
         no_circle_crop=no_circle_crop,
+        no_ic=no_ic,
         output_dir=output_dir,
         particles_starfile=particles_starfile,
         trajectories_starfile=trajectories_starfile,
@@ -541,6 +559,7 @@ def parse_extract_local_subtomograms(
         )
 
 
+# TODO: test that this actually works
 def parse_extract_local_copick_subtomograms(
     box_size: int,
     output_dir: Path,
@@ -552,11 +571,13 @@ def parse_extract_local_copick_subtomograms(
     float16: bool = False,
     no_ctf: bool = False,
     no_circle_crop: bool = False,
+    no_ic: bool = False,
     copick_run_names: list[str] = None,
     crop_size: int = None,
     tiltseries_relative_dir: Path = None,
     tomograms_starfile: Path = None,
     overwrite: bool = False,
+    dry_run: bool = False,
 ) -> None:
     start_time = time.time()
     validate_and_setup(box_size, output_dir, crop_size, overwrite)
@@ -582,6 +603,11 @@ def parse_extract_local_copick_subtomograms(
     )
     particles_path = output_dir / "particles.star"
     starfile.write({"optics": optics_df, "particles": particles_df}, particles_path)
+    logger.info(f"Generated particles star file at {particles_path} with {len(particles_df)} particles.")
+
+    if dry_run:
+        logger.info("Dry run enabled, skipping subtomogram extraction.")
+        return
 
     parse_extract_local_subtomograms(
         box_size=box_size,
@@ -589,6 +615,7 @@ def parse_extract_local_copick_subtomograms(
         float16=float16,
         no_ctf=no_ctf,
         no_circle_crop=no_circle_crop,
+        no_ic=no_ic,
         output_dir=output_dir,
         crop_size=crop_size,
         particles_starfile=particles_path,
@@ -613,6 +640,7 @@ def parse_extract_data_portal_subtomograms(
     float16: bool = False,
     no_ctf: bool = False,
     no_circle_crop: bool = False,
+    no_ic: bool = False,
     crop_size: int = None,
     dry_run: bool = False,
     overwrite: bool = False,
@@ -621,7 +649,7 @@ def parse_extract_data_portal_subtomograms(
     start_time = time.time()
     validate_and_setup(box_size, output_dir, crop_size, overwrite, dry_run)
 
-    particles_path, tomograms_path, _ = cdp_generate_starfiles(
+    particles_path, tomograms_path, tiltseries_folder = cdp_generate.generate_starfiles(
         output_dir=output_dir,
         **data_portal_args,
     )
@@ -634,6 +662,11 @@ def parse_extract_data_portal_subtomograms(
     if not tomograms_path.exists():
         raise ValueError(
             f"Starfile generation failed. Expected tomograms star file at {tomograms_path} does not exist."
+        )
+
+    if not tiltseries_folder.exists() or not any(tiltseries_folder.glob("*.star")):
+        raise ValueError(
+            f"Starfile generation failed. Expected tiltseries star files in {tiltseries_folder} do not exist."
         )
 
     if dry_run:
@@ -653,6 +686,7 @@ def parse_extract_data_portal_subtomograms(
         float16=float16,
         no_ctf=no_ctf,
         no_circle_crop=no_circle_crop,
+        no_ic=no_ic,
         output_dir=output_dir,
     )
 
@@ -673,6 +707,7 @@ def parse_extract_data_portal_copick_subtomograms(
     float16: bool = False,
     no_ctf: bool = False,
     no_circle_crop: bool = False,
+    no_ic: bool = False,
     copick_run_names: list[str] = None,
     crop_size: int = None,
     dry_run: bool = False,
@@ -685,11 +720,25 @@ def parse_extract_data_portal_copick_subtomograms(
         picks = get_copick_picks(copick_config, copick_name, copick_session_id, copick_user_id, copick_run_names)
         copick_run_names = [p.run.name for p in picks]
 
-    particles_path, tomograms_path, _ = cdp_generate_starfiles(
-        output_dir=output_dir,
-        no_particles_starfile=True,  # particles will come from copick project
+    # generate a tomograms starfile with cdp_generate
+    optics_df, tomograms_path, tiltseries_folder = cdp_generate.generate_tomograms_from_runs(
         run_ids=copick_run_names,
+        output_dir=output_dir,
     )
+
+    # add optics and copick particles to particles.star file
+    particles_df = copick_picks_to_starfile(
+        copick_config,
+        copick_name,
+        copick_session_id,
+        copick_user_id,
+        copick_run_names,
+        optics_df,
+        data_portal_runs=True,
+    )
+    particles_path = output_dir / "particles.star"
+    starfile.write({"optics": optics_df, "particles": particles_df}, particles_path)
+    logger.info(f"Generated particles star file at {particles_path} with {len(particles_df)} particles.")
 
     if not particles_path.exists():
         raise ValueError(
@@ -701,18 +750,10 @@ def parse_extract_data_portal_copick_subtomograms(
             f"Starfile generation failed. Expected tomograms star file at {tomograms_path} does not exist."
         )
 
-    # add copick particles to particles.star file
-    optics_df = starfile.read(particles_path)["optics"]
-    particles_df = copick_picks_to_starfile(
-        copick_config,
-        copick_name,
-        copick_session_id,
-        copick_user_id,
-        copick_run_names,
-        optics_df,
-        data_portal_runs=True,
-    )
-    starfile.write({"optics": optics_df, "particles": particles_df}, particles_path)
+    if not tiltseries_folder.exists() or not any(tiltseries_folder.glob("*.star")):
+        raise ValueError(
+            f"Starfile generation failed. Expected tiltseries star files in {tiltseries_folder} do not exist."
+        )
 
     if dry_run:
         logger.info(
@@ -731,6 +772,7 @@ def parse_extract_data_portal_copick_subtomograms(
         float16=float16,
         no_ctf=no_ctf,
         no_circle_crop=no_circle_crop,
+        no_ic=no_ic,
         output_dir=output_dir,
     )
 
@@ -754,18 +796,21 @@ def cmd_local(**kwargs):
     parse_extract_local_subtomograms(**kwargs)
 
 
-@cli.command("local-copick", help="Extract subtomograms from local files (tiltseries) with copick particles.")
+@cli.command("copick-local", help="Extract subtomograms from local files (tiltseries) with copick particles.")
 @cli_options.local_shared_options()
 @cli_options.copick_options()
 @cli_options.common_options()
+@cli_options.dry_run_option
 def cmd_local_copick(**kwargs):
     setup_logging(debug=kwargs.pop("debug", False))
+    kwargs["copick_run_names"] = cli_options.flatten(kwargs["copick_run_names"])
     parse_extract_local_copick_subtomograms(**kwargs)
 
 
 @cli.command("data-portal", help="Extract subtomograms from the CryoET Data Portal.")
 @cli_options.common_options()
 @cli_options.data_portal_options()
+@cli_options.dry_run_option
 def cmd_data_portal(**kwargs):
     setup_logging(debug=kwargs.pop("debug", False))
     kwargs = cli_options.flatten_data_portal_args(kwargs)
@@ -773,11 +818,13 @@ def cmd_data_portal(**kwargs):
 
 
 # TODO: write tests
-@cli.command("data-portal-copick", help="Extract subtomograms from CryoET Data Portal runs with copick particles.")
+@cli.command("copick-data-portal", help="Extract subtomograms from CryoET Data Portal runs with copick particles.")
 @cli_options.common_options()
 @cli_options.copick_options()
+@cli_options.dry_run_option
 def cmd_data_portal_copick(**kwargs):
     setup_logging(debug=kwargs.pop("debug", False))
+    kwargs["copick_run_names"] = cli_options.flatten(kwargs["copick_run_names"])
     parse_extract_data_portal_copick_subtomograms(**kwargs)
 
 

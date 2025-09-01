@@ -2,11 +2,14 @@
 Helper functions for calculating the CTF and dose-weighting filters in Fourier space.
 """
 
+import logging
 from functools import cache
 
 import numpy as np
 
 from core.projection import project_3d_point_to_2d
+
+logger = logging.getLogger(__name__)
 
 
 def get_depth_offset(tilt_projection_matrix: np.ndarray, coordinate: np.ndarray) -> float:
@@ -23,8 +26,6 @@ def _ctf_template(
     handedness: int,
     tiltseries_pixel_size: float,
     phase_shift: float,
-    defocus_u: float,
-    defocus_v: float,
     defocus_angle: float,
     bfactor: float,
     box_size: int,
@@ -81,9 +82,11 @@ def calculate_ctf(
     defocus_v: float,
     defocus_angle: float,
     dose: float,
+    ctf_scalefactor: float,
     bfactor: float,
     box_size: int,
     bin: int,
+    debug: bool = False,
 ) -> np.ndarray:
     """
     Calculates the CTF for a given particle and tilt in a tomogram.
@@ -94,7 +97,7 @@ def calculate_ctf(
         tilt_projection_matrix (np.ndarray): The projection matrix for the tilt, a 4x4 numpy array (3D affine transformation matrix).
         voltage (float): The accelerating voltage in kV.
         spherical_aberration (float): The spherical aberration in mm.
-        amplitude_contrast (float): The amplitude contrast in percent.
+        amplitude_contrast (float): The amplitude contrast [0, 1].
         handedness (int): The handedness of the tomogram, either 1 or -1.
         tiltseries_pixel_size (float): The tiltseries pixel size in Angstroms.
         phase_shift (float): The phase shift in degrees.
@@ -123,6 +126,10 @@ def calculate_ctf(
     defocus_offset = handedness * depth_offset
     defocus_u_corrected = defocus_u + defocus_offset
     defocus_v_corrected = defocus_v + defocus_offset
+    if debug:
+        logger.debug(
+            f"Original Defocus U: {defocus_u}, Original Defocus V: {defocus_v}, Corrected Defocus U: {defocus_u_corrected}, Corrected Defocus V: {defocus_v_corrected}, Depth offset: {depth_offset}"
+        )
 
     K1, K2, K3, K5, ky_grid, kx_grid, u2, u4, Q, Q_t = _ctf_template(
         voltage,
@@ -131,8 +138,6 @@ def calculate_ctf(
         handedness,
         tiltseries_pixel_size,
         phase_shift,
-        defocus_u,
-        defocus_v,
         defocus_angle,
         bfactor,
         box_size,
@@ -145,14 +150,21 @@ def calculate_ctf(
     Axx = A[0, 0]
     Axy = A[0, 1]
     Ayy = A[1, 1]
+    if debug:
+        logger.debug(f"CTF astigmatism: {Axx}, {Axy}, {Ayy}")
 
     # TODO: support gamma offset here
     # phase shift (gamma)
     gamma = K1 * (Axx * kx_grid**2 + 2.0 * Axy * kx_grid * ky_grid + Ayy * ky_grid**2) + K2 * u4 - K5 - K3
+    if debug:
+        logger.debug(f"K1: {K1}, K2: {K2}, K3: {K3}, K5: {K5}")
+        logger.debug(f"Gamma: {gamma}")
     ctf = -1 * np.sin(gamma)
 
-    # dose weighting
+    # dose weighting, which doesn't seem to be done on the CTF?
     # ctf *= calculate_dose_weights(u2, dose, bfactor)
+
+    # ctf *= ctf_scalefactor
 
     mask = np.abs(ctf) < 1e-8
     ctf[mask] = np.sign(ctf[mask]) * 1e-8

@@ -23,16 +23,12 @@ def suppress_noisy_loggers(loggers, level=logging.WARNING):
 
 
 def setup_logging(debug: bool = False):
-    logger = logging.getLogger()
-
-    if not logger.handlers:
-        handler = TqdmLoggingHandler()
-        handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-        logger.addHandler(handler)
-
-    if debug:
-        logger.setLevel(logging.DEBUG)
-    logger.propagate = False
+    logging.basicConfig(
+        level=logging.DEBUG if debug else logging.INFO,
+        handlers=[TqdmLoggingHandler()],
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        force=True,
+    )
 
     suppress_noisy_loggers(NOISY_LOGGERS)
 

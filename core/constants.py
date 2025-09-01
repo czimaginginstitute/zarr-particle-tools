@@ -16,6 +16,7 @@ TILTSERIES_MRCS_PLACEHOLDER = "tiltseries/tiltseries_placeholder.mrcs"
 TILTSERIES_URI_RELION_COLUMN = "tomoTiltSeriesURI"
 DEFAULT_AMPLITUDE_CONTRAST = 0.07
 TOMO_HAND_DEFAULT_VALUE = -1
+# TODO: actually validate against all these columns variables
 PARTICLES_DF_COLUMNS = [
     "rlnTomoName",
     "rlnCoordinateX",
@@ -29,6 +30,8 @@ PARTICLES_DF_COLUMNS = [
     "rlnCenteredCoordinateZAngst",
     "rlnOpticsGroupName",
     "rlnOpticsGroup",
+]
+PARTICLES_DF_CDP_COLUMNS = [
     "cdpAnnotationShapeId",
 ]
 # NOTE: tomograms.star columns are based on OPTICS_DF_COLUMNS, but with additional columns for tomogram metadata (see get_tomograms_df)

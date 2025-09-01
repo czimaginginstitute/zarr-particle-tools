@@ -1,6 +1,7 @@
 # TODO: fuzzy matching for name fields?
 # TODO: globbing for all fields?
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -18,7 +19,7 @@ def compose_options(opts: list[click.Option]) -> callable:
 
 def common_options():
     opts = [
-        click.option("--box-size", type=int, required=False, help="Box size of the extracted subtomograms in pixels."),
+        click.option("--box-size", type=int, help="Box size of the extracted subtomograms in pixels."),
         click.option(
             "--crop-size",
             type=int,
@@ -33,6 +34,7 @@ def common_options():
         ),
         click.option("--no-ctf", is_flag=True, help="Disable CTF premultiplication."),
         click.option("--no-circle-crop", is_flag=True, help="Disable circular cropping of the subtomograms."),
+        click.option("--no-ic", is_flag=True, help="Do not invert contrast of the subtomograms."),
         click.option(
             "--output-dir",
             type=click.Path(file_okay=False, path_type=Path),
@@ -89,6 +91,14 @@ def local_shared_options():
     ]
 
     return compose_options(opts)
+
+
+def dry_run_option(f):
+    return click.option(
+        "--dry-run",
+        is_flag=True,
+        help="If set, do not extract subtomograms, only generate the starfiles needed for extraction.",
+    )(f)
 
 
 def copick_options():
@@ -166,13 +176,6 @@ def data_portal_options():
             help="If set, do not extract subtomograms, only generate the starfiles needed for extraction.",
         )
     )
-    options.append(
-        click.option(
-            "--no-particles-starfile",
-            is_flag=True,
-            help="If set, do not generate the particles.star file.",
-        )
-    )
 
     for arg, py_type in DATA_PORTAL_ARGS:
         field_name = arg.removeprefix("--").split("-")[0]
@@ -195,11 +198,18 @@ def data_portal_options():
     return compose_options(options)
 
 
+def flatten(val: Any) -> list:
+    "Flattens a list of lists to a single list."
+    if isinstance(val, (list, tuple)) and val and isinstance(val[0], (list, tuple)):
+        return [item for chunk in val for item in chunk]
+    else:
+        return val
+
+
 def flatten_data_portal_args(kwargs: dict) -> dict:
     "Flattens the data portal arguments from lists of lists to a single list."
     for ref in DATA_PORTAL_ARG_REFS:
-        val = kwargs.get(ref)
-        if isinstance(val, (list, tuple)) and val and isinstance(val[0], list):
-            kwargs[ref] = [item for chunk in val for item in chunk]
+        if val := kwargs.get(ref):
+            kwargs[ref] = flatten(val)
 
     return kwargs

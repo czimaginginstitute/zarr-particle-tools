@@ -86,7 +86,7 @@ To ensure that the subtomogram extraction matches RELION's subtomogram extractio
 - Does not support min_frames or max_dose flags
 - Does not write any other *.mrcs files other than the 2D stacks themselves
 - Does not support defocus slope (rlnTomoDefocusSlope)
-- Does not support particle subtomogram orientation (rlnTomoSubtomogramRot, rlnTomoSubtomogramTilt, rlnTomoSubtomogramPsi)
+- Does not (yet) support particle subtomogram orientation (rlnTomoSubtomogramRot, rlnTomoSubtomogramTilt, rlnTomoSubtomogramPsi)
 - Does not support --apply_orientations
 - Does not support --dont_apply_offsets
 - Does not support CTF_BFACTOR (rlnCtfBfactor) or CTF_BFACTOR_PERELECTRONDOSE (rlnCtfBfactorPerElectronDose)
@@ -95,6 +95,7 @@ To ensure that the subtomogram extraction matches RELION's subtomogram extractio
 
 ## Project roadmap
 - [ ] TEST: Support multiple optics groups 
+- [ ] Support particle subtomogram orientation
 - [ ] Write tests for generating star files and pulling from the CryoET Data Portal
 - [ ] Add copick support
 - [ ] Notify teamtomo of this work and possible integration into their codebase
