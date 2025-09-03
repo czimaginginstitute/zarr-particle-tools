@@ -76,29 +76,39 @@ class DataReader:
                 with mrcfile.mmap(self.locator, mode="r") as mrc:
                     return mrc.data
 
-    def slice_data(self, key) -> None:
+    def slice_data(self, key: tuple[int, int, int, int, int]) -> None:
         """
         For MRC data, this method is a no-op since MRC files are loaded fully into memory.
         For Zarr data, this method adds a slice (lazily) to the cache if it doesn't exist yet.
             Data slice will be computed the next time compute_crops() is called.
+
+        Args:
+            key (tuple[int, int, int, int, int]): The key representing the slice to add. Format is (section, y_start, y_end, x_start, x_end). Very specific because it needs to be compatible with multiprocessing and slice objects are not hashable in Python<3.12.
         """
+        # to properly slice data
+        key_slice = (key[0], slice(key[1], key[2]), slice(key[3], key[4]))
         if not self.is_zarr or isinstance(self.data, np.ndarray):
             return
 
         if type(self.zarr_data_crops.get(key)) is np.ndarray:
             return
 
-        self.zarr_data_crops[key] = self.data[key]
+        self.zarr_data_crops[key] = self.data[key_slice]
 
-    def __getitem__(self, key):
+    def __getitem__(self, key: tuple[int, int, int, int, int]) -> np.ndarray | da.Array:
         """
         Allows slicing the data like a NumPy array.
         If the data is a MRC file, it returns a NumPy array.
         If the data is a Zarr store, it returns a Dask array if not computed yet,
         or a NumPy array if computed.
+
+        Args:
+            key (tuple[int, int, int, int, int]): The key representing the slice to add. Format is (section, y_start, y_end, x_start, x_end). Very specific because it needs to be compatible with multiprocessing and slice objects are not hashable in Python<3.12.
         """
+        # to properly slice data
+        key_slice = (key[0], slice(key[1], key[2]), slice(key[3], key[4]))
         if not self.is_zarr or isinstance(self.data, np.ndarray):
-            return self.data[key]
+            return self.data[key_slice]
 
         self.slice_data(key)
         return self.zarr_data_crops[key]

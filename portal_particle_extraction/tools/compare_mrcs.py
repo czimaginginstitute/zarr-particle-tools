@@ -25,7 +25,7 @@ import mrcfile
 import numpy as np
 import seaborn as sns
 
-from cli.types import INT_LIST
+from portal_particle_extraction.cli.types import INT_LIST
 
 
 def print_statistics(name: str, data: np.ndarray, is_percent: bool = False) -> None:
@@ -296,12 +296,12 @@ if __name__ == "__main__":
 
 
 # Example usage:
-# python -m tools.compare_mrcs \
+# python -m portal_particle_extraction.tools.compare_mrcs \
 # --mock-mrc-file tests/output/unroofing_noctf_nocirclecrop/Subtomograms/session1_16849/1_stack2d.mrcs \
 # --relion-mrc-file tests/data/relion_project_unroofing/relion_output_noctf_nocirclecrop/Subtomograms/session1_16849/1_stack2d.mrcs \
 # --sections 1,6,11,16,21,26,31
 
-# python -m tools.compare_mrcs \
+# python -m portal_particle_extraction.tools.compare_mrcs \
 # --mock-mrc-file tests/output/synthetic_baseline/Subtomograms/session1_TS_1/17_stack2d.mrcs \
 # --relion-mrc-file tests/data/relion_project_synthetic/relion_output_baseline/Subtomograms/session1_TS_1/17_stack2d.mrcs \
 # --sections 1,6,11,14,16,21,26,31

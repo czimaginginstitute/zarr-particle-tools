@@ -2,29 +2,28 @@
 name = "portal-particle-extraction"
 version = "0.1.0"
 description = "Subtomogram extraction from local files and the CryoET Data Portal"
-authors = [
-    {name = "Daniel Ji"},
-    {name = "Utz Ermel"}
-]
-license = {text = "MIT"}
+authors = [{ name = "Daniel Ji" }, { name = "Utz Ermel" }]
+license = { text = "MIT" }
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
-    "starfile",
-    "numpy",
-    "pandas",
-    "mrcfile",
-    "scipy",
-    "tqdm",
-    "matplotlib",
-    "seaborn",
-    "pytest",
-    "s3fs",
-    "cryoet_data_portal",
-    "cryoet_alignment",
-    "dask",
-    "click",
+  "click",
+  "copick",
+  "cryoet_alignment",
+  "cryoet_data_portal",
+  "dask",
+  "mrcfile",
+  "numpy",
+  "pandas",
+  "pytest",
+  "s3fs",
+  "scipy",
+  "starfile",
+  "tqdm",
 ]
+[project.optional-dependencies]
+dev = ["pre-commit", "ruff", "black", "matplotlib", "seaborn"]
+pipeliner = ["pipeliner @ git+https://gitlab.com/ccpem/ccpem-pipeliner.git"]
 
 [tool.ruff]
 line-length = 120
@@ -32,9 +31,7 @@ target-version = "py39"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
-ignore = [
-  "E501",
-]
+ignore = ["E501"]
 
 [tool.black]
 line-length = 120

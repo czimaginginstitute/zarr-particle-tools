@@ -25,9 +25,9 @@ import starfile
 from scipy.spatial.transform import Rotation
 from tqdm import tqdm
 
-import cli.options as cli_options
-import generate.cdp_cache as cdp_cache
-from core.constants import (
+import portal_particle_extraction.cli.options as cli_options
+import portal_particle_extraction.generate.cdp_cache as cdp_cache
+from portal_particle_extraction.core.constants import (
     DEFAULT_AMPLITUDE_CONTRAST,
     INDIVIDUAL_TOMOGRAM_ALN_COLUMNS,
     INDIVIDUAL_TOMOGRAM_COLUMNS,
@@ -40,9 +40,9 @@ from core.constants import (
     TILTSERIES_URI_RELION_COLUMN,
     TOMO_HAND_DEFAULT_VALUE,
 )
-from core.data import get_data
-from core.helpers import get_filter, get_optics_group_name, get_tomo_name, setup_logging
-from core.projection import in_plane_rotation_to_tilt_axis_rotation
+from portal_particle_extraction.core.data import get_data
+from portal_particle_extraction.core.helpers import get_filter, get_optics_group_name, get_tomo_name, setup_logging
+from portal_particle_extraction.core.projection import in_plane_rotation_to_tilt_axis_rotation
 
 logger = logging.getLogger(__name__)
 
@@ -699,7 +699,8 @@ def generate_starfiles(
 )
 @click.option("--debug", is_flag=True, help="Enable debug logging.")
 def cli(**kwargs):
-    del kwargs["dry_run"]  # from main cli, not used here
+    if "dry_run" in kwargs:  # from main cli, not used here
+        del kwargs["dry_run"]
     debug = kwargs.pop("debug", False)
     setup_logging(debug)
     kwargs = cli_options.flatten_data_portal_args(kwargs)
@@ -710,4 +711,4 @@ if __name__ == "__main__":
     cli()
 
 # Example usage:
-# python -m generate.cdp_generate_starfiles --run-ids 16463 --annotation-names "cytosolic ribosome" --output-dir tests/output/data_portal_16363_ribosome
+# python -m portal_particle_extraction.generate.cdp_generate_starfiles --run-ids 16463 --annotation-names "cytosolic ribosome" --output-dir tests/output/data_portal_16363_ribosome

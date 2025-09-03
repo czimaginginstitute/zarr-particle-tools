@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from subtomo_extract import cli, extract_subtomograms
+from portal_particle_extraction.subtomo_extract import cli, extract_subtomograms
 
 DATASET_CONFIGS = {
     "synthetic": {

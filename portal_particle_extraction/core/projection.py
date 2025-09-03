@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from cryoet_alignment.io.aretomo3 import AreTomo3ALN
 
-from core.data import DataReader
+from portal_particle_extraction.core.data import DataReader
 
 
 def in_plane_rotation_to_tilt_axis_rotation(rotation_matrix: list[list[float]]) -> float:
@@ -270,13 +270,15 @@ def get_particle_crop_and_visibility(
         shift_x = x_start_px - x_start_px_float
         shift_y = y_start_px - y_start_px_float
 
-        slice_key = (
+        tiltseries_key = (
             section - 1,
-            slice(max(y_start_px, 0), min(y_end_px, tiltseries_y)),
-            slice(max(x_start_px, 0), min(x_end_px, tiltseries_x)),
+            max(y_start_px, 0),
+            min(y_end_px, tiltseries_y),
+            max(x_start_px, 0),
+            min(x_end_px, tiltseries_x),
         )
         # add it to the DataReader cache to be computed later
-        tiltseries_data.slice_data(slice_key)
+        tiltseries_data.slice_data(tiltseries_key)
 
         visible_sections.append(1)
         particle_data.append(
@@ -284,7 +286,7 @@ def get_particle_crop_and_visibility(
                 "particle_id": particle_id,
                 "coordinate": coordinate,
                 "section": section,
-                "tiltseries_slice_key": slice_key,
+                "tiltseries_key": tiltseries_key,
                 "subpixel_shift": (shift_y, shift_x),
                 "x_pre_padding": max(0, -x_start_px),
                 "y_pre_padding": max(0, -y_start_px),

@@ -1,7 +1,7 @@
 # TODO: Add support for a consolidated tiltseries star file (where all the tiltseries entries are just in the tomograms.star file)
 """
 Primary entry point for extracting subtomograms from local files and the CryoET Data Portal.
-Run python subtomo_extract.py --help for usage instructions.
+Run python -m portal_particle_extraction.subtomo_extract --help for usage instructions.
 """
 
 import logging
@@ -20,21 +20,21 @@ import starfile
 from scipy.ndimage import fourier_shift
 from tqdm import tqdm
 
-import cli.options as cli_options
-import generate.cdp_generate_starfiles as cdp_generate
-from core.constants import OPTICS_DF_COLUMNS, TILTSERIES_URI_RELION_COLUMN
-from core.ctf import calculate_ctf
-from core.data import DataReader
-from core.dose import calculate_dose_weight_image
-from core.helpers import setup_logging
-from core.mask import circular_mask, circular_soft_mask
-from core.projection import (
+import portal_particle_extraction.cli.options as cli_options
+import portal_particle_extraction.generate.cdp_generate_starfiles as cdp_generate
+from portal_particle_extraction.core.constants import OPTICS_DF_COLUMNS, TILTSERIES_URI_RELION_COLUMN
+from portal_particle_extraction.core.ctf import calculate_ctf
+from portal_particle_extraction.core.data import DataReader
+from portal_particle_extraction.core.dose import calculate_dose_weight_image
+from portal_particle_extraction.core.helpers import setup_logging
+from portal_particle_extraction.core.mask import circular_mask, circular_soft_mask
+from portal_particle_extraction.core.projection import (
     calculate_projection_matrix_from_starfile_df,
     fourier_crop,
     get_particle_crop_and_visibility,
     get_particles_to_tiltseries_coordinates,
 )
-from generate.copick_generate_starfiles import copick_picks_to_starfile, get_copick_picks
+from portal_particle_extraction.generate.copick_generate_starfiles import copick_picks_to_starfile, get_copick_picks
 
 logger = logging.getLogger(__name__)
 
@@ -47,15 +47,17 @@ def update_particles_df(
     updated_particles_df = updated_particles_df.drop(
         columns=["rlnCoordinateX", "rlnCoordinateY", "rlnCoordinateZ"], errors="ignore"
     )
-    if "rlnTomoParticleName" not in updated_particles_df.columns and "rlnImageName" not in updated_particles_df.columns:
+    if "rlnTomoParticleName" not in updated_particles_df.columns:
         updated_particles_df = updated_particles_df.reset_index(drop=True)
         updated_particles_df.index += 1  # increment index by 1 to match RELION's 1-indexing
         updated_particles_df["rlnTomoParticleName"] = (
             updated_particles_df["rlnTomoName"] + "/" + updated_particles_df.index.astype(str)
         )
-        updated_particles_df["rlnImageName"] = updated_particles_df.index.to_series().apply(
-            lambda idx: (output_folder / f"{idx}_stack2d.mrcs").resolve()
-        )
+    # set index to be based on rlnTomoParticleName for easier processing
+    updated_particles_df.index = updated_particles_df["rlnTomoParticleName"].str.split("/").str[-1].astype(int)
+    updated_particles_df["rlnImageName"] = updated_particles_df.index.to_series().apply(
+        lambda idx: (output_folder / f"{idx}_stack2d.mrcs").resolve()
+    )
     # drop rows by particle_id that were skipped
     updated_particles_df = updated_particles_df.drop(
         updated_particles_df.index[
@@ -203,13 +205,13 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
 
         tilt_stack = np.zeros((len(particle_data), pre_bin_box_size, pre_bin_box_size), dtype=np.float32)
         for tilt in range(len(particle_data)):
-            tiltseries_slice_key = particle_data[tilt]["tiltseries_slice_key"]
+            tiltseries_key = particle_data[tilt]["tiltseries_key"]
             x_pre_padding = particle_data[tilt]["x_pre_padding"]
             y_pre_padding = particle_data[tilt]["y_pre_padding"]
             x_post_padding = particle_data[tilt]["x_post_padding"]
             y_post_padding = particle_data[tilt]["y_post_padding"]
             padded_crop = np.pad(
-                tiltseries_data[tiltseries_slice_key],
+                tiltseries_data[tiltseries_key],
                 ((y_pre_padding, y_post_padding), (x_pre_padding, x_post_padding)),
                 mode="edge",
             )
@@ -219,7 +221,6 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
         new_fourier_tilt_stack = np.zeros((len(particle_data), box_size, box_size // 2 + 1), dtype=np.complex64)
         for tilt in range(len(particle_data)):
             section: int = particle_data[tilt]["section"]
-            tiltseries_slice_key: tuple[int, slice, slice] = particle_data[tilt]["tiltseries_slice_key"]
             subpixel_shift: tuple[int, int] = particle_data[tilt]["subpixel_shift"]
             coordinate: np.ndarray = particle_data[tilt]["coordinate"]
 
@@ -338,7 +339,7 @@ def write_starfiles(
 
 def extract_subtomograms(
     box_size: int,
-    output_dir: Path,
+    output_dir: Union[str, Path],
     particles_starfile: Path,
     tomograms_starfile: Path,
     bin: int = 1,
@@ -370,6 +371,8 @@ def extract_subtomograms(
         tomograms_df = tomograms_data["global"]
     else:
         tomograms_df = tomograms_data
+    if not tiltseries_relative_dir:
+        tiltseries_relative_dir = Path("./")  # Default to current directory
 
     # apply alignment rlnOriginXAngst/YAngst/ZAngst to rlnCenteredCoordinateXAngst/YAngst/ZAngst, subtract to follow RELION's convention
     if (
@@ -404,9 +407,11 @@ def extract_subtomograms(
 
         filtered_particles_df = particles_df[particles_df["rlnTomoName"] == tiltseries_row_entry["rlnTomoName"]]
         if filtered_particles_df.empty:
-            raise ValueError(
+            logger.warning(
                 f"No particles found for tomogram {tiltseries_row_entry['rlnTomoName']} in {particles_starfile}. Please check the particles star file."
             )
+            return None
+
         filtered_trajectories_dict = None
         if trajectories_dict:
             particle_names = filtered_particles_df["rlnTomoParticleName"].tolist()
@@ -437,6 +442,8 @@ def extract_subtomograms(
         )
 
     args_list = [build_args(tiltseries_row_entry) for _, tiltseries_row_entry in tomograms_df.iterrows()]
+    # filter out empty or invalid entries
+    args_list = [args for args in args_list if args is not None]
 
     # do actual subtomogram extraction & .mrcs file creation here
     total_skipped_count = 0
@@ -472,11 +479,16 @@ def extract_subtomograms(
 
 def validate_and_setup(
     box_size: int,
-    output_dir: Path,
+    output_dir: Union[str, Path],
+    particles_starfile: Union[str, Path, None] = None,
+    trajectories_starfile: Union[str, Path, None] = None,
+    tiltseries_relative_dir: Union[str, Path, None] = None,
+    tomograms_starfile: Union[str, Path, None] = None,
+    optimisation_set_starfile: Union[str, Path, None] = None,
     crop_size: int = None,
     overwrite: bool = False,
     dry_run: bool = False,
-) -> None:
+) -> tuple[Path, Path, Path, Path, Path, Path]:
     if not dry_run and box_size is None:
         raise ValueError("Box size must be specified.")
 
@@ -491,6 +503,19 @@ def validate_and_setup(
                 f"Crop size cannot be greater than box size, got crop size {crop_size} and box size {box_size}."
             )
 
+    output_dir = Path(output_dir) if isinstance(output_dir, str) else output_dir
+    particles_starfile = Path(particles_starfile) if isinstance(particles_starfile, str) else particles_starfile
+    trajectories_starfile = (
+        Path(trajectories_starfile) if isinstance(trajectories_starfile, str) else trajectories_starfile
+    )
+    tiltseries_relative_dir = (
+        Path(tiltseries_relative_dir) if isinstance(tiltseries_relative_dir, str) else tiltseries_relative_dir
+    )
+    tomograms_starfile = Path(tomograms_starfile) if isinstance(tomograms_starfile, str) else tomograms_starfile
+    optimisation_set_starfile = (
+        Path(optimisation_set_starfile) if isinstance(optimisation_set_starfile, str) else optimisation_set_starfile
+    )
+
     if output_dir.exists() and any(output_dir.iterdir()) and not overwrite:
         raise FileExistsError(
             f"Output directory {output_dir} already exists and is not empty. Use --overwrite to overwrite existing files."
@@ -501,11 +526,20 @@ def validate_and_setup(
 
     (output_dir / "Subtomograms").mkdir(parents=True)
 
+    return (
+        output_dir,
+        particles_starfile,
+        trajectories_starfile,
+        tiltseries_relative_dir,
+        tomograms_starfile,
+        optimisation_set_starfile,
+    )
+
 
 # TODO: compress all the common options into a model / kwargs?
 def parse_extract_local_subtomograms(
     box_size: int,
-    output_dir: Path,
+    output_dir: Union[str, Path],
     bin: int = 1,
     float16: bool = False,
     no_ctf: bool = False,
@@ -521,7 +555,24 @@ def parse_extract_local_subtomograms(
     no_logging: bool = False,
 ) -> None:
     start_time = time.time()
-    validate_and_setup(box_size, output_dir, crop_size, overwrite)
+    (
+        output_dir,
+        particles_starfile,
+        trajectories_starfile,
+        tiltseries_relative_dir,
+        tomograms_starfile,
+        optimisation_set_starfile,
+    ) = validate_and_setup(
+        box_size=box_size,
+        crop_size=crop_size,
+        overwrite=overwrite,
+        output_dir=output_dir,
+        particles_starfile=particles_starfile,
+        trajectories_starfile=trajectories_starfile,
+        tiltseries_relative_dir=tiltseries_relative_dir,
+        tomograms_starfile=tomograms_starfile,
+        optimisation_set_starfile=optimisation_set_starfile,
+    )
 
     if optimisation_set_starfile and (particles_starfile or tomograms_starfile or trajectories_starfile):
         raise ValueError(
@@ -555,14 +606,14 @@ def parse_extract_local_subtomograms(
     end_time = time.time()
     if not no_logging:
         logger.info(
-            f"Subtomogram extraction completed in {end_time - start_time:.2f} seconds. Extracted {particles_count} particles from {individual_tiltseries_count} tiltseries, skipped {total_skipped_count} particles due to out-of-bounds coordinates."
+            f"Subtomogram extraction completed in {end_time - start_time:.2f} seconds. Extracted {particles_count} particles from {individual_tiltseries_count} tiltseries, skipped {total_skipped_count} particles due to out-of-bounds coordinates. Wrote to {output_dir}."
         )
 
 
 # TODO: test that this actually works
 def parse_extract_local_copick_subtomograms(
     box_size: int,
-    output_dir: Path,
+    output_dir: Union[str, Path],
     copick_config: Path,
     copick_name: str,
     copick_session_id: str,
@@ -580,7 +631,15 @@ def parse_extract_local_copick_subtomograms(
     dry_run: bool = False,
 ) -> None:
     start_time = time.time()
-    validate_and_setup(box_size, output_dir, crop_size, overwrite)
+    output_dir, _, _, tiltseries_relative_dir, tomograms_starfile, _ = validate_and_setup(
+        box_size=box_size,
+        crop_size=crop_size,
+        overwrite=overwrite,
+        output_dir=output_dir,
+        tiltseries_relative_dir=tiltseries_relative_dir,
+        tomograms_starfile=tomograms_starfile,
+        dry_run=dry_run,
+    )
 
     if copick_run_names is None:
         picks = get_copick_picks(copick_config, copick_name, copick_session_id, copick_user_id, copick_run_names)
@@ -629,12 +688,12 @@ def parse_extract_local_copick_subtomograms(
 
     end_time = time.time()
     logger.info(
-        f"Subtomogram extraction completed in {end_time - start_time:.2f} seconds. Extracted {len(particles_df)} particles from {len(tomograms_df)} tiltseries."
+        f"Subtomogram extraction completed in {end_time - start_time:.2f} seconds. Extracted {len(particles_df)} particles from {len(tomograms_df)} tiltseries. Wrote to {output_dir}."
     )
 
 
 def parse_extract_data_portal_subtomograms(
-    output_dir: Path,
+    output_dir: Union[str, Path],
     box_size: int = None,
     bin: int = 1,
     float16: bool = False,
@@ -647,7 +706,13 @@ def parse_extract_data_portal_subtomograms(
     **data_portal_args,
 ) -> None:
     start_time = time.time()
-    validate_and_setup(box_size, output_dir, crop_size, overwrite, dry_run)
+    output_dir, _, _, _, _, _ = validate_and_setup(
+        box_size=box_size,
+        crop_size=crop_size,
+        overwrite=overwrite,
+        output_dir=output_dir,
+        dry_run=dry_run,
+    )
 
     particles_path, tomograms_path, tiltseries_folder = cdp_generate.generate_starfiles(
         output_dir=output_dir,
@@ -692,12 +757,12 @@ def parse_extract_data_portal_subtomograms(
 
     end_time = time.time()
     logger.info(
-        f"Subtomogram extraction completed in {end_time - start_time:.2f} seconds. Extracted {particles_count} particles from {individual_tiltseries_count} tiltseries, skipped {total_skipped_count} particles due to out-of-bounds coordinates."
+        f"Subtomogram extraction completed in {end_time - start_time:.2f} seconds. Extracted {particles_count} particles from {individual_tiltseries_count} tiltseries, skipped {total_skipped_count} particles due to out-of-bounds coordinates. Wrote to {output_dir}."
     )
 
 
 def parse_extract_data_portal_copick_subtomograms(
-    output_dir: Path,
+    output_dir: Union[str, Path],
     copick_config: Path,
     copick_name: str,
     copick_session_id: str,
@@ -714,7 +779,13 @@ def parse_extract_data_portal_copick_subtomograms(
     overwrite: bool = False,
 ) -> None:
     start_time = time.time()
-    validate_and_setup(box_size, output_dir, crop_size, overwrite, dry_run)
+    output_dir, _, _, _, _, _ = validate_and_setup(
+        box_size=box_size,
+        crop_size=crop_size,
+        overwrite=overwrite,
+        output_dir=output_dir,
+        dry_run=dry_run,
+    )
 
     if copick_run_names is None:
         picks = get_copick_picks(copick_config, copick_name, copick_session_id, copick_user_id, copick_run_names)
@@ -778,7 +849,7 @@ def parse_extract_data_portal_copick_subtomograms(
 
     end_time = time.time()
     logger.info(
-        f"Subtomogram extraction completed in {end_time - start_time:.2f} seconds. Extracted {particles_count} particles from {individual_tiltseries_count} tiltseries, skipped {total_skipped_count} particles due to out-of-bounds coordinates."
+        f"Subtomogram extraction completed in {end_time - start_time:.2f} seconds. Extracted {particles_count} particles from {individual_tiltseries_count} tiltseries, skipped {total_skipped_count} particles due to out-of-bounds coordinates. Wrote to {output_dir}."
     )
 
 

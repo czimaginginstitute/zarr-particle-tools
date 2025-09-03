@@ -14,7 +14,7 @@ Primary steps in subtomogram extraction are:
 
 Create a new conda environment if you'd like to keep this separate from your other Python environments:
 ```bash
-conda create -n portal-particle-extraction python=3.12
+conda create -n portal-particle-extraction python=3.11
 conda activate portal-particle-extraction
 ```
 
@@ -24,12 +24,12 @@ poetry install
 ```
 
 ## Example runs
-### See full options with `python subtomo_extract.py local --help` and `python subtomo_extract.py data-portal --help`. 
+### See full options with `python -m portal_particle_extraction.subtomo_extract local --help` and `python -m portal_particle_extraction.subtomo_extract data-portal --help`. 
 
 For RELION projects, a `--tiltseries-relative-dir` is not needed if this script is run from the RELION project directory root.
 
 ```
-python subtomo_extract.py local \
+python -m portal_particle_extraction.subtomo_extract local \
   --particles-starfile tests/data/relion_project_synthetic/particles.star \
   --tomograms-starfile tests/data/relion_project_synthetic/tomograms.star \
   --tiltseries-relative-dir tests/data/relion_project_synthetic/ \
@@ -38,7 +38,7 @@ python subtomo_extract.py local \
 ```
 
 ```
-python subtomo_extract.py local \
+python -m portal_particle_extraction.subtomo_extract local \
   --particles-starfile tests/data/relion_project_unroofing/particles.star \
   --tomograms-starfile tests/data/relion_project_unroofing/tomograms.star \
   --tiltseries-relative-dir tests/data/relion_project_unroofing/ \
@@ -47,7 +47,7 @@ python subtomo_extract.py local \
 ```
 
 ```
-python subtomo_extract.py local \
+python -m portal_particle_extraction.subtomo_extract local \
   --particles-starfile tests/data/relion_project_synthetic/particles.star \
   --tomograms-starfile tests/data/relion_project_synthetic/tomograms.star \
   --tiltseries-relative-dir tests/data/relion_project_synthetic/ \
@@ -56,7 +56,7 @@ python subtomo_extract.py local \
 ```
 
 ```
-python subtomo_extract.py data-portal \
+python -m portal_particle_extraction.subtomo_extract data-portal \
   --run-id 16463 \
   --annotation-names "ribosome" \
   --inexact-match \
@@ -65,7 +65,7 @@ python subtomo_extract.py data-portal \
 ```
 
 ```
-python subtomo_extract.py data-portal \
+python -m portal_particle_extraction.subtomo_extract data-portal \
   --run-id 17700 \
   --annotation-names "ferritin complex" \
   --ground-truth \
@@ -96,6 +96,7 @@ To ensure that the subtomogram extraction matches RELION's subtomogram extractio
 ## Project roadmap
 - [ ] TEST: Support multiple optics groups 
 - [ ] Support particle subtomogram orientation
+- [ ] Build primary entrypoints for package
 - [ ] Write tests for generating star files and pulling from the CryoET Data Portal
 - [ ] Add copick support
 - [ ] Notify teamtomo of this work and possible integration into their codebase

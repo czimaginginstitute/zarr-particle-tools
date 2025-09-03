@@ -7,7 +7,7 @@ from functools import cache
 
 import numpy as np
 
-from core.projection import project_3d_point_to_2d
+from portal_particle_extraction.core.projection import project_3d_point_to_2d
 
 logger = logging.getLogger(__name__)
 

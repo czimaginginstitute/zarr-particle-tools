@@ -5,7 +5,7 @@ from typing import Any
 
 import click
 
-from cli.types import PARAM_TYPE_FOR_TYPE, STR_LIST
+from portal_particle_extraction.cli.types import PARAM_TYPE_FOR_TYPE, STR_LIST
 
 
 def compose_options(opts: list[click.Option]) -> callable:
@@ -167,13 +167,6 @@ def data_portal_options():
             "--ground-truth",
             is_flag=True,
             help="If set, only particles from annotations marked as ground truth will be extracted.",
-        )
-    )
-    options.append(
-        click.option(
-            "--dry-run",
-            is_flag=True,
-            help="If set, do not extract subtomograms, only generate the starfiles needed for extraction.",
         )
     )
 

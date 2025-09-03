@@ -2,7 +2,7 @@ import logging
 
 from tqdm import tqdm
 
-from core.constants import NOISY_LOGGERS
+from portal_particle_extraction.core.constants import NOISY_LOGGERS
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ class TqdmLoggingHandler(logging.Handler):
             self.handleError(record)
 
 
-def suppress_noisy_loggers(loggers, level=logging.WARNING):
+def suppress_noisy_loggers(loggers, level=logging.ERROR):
     for name in loggers:
         logging.getLogger(name).setLevel(level)
 
