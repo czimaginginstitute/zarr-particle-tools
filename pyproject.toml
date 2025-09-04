@@ -40,3 +40,6 @@ target-version = ["py39"]
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+portal-particle-extraction = "portal_particle_extraction.subtomo_extract:cli"

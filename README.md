@@ -18,18 +18,18 @@ conda create -n portal-particle-extraction python=3.11
 conda activate portal-particle-extraction
 ```
 
-And then install via poetry:
+And then install:
 ```bash
-poetry install
+poetry install # or "pip install ." or "uv pip install ."
 ```
 
 ## Example runs
-### See full options with `python -m portal_particle_extraction.subtomo_extract local --help` and `python -m portal_particle_extraction.subtomo_extract data-portal --help`. 
+### See full options with `portal-particle-extraction local --help` and `portal-particle-extraction data-portal --help`. 
 
 For RELION projects, a `--tiltseries-relative-dir` is not needed if this script is run from the RELION project directory root.
 
 ```
-python -m portal_particle_extraction.subtomo_extract local \
+portal-particle-extraction local \
   --particles-starfile tests/data/relion_project_synthetic/particles.star \
   --tomograms-starfile tests/data/relion_project_synthetic/tomograms.star \
   --tiltseries-relative-dir tests/data/relion_project_synthetic/ \
@@ -38,7 +38,7 @@ python -m portal_particle_extraction.subtomo_extract local \
 ```
 
 ```
-python -m portal_particle_extraction.subtomo_extract local \
+portal-particle-extraction local \
   --particles-starfile tests/data/relion_project_unroofing/particles.star \
   --tomograms-starfile tests/data/relion_project_unroofing/tomograms.star \
   --tiltseries-relative-dir tests/data/relion_project_unroofing/ \
@@ -47,7 +47,7 @@ python -m portal_particle_extraction.subtomo_extract local \
 ```
 
 ```
-python -m portal_particle_extraction.subtomo_extract local \
+portal-particle-extraction local \
   --particles-starfile tests/data/relion_project_synthetic/particles.star \
   --tomograms-starfile tests/data/relion_project_synthetic/tomograms.star \
   --tiltseries-relative-dir tests/data/relion_project_synthetic/ \
@@ -56,7 +56,7 @@ python -m portal_particle_extraction.subtomo_extract local \
 ```
 
 ```
-python -m portal_particle_extraction.subtomo_extract data-portal \
+portal-particle-extraction data-portal \
   --run-id 16463 \
   --annotation-names "ribosome" \
   --inexact-match \
@@ -65,7 +65,7 @@ python -m portal_particle_extraction.subtomo_extract data-portal \
 ```
 
 ```
-python -m portal_particle_extraction.subtomo_extract data-portal \
+portal-particle-extraction data-portal \
   --run-id 17700 \
   --annotation-names "ferritin complex" \
   --ground-truth \

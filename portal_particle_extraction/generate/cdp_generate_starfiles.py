@@ -271,18 +271,21 @@ def get_particles_df_optics_df(annotation_files: list[cdp.AnnotationFile]) -> tu
     return optics_df, particles_df
 
 
-def get_tomograms_df(optics_df: pd.DataFrame) -> tuple[pd.DataFrame, list[tuple[int, int]]]:
+def get_tomograms_df(optics_df: pd.DataFrame, output_dir: Path) -> tuple[pd.DataFrame, list[tuple[int, int]]]:
     """
     Returns a dataframe for the tomograms.star file from the optics dataframe.
     Args:
         optics_df (pd.DataFrame): The optics dataframe containing the optics group information.
+        output_dir (Path): The directory where the tomograms star file will be saved.
     Returns:
         tuple: A tuple containing the tomograms dataframe and a list of alignment and voxel spacing IDs.
     """
     tomograms_df = optics_df.drop_duplicates()
     tomograms_df["rlnMicrographOriginalPixelSize"] = tomograms_df["rlnTomoTiltSeriesPixelSize"]
     tomograms_df["rlnTomoHand"] = TOMO_HAND_DEFAULT_VALUE
-    tomograms_df["rlnTomoTiltSeriesStarFile"] = tomograms_df["rlnTomoName"].apply(lambda x: f"tiltseries/{x}.star")
+    tomograms_df["rlnTomoTiltSeriesStarFile"] = tomograms_df["rlnTomoName"].apply(
+        lambda x: (output_dir / "tiltseries" / f"{x}.star").resolve()
+    )
 
     # add tomogram dimensions rlnTomoSizeX, rlnTomoSizeY, rlnTomoSizeZ
     # reliant on the fact that rlnTomoName is in the format of "run_WWWW_tiltseries_XXXX_alignment_YYYY_spacing_ZZZZ" (see get_tomo_name)
@@ -328,7 +331,7 @@ def generate_individual_tomogram_starfile(
             "rlnDefocusU": param.major_defocus,
             "rlnDefocusV": param.minor_defocus,
             "rlnDefocusAngle": param.astigmatic_angle,
-            "rlnPhaseShift": param.phase_shift,
+            "rlnPhaseShift": param.phase_shift * 180.0 / np.pi,  # match RELION deg convention
             "rlnCtfMaxResolution": param.max_resolution,
             "rlnMicrographPreExposure": frame.accumulated_dose,
         }
@@ -366,7 +369,7 @@ def generate_individual_tomogram_starfile(
     # reorder rows and columns to match RELION format
     individual_tomogram_df.sort_values(by="z_index", inplace=True)
     individual_tomogram_df["rlnMicrographName"] = individual_tomogram_df["z_index"].apply(
-        lambda x: f"{str(int(x))}@{TILTSERIES_MRCS_PLACEHOLDER}"
+        lambda x: f"{str(int(x))}@{(output_dir / TILTSERIES_MRCS_PLACEHOLDER).resolve()}"
     )
     individual_tomogram_df[TILTSERIES_URI_RELION_COLUMN] = tiltseries.s3_omezarr_dir
     individual_tomogram_df = individual_tomogram_df.drop(columns=["z_index"])
@@ -436,7 +439,7 @@ def generate_starfiles_from_annotation_files(
     """
     start_time = time.time()
     optics_df, particles_df = get_particles_df_optics_df(annotation_files)
-    tomograms_df, alignment_and_voxel_spacing_ids = get_tomograms_df(optics_df)
+    tomograms_df, alignment_and_voxel_spacing_ids = get_tomograms_df(optics_df, output_dir)
     _, tomo_names = generate_individual_tomogram_starfiles(alignment_and_voxel_spacing_ids, output_dir)
     # filter out invalid tomograms from optics, particles, and tomograms dataframes
     tomograms_df = tomograms_df[tomograms_df["rlnTomoName"].isin(tomo_names)]
@@ -518,7 +521,7 @@ def generate_tomograms_from_runs(run_ids: list[int], output_dir: Path) -> tuple[
 
     optics_df = get_optics_df_from_runs(run_ids)
 
-    tomograms_df, alignment_and_voxel_spacing_ids = get_tomograms_df(optics_df)
+    tomograms_df, alignment_and_voxel_spacing_ids = get_tomograms_df(optics_df, output_dir)
     _, _ = generate_individual_tomogram_starfiles(alignment_and_voxel_spacing_ids, output_dir)
 
     tomograms_path = output_dir / "tomograms.star"
@@ -527,7 +530,9 @@ def generate_tomograms_from_runs(run_ids: list[int], output_dir: Path) -> tuple[
     logger.info(f"Wrote {len(tomograms_df)} tomogram(s) to {tomograms_path}")
 
     end_time = time.time()
-    logger.info(f"Finished generating star files in {end_time - start_time:.2f} seconds.")
+    logger.info(
+        f"Finished generating optics, tomograms, and tiltseries star files in {end_time - start_time:.2f} seconds."
+    )
 
     return optics_df, tomograms_path, tiltseries_folder_path
 

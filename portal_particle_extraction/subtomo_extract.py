@@ -1,7 +1,7 @@
 # TODO: Add support for a consolidated tiltseries star file (where all the tiltseries entries are just in the tomograms.star file)
 """
 Primary entry point for extracting subtomograms from local files and the CryoET Data Portal.
-Run python -m portal_particle_extraction.subtomo_extract --help for usage instructions.
+Run portal-particle-extraction --help for usage instructions.
 """
 
 import logging
@@ -395,7 +395,9 @@ def extract_subtomograms(
                 )
             individual_tiltseries_df = tomograms_data[tiltseries_row_entry["rlnTomoName"]]
         else:
-            individual_tiltseries_path = tiltseries_relative_dir / tiltseries_row_entry["rlnTomoTiltSeriesStarFile"]
+            individual_tiltseries_path = Path(tiltseries_row_entry["rlnTomoTiltSeriesStarFile"])
+            if not individual_tiltseries_path.is_absolute():
+                individual_tiltseries_path = tiltseries_relative_dir / tiltseries_row_entry["rlnTomoTiltSeriesStarFile"]
             if not individual_tiltseries_path.exists():
                 raise FileNotFoundError(
                     f"Tiltseries file {individual_tiltseries_path} does not exist. Please check the path and try again."
@@ -521,10 +523,11 @@ def validate_and_setup(
             f"Output directory {output_dir} already exists and is not empty. Use --overwrite to overwrite existing files."
         )
 
-    if output_dir.exists():
-        shutil.rmtree(output_dir)
+    if not dry_run:
+        if (output_dir / "Subtomograms").exists():
+            shutil.rmtree(output_dir / "Subtomograms")
 
-    (output_dir / "Subtomograms").mkdir(parents=True)
+        (output_dir / "Subtomograms").mkdir(parents=True)
 
     return (
         output_dir,
