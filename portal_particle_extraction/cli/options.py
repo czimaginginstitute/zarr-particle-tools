@@ -5,7 +5,7 @@ from typing import Any
 
 import click
 
-from portal_particle_extraction.cli.types import PARAM_TYPE_FOR_TYPE, STR_LIST
+from portal_particle_extraction.cli.types import INT_LIST, PARAM_TYPE_FOR_TYPE, STR_LIST
 
 
 def compose_options(opts: list[click.Option]) -> callable:
@@ -120,6 +120,20 @@ def copick_options():
             help="copick run names (default: all runs)",
         ),
     ]
+    return compose_options(opts)
+
+
+def data_portal_copick_options():
+    opts = [
+        click.option(
+            "--copick-dataset-ids",
+            "--copick-dataset-id",
+            type=INT_LIST,
+            multiple=True,
+            help="filter copick runs on corresponding CryoET Data Portal dataset IDs (default: all datasets)",
+        ),
+    ]
+
     return compose_options(opts)
 
 

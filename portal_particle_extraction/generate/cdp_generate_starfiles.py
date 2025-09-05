@@ -12,6 +12,7 @@ Generates:
 
 import json
 import logging
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -238,7 +239,7 @@ def get_particles_df_optics_df(annotation_files: list[cdp.AnnotationFile]) -> tu
     with ThreadPoolExecutor(max_workers=THREAD_POOL_WORKER_COUNT) as thread_pool:
         futures = [thread_pool.submit(get_particles_df_from_file, file) for file in annotation_files]
 
-        for fut in tqdm(as_completed(futures), total=len(futures), desc="Downloading particle data"):
+        for fut in tqdm(as_completed(futures), total=len(futures), desc="Downloading particle data", file=sys.stdout):
             particles_df = fut.result()
             if particles_df.empty:
                 continue
@@ -317,6 +318,10 @@ def generate_individual_tomogram_starfile(
     tiltseries = cdp_cache.get_tiltseries(alignment.tiltseries_id)[0]
     per_section_parameters = cdp_cache.get_per_section_parameters_by_tiltseries_id(tiltseries.id)[tiltseries.id]
     per_section_alignment_parameters = cdp_cache.get_per_section_alignments_by_alignment_id(alignment.id)[alignment.id]
+    if not per_section_parameters or not per_section_alignment_parameters:
+        raise ValueError(
+            f"[Run {alignment.run_id}, TiltSeries {tiltseries.id}, Alignment {alignment.id}] Missing per-section parameters or alignment parameters."
+        )
     if len(per_section_parameters) < len(per_section_alignment_parameters):
         raise ValueError(
             f"[Run {alignment.run_id}, TiltSeries {tiltseries.id}, Alignment {alignment.id}] Should not have more alignment parameters ({len(per_section_alignment_parameters)}) than CTF parameters ({len(per_section_parameters)})."
@@ -417,7 +422,9 @@ def generate_individual_tomogram_starfiles(
             for (alignment_id, voxel_spacing_id) in alignment_and_voxel_spacing_ids
         ]
 
-        for fut in tqdm(as_completed(futures), total=len(futures), desc="Generating individual tomogram star files"):
+        for fut in tqdm(
+            as_completed(futures), total=len(futures), desc="Generating individual tomogram star files", file=sys.stdout
+        ):
             individual_tomogram_df, tomo_name = fut.result()
             if individual_tomogram_df is not None:
                 individual_tomograms_dfs.append(individual_tomogram_df)
@@ -506,7 +513,9 @@ def get_optics_df_from_runs(run_ids: list[int]) -> pd.DataFrame:
     return get_optics_df(alignment_ids_voxel_spacing_ids)
 
 
-def generate_tomograms_from_runs(run_ids: list[int], output_dir: Path) -> tuple[pd.DataFrame, Path, Path]:
+def generate_tomograms_from_runs(
+    run_ids: list[int], output_dir: Path, dataset_ids: list[int] = None
+) -> tuple[pd.DataFrame, Path, Path]:
     """
     Generates optics data, tomograms.star and individual tomogram star files from the given run IDs.
     For when everything except actual particle data wants to be generated (i.e also using copick projects).
@@ -518,6 +527,15 @@ def generate_tomograms_from_runs(run_ids: list[int], output_dir: Path) -> tuple[
     """
     start_time = time.time()
     (output_dir / "tiltseries").mkdir(parents=True, exist_ok=True)
+
+    if dataset_ids:
+        runs = cdp_cache.get_runs(run_ids)
+        filtered_run_ids = [run.id for run in runs if run.dataset_id in dataset_ids]
+        if not filtered_run_ids:
+            raise ValueError(
+                f"No valid runs found after filtering by dataset IDs. runs: {run_ids}, dataset IDs: {dataset_ids}"
+            )
+        run_ids = filtered_run_ids
 
     optics_df = get_optics_df_from_runs(run_ids)
 

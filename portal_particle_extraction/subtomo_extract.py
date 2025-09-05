@@ -7,6 +7,7 @@ Run portal-particle-extraction --help for usage instructions.
 import logging
 import multiprocessing as mp
 import shutil
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -97,7 +98,7 @@ def process_tiltseries(args) -> Union[None, tuple[pd.DataFrame, int]]:
         no_ic,
         output_dir,
     ) = args
-    setup_logging(True)
+    setup_logging()
     # following RELION convention
     pre_bin_box_size = int(round(box_size * bin))
     pre_bin_crop_size = crop_size * bin
@@ -454,7 +455,7 @@ def extract_subtomograms(
     logger.info(f"Starting extraction of subtomograms from {len(tomograms_df)} tiltseries using {cpu_count} CPU cores.")
     with mp.Pool(processes=cpu_count) as pool:
         for updated_filtered_particles_df, skipped_count in tqdm(
-            pool.imap_unordered(process_tiltseries, args_list, chunksize=1), total=len(args_list)
+            pool.imap_unordered(process_tiltseries, args_list, chunksize=1), total=len(args_list), file=sys.stdout
         ):
             if updated_filtered_particles_df is not None and not updated_filtered_particles_df.empty:
                 particles_df_results.append(updated_filtered_particles_df)
@@ -770,13 +771,14 @@ def parse_extract_data_portal_copick_subtomograms(
     copick_name: str,
     copick_session_id: str,
     copick_user_id: str,
+    copick_run_names: list[str] = None,
+    copick_dataset_ids: list[int] = None,
     box_size: int = None,
     bin: int = 1,
     float16: bool = False,
     no_ctf: bool = False,
     no_circle_crop: bool = False,
     no_ic: bool = False,
-    copick_run_names: list[str] = None,
     crop_size: int = None,
     dry_run: bool = False,
     overwrite: bool = False,
@@ -790,13 +792,19 @@ def parse_extract_data_portal_copick_subtomograms(
         dry_run=dry_run,
     )
 
-    if copick_run_names is None:
+    if not copick_run_names:
         picks = get_copick_picks(copick_config, copick_name, copick_session_id, copick_user_id, copick_run_names)
         copick_run_names = [p.run.name for p in picks]
+
+    # convert copick_run_names to ints and fail if not possible
+    copick_run_names = [int(s) for s in copick_run_names if s.isdigit()]
+    if len(copick_run_names) != len(copick_run_names):
+        raise ValueError("All copick runs must be nonnegative integers")
 
     # generate a tomograms starfile with cdp_generate
     optics_df, tomograms_path, tiltseries_folder = cdp_generate.generate_tomograms_from_runs(
         run_ids=copick_run_names,
+        dataset_ids=copick_dataset_ids,
         output_dir=output_dir,
     )
 
@@ -810,6 +818,8 @@ def parse_extract_data_portal_copick_subtomograms(
         optics_df,
         data_portal_runs=True,
     )
+    # filter out particles that don't have a corresponding tomogram in the tomograms starfile
+    particles_df = particles_df[particles_df["rlnTomoName"].isin(optics_df["rlnTomoName"])]
     particles_path = output_dir / "particles.star"
     starfile.write({"optics": optics_df, "particles": particles_df}, particles_path)
     logger.info(f"Generated particles star file at {particles_path} with {len(particles_df)} particles.")
@@ -895,10 +905,12 @@ def cmd_data_portal(**kwargs):
 @cli.command("copick-data-portal", help="Extract subtomograms from CryoET Data Portal runs with copick particles.")
 @cli_options.common_options()
 @cli_options.copick_options()
+@cli_options.data_portal_copick_options()
 @cli_options.dry_run_option
 def cmd_data_portal_copick(**kwargs):
     setup_logging(debug=kwargs.pop("debug", False))
     kwargs["copick_run_names"] = cli_options.flatten(kwargs["copick_run_names"])
+    kwargs["copick_dataset_ids"] = cli_options.flatten(kwargs["copick_dataset_ids"])
     parse_extract_data_portal_copick_subtomograms(**kwargs)
 
 

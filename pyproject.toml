@@ -43,3 +43,6 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
 portal-particle-extraction = "portal_particle_extraction.subtomo_extract:cli"
+
+[project.entry-points."ccpem_pipeliner.jobs"]
+"portalparticleextraction.pseudosubtomo" = "portal_particle_extraction.pipeliner.subtomo_extract_pipeliner_job:PythonRelionPseudoSubtomoJob"
