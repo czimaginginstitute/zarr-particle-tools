@@ -214,3 +214,6 @@ tests/output/
 
 # test data (input) files
 tests/data/
+
+# demo scripts and whatnot 
+demo/

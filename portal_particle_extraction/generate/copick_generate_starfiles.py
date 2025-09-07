@@ -19,9 +19,13 @@ def get_copick_picks(
 ) -> list[CopickPicks]:
     root = copick.from_file(copick_config)
     runs = [r for r in root.runs if not copick_run_names or r.name in copick_run_names]
-    picks = [p for r in runs for p in r.get_picks(copick_name, copick_user_id, copick_session_id)]
+    picks = [
+        p
+        for r in runs
+        for p in r.get_picks(object_name=copick_name, user_id=copick_user_id, session_id=copick_session_id)
+    ]
 
-    log_statement = f"Found {len(picks)} picks in copick session {copick_name} (session ID: {copick_session_id}) for user ID {copick_user_id} and runs {copick_run_names if copick_run_names else 'all runs'}"
+    log_statement = f"Found {len(picks)} {copick_name} picks in copick session (session ID: {copick_session_id}) for user ID {copick_user_id} and runs {copick_run_names if copick_run_names else 'all runs'}"
     if len(picks) == 0:
         raise ValueError(log_statement)
 

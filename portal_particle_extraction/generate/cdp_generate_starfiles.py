@@ -23,7 +23,6 @@ import mrcfile
 import numpy as np
 import pandas as pd
 import starfile
-from scipy.spatial.transform import Rotation
 from tqdm import tqdm
 
 import portal_particle_extraction.cli.options as cli_options
@@ -130,6 +129,8 @@ def get_particles_df_from_file(annotation_file: cdp.AnnotationFile) -> pd.DataFr
         )
         for p in pixel_coordinates
     ]
+
+    from scipy.spatial.transform import Rotation
 
     # rot, tilt, psi
     euler_angles = (
@@ -514,8 +515,8 @@ def get_optics_df_from_runs(run_ids: list[int]) -> pd.DataFrame:
 
 
 def generate_tomograms_from_runs(
-    run_ids: list[int], output_dir: Path, dataset_ids: list[int] = None
-) -> tuple[pd.DataFrame, Path, Path]:
+    output_dir: Path, run_ids: list[int] = None, dataset_ids: list[int] = None
+) -> tuple[list[int], pd.DataFrame, Path, Path]:
     """
     Generates optics data, tomograms.star and individual tomogram star files from the given run IDs.
     For when everything except actual particle data wants to be generated (i.e also using copick projects).
@@ -523,19 +524,26 @@ def generate_tomograms_from_runs(
     (will fail if there are multiple voxel spacings of the smallest size and they have different tomogram dimensions).
 
     Returns:
-        tuple: A tuple containing the optics dataframe, path to the tomograms.star file, and path to the tiltseries folder.
+        tuple: A tuple containing the (filtered) data portal run ids, optics dataframe, path to the tomograms.star file, and path to the tiltseries folder.
     """
     start_time = time.time()
     (output_dir / "tiltseries").mkdir(parents=True, exist_ok=True)
 
+    if not run_ids and not dataset_ids:
+        raise ValueError("At least one of run_ids or dataset_ids must be provided.")
+
     if dataset_ids:
-        runs = cdp_cache.get_runs(run_ids)
-        filtered_run_ids = [run.id for run in runs if run.dataset_id in dataset_ids]
-        if not filtered_run_ids:
-            raise ValueError(
-                f"No valid runs found after filtering by dataset IDs. runs: {run_ids}, dataset IDs: {dataset_ids}"
-            )
-        run_ids = filtered_run_ids
+        dataset_runs = cdp_cache.get_runs_by_dataset_id(dataset_ids)
+        dataset_run_ids = [run.id for runs in dataset_runs.values() for run in runs]
+        if run_ids:
+            filtered_run_ids = list(set(run_ids) & set(dataset_run_ids))
+            if not filtered_run_ids:
+                raise ValueError(
+                    f"No valid runs found after filtering by dataset IDs. runs: {run_ids}, dataset IDs: {dataset_ids}"
+                )
+            run_ids = filtered_run_ids
+        else:
+            run_ids = dataset_run_ids
 
     optics_df = get_optics_df_from_runs(run_ids)
 
@@ -552,7 +560,7 @@ def generate_tomograms_from_runs(
         f"Finished generating optics, tomograms, and tiltseries star files in {end_time - start_time:.2f} seconds."
     )
 
-    return optics_df, tomograms_path, tiltseries_folder_path
+    return run_ids, optics_df, tomograms_path, tiltseries_folder_path
 
 
 def resolve_annotation_files(

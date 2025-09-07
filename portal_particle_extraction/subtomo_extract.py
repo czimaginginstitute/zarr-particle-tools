@@ -662,7 +662,7 @@ def parse_extract_local_copick_subtomograms(
         copick_user_id,
         copick_run_names,
         optics_df,
-        data_portal_runs=True,
+        data_portal_runs=False,
     )
     particles_path = output_dir / "particles.star"
     starfile.write({"optics": optics_df, "particles": particles_df}, particles_path)
@@ -797,16 +797,18 @@ def parse_extract_data_portal_copick_subtomograms(
         copick_run_names = [p.run.name for p in picks]
 
     # convert copick_run_names to ints and fail if not possible
-    copick_run_names = [int(s) for s in copick_run_names if s.isdigit()]
-    if len(copick_run_names) != len(copick_run_names):
+    copick_run_ids = [int(s) for s in copick_run_names if s.isdigit()]
+    if len(copick_run_ids) != len(copick_run_names):
         raise ValueError("All copick runs must be nonnegative integers")
 
     # generate a tomograms starfile with cdp_generate
-    optics_df, tomograms_path, tiltseries_folder = cdp_generate.generate_tomograms_from_runs(
-        run_ids=copick_run_names,
+    filtered_copick_run_ids, optics_df, tomograms_path, tiltseries_folder = cdp_generate.generate_tomograms_from_runs(
+        run_ids=copick_run_ids,
         dataset_ids=copick_dataset_ids,
         output_dir=output_dir,
     )
+
+    filtered_copick_run_names = [str(run_id) for run_id in filtered_copick_run_ids]
 
     # add optics and copick particles to particles.star file
     particles_df = copick_picks_to_starfile(
@@ -814,7 +816,7 @@ def parse_extract_data_portal_copick_subtomograms(
         copick_name,
         copick_session_id,
         copick_user_id,
-        copick_run_names,
+        filtered_copick_run_names,
         optics_df,
         data_portal_runs=True,
     )

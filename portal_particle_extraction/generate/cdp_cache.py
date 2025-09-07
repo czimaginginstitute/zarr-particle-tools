@@ -36,6 +36,8 @@ per_section_parameters_cache: dict[int, list[PerSectionParameters]] = defaultdic
 run_to_frames_cache: dict[int, list[Frame]] = defaultdict(list)
 
 # derived caches
+# dataset id to runs
+dataset_id_to_runs_cache: dict[int, list[Run]] = defaultdict(list)
 # run id to alignment ids
 run_id_to_alignment_ids_cache: dict[int, list[int]] = defaultdict(list)
 # run id to voxel spacing ids
@@ -46,6 +48,8 @@ alignment_to_tomograms_cache: dict[int, list[int]] = defaultdict(list)
 tomogram_voxel_spacing_to_tomograms_cache: dict[int, list[int]] = defaultdict(list)
 
 client = Client()
+
+CACHE_DEBUG = False
 
 
 # TODO: Does this really need to return a dict? Could just return the list of values, and determine the key from the values' foreign key attributes.
@@ -87,6 +91,11 @@ def get_items_by_ids(
     ):
         raise ValueError("Both derived_cache and derived_cache_callable must be provided or neither.")
 
+    if CACHE_DEBUG:
+        logger.debug(
+            f"Fetching items by IDs: {ids}, using cache with {len(cache)} entries, model: {model_cls.__name__}, query_field: {query_field}{', derived cache with ' + str(len(derived_cache)) + ' entries' if derived_cache else ''}."
+        )
+
     if isinstance(ids, int):
         ids = [ids]
 
@@ -109,6 +118,8 @@ def get_items_by_ids(
 
     # if there are ids missing from the cache, fetch them from the database
     if missing_ids:
+        if CACHE_DEBUG:
+            logger.debug(f"Fetching items by IDS: {ids}, model: {model_cls.__name__}, missing ids: {missing_ids}")
         fetched_items = model_cls.find(client, query_filters=[query_field._in(missing_ids)])
         for item in fetched_items:
             item_key = key_extractor(item)
@@ -173,6 +184,21 @@ def hashable_lru_cache(maxsize: int = None) -> Callable:
 def get_runs(run_ids: Union[list[int], int]) -> list[Run]:
     return get_items_by_ids(
         ids=run_ids, cache=run_cache, query_field=Run.id, model_cls=Run, key_extractor=lambda r: r.id
+    )
+
+
+@hashable_lru_cache(maxsize=None)
+def get_runs_by_dataset_id(dataset_ids: Union[list[int], int]) -> dict[int, list[Run]]:
+    return get_items_by_ids(
+        ids=dataset_ids,
+        cache=dataset_id_to_runs_cache,
+        query_field=Run.dataset_id,
+        model_cls=Run,
+        key_extractor=lambda r: r.dataset_id,
+        multiple_results=True,
+        derived_cache_callable=get_runs,
+        derived_cache=run_cache,
+        as_dict=True,
     )
 
 
