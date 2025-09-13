@@ -27,14 +27,7 @@ def common_options():
             help="Crop size of the extracted subtomograms in pixels. If not specified, defaults to box-size.",
         ),
         click.option("--bin", type=int, default=1, show_default=True, help="Binning factor for the subtomograms."),
-        click.option(
-            "--float16",
-            is_flag=True,
-            help="Use float16 precision for the output mrcs files. Default is False (float32).",
-        ),
         click.option("--no-ctf", is_flag=True, help="Disable CTF premultiplication."),
-        click.option("--no-circle-crop", is_flag=True, help="Disable circular cropping of the subtomograms."),
-        click.option("--no-ic", is_flag=True, help="Do not invert contrast of the subtomograms."),
         click.option(
             "--output-dir",
             type=click.Path(file_okay=False, path_type=Path),
@@ -45,6 +38,20 @@ def common_options():
             "--overwrite", is_flag=True, help="If set, existing output files will be overwritten. Default is False."
         ),
         click.option("--debug", is_flag=True, help="Enable debug logging."),
+    ]
+
+    return compose_options(opts)
+
+
+def extract_options():
+    opts = [
+        click.option(
+            "--float16",
+            is_flag=True,
+            help="Use float16 precision for the output mrcs files. Default is False (float32).",
+        ),
+        click.option("--no-circle-crop", is_flag=True, help="Disable circular cropping of the subtomograms."),
+        click.option("--no-ic", is_flag=True, help="Do not invert contrast of the subtomograms."),
     ]
     return compose_options(opts)
 
@@ -220,3 +227,17 @@ def flatten_data_portal_args(kwargs: dict) -> dict:
             kwargs[ref] = flatten(val)
 
     return kwargs
+
+
+def reconstruct_options():
+    opts = [
+        click.option(
+            "--cutoff-fraction",
+            type=float,
+            default=0.01,
+            show_default=True,
+            help="Ignore shells for which the dose weight falls below this value.",
+        )
+    ]
+
+    return compose_options(opts)

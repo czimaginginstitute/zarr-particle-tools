@@ -174,6 +174,7 @@ def get_particles_to_tiltseries_coordinates(
     filtered_trajectories_dict: dict[int, pd.DataFrame] | None,
     tiltseries_df: pd.DataFrame,
     projection_matrices: list[np.ndarray],
+    use_tomo_particle_name_for_id: bool = True,
 ) -> dict[int, dict[int, tuple[np.ndarray, np.ndarray]]]:
     """
     Maps particle indices to their 2D coordinates in each of the tilts (projected from their 3D coordinates via the projection matrices).
@@ -196,7 +197,7 @@ def get_particles_to_tiltseries_coordinates(
             )
             particle_id = (
                 int(particle.rlnTomoParticleName.split("/")[-1])
-                if "rlnTomoParticleName" in filtered_particles_df.columns
+                if "rlnTomoParticleName" in filtered_particles_df.columns and use_tomo_particle_name_for_id
                 else default_particle_id
             )
             # add motion correction if available
@@ -296,6 +297,20 @@ def get_particle_crop_and_visibility(
         )
 
     return particle_data, visible_sections
+
+
+def apply_offsets_to_coordinates(particles_df: pd.DataFrame) -> pd.DataFrame:
+    # apply alignment rlnOriginXAngst/YAngst/ZAngst to rlnCenteredCoordinateXAngst/YAngst/ZAngst, subtract to follow RELION's convention
+    if (
+        "rlnOriginXAngst" in particles_df.columns
+        and "rlnOriginYAngst" in particles_df.columns
+        and "rlnOriginZAngst" in particles_df.columns
+    ):
+        particles_df["rlnCenteredCoordinateXAngst"] -= particles_df["rlnOriginXAngst"]
+        particles_df["rlnCenteredCoordinateYAngst"] -= particles_df["rlnOriginYAngst"]
+        particles_df["rlnCenteredCoordinateZAngst"] -= particles_df["rlnOriginZAngst"]
+
+    return particles_df
 
 
 def fourier_crop(fft_image_stack: np.ndarray, factor: float) -> np.ndarray:

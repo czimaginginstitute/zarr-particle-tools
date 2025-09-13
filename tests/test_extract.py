@@ -13,13 +13,13 @@ from portal_particle_extraction.subtomo_extract import cli, extract_subtomograms
 DATASET_CONFIGS = {
     "synthetic": {
         "data_root": Path("tests/data/relion_project_synthetic"),
-        "tol": 1e-7,
+        "tol": 5e-8,
         "float_tol": 1e-4,
     },
     "unroofing": {
         "data_root": Path("tests/data/relion_project_unroofing"),
-        "tol": 5e-5,  # relaxed requirements due to noisier data
-        "float_tol": 1e-4,
+        "tol": 1e-5,  # TODO: investigate why this needs to be higher
+        "float_tol": 1e-6,
     },
 }
 

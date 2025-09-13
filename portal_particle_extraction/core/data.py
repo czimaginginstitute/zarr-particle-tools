@@ -1,12 +1,16 @@
 import logging
+import time
 from functools import cache
 from pathlib import Path
 
 import dask.array as da
 import mrcfile
 import numpy as np
+import pandas as pd
 import s3fs
 from dask.core import flatten
+
+from portal_particle_extraction.core.constants import TILTSERIES_URI_RELION_COLUMN
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +128,7 @@ class DataReader:
         if not self.is_zarr or isinstance(self.data, np.ndarray):
             return
 
+        start_time = time.time()
         total_chunks = sum(chunks_per_crop(self.zarr_data_crops).values())
         logger.debug(f"Total chunks to compute: {total_chunks}")
         # TODO: tune this threshold
@@ -131,6 +136,8 @@ class DataReader:
             self.data = self.data.compute()
         else:
             self.zarr_data_crops = da.compute(self.zarr_data_crops)[0]
+        end_time = time.time()
+        logger.debug(f"Downloading crops for {self.locator} took {end_time - start_time:.2f} seconds.")
 
 
 def chunks_per_crop(crops: dict) -> dict:
@@ -150,3 +157,24 @@ def get_data(s3_uri: str, as_bytes: bool = False) -> bytes | str:
     mode = "rb" if as_bytes else "r"
     with global_fs.open(s3_uri, mode) as f:
         return f.read()
+
+
+def get_tiltseries_datareader(individual_tiltseries_df: pd.DataFrame, individual_tiltseries_path: Path) -> DataReader:
+    """
+    Given a tiltseries dataframe, returns a DataReader object for the tiltseries data.
+    """
+    if TILTSERIES_URI_RELION_COLUMN in individual_tiltseries_df.columns:
+        tiltseries_data_locators = individual_tiltseries_df[TILTSERIES_URI_RELION_COLUMN].to_list()
+    else:
+        tiltseries_data_locators = (
+            individual_tiltseries_df["rlnMicrographName"].apply(lambda x: x.split("@")[1]).to_list()
+        )
+    if len(set(tiltseries_data_locators)) != 1:
+        raise ValueError(
+            f"Multiple tiltseries data locators found: {set(tiltseries_data_locators)}. This is not supported."
+        )
+    tiltseries_data_locator = tiltseries_data_locators[0]
+    if not tiltseries_data_locator.startswith("s3://") and not tiltseries_data_locator.startswith("/"):
+        # assume it's a local relative path, relative to the individual tiltseries star file or the tomograms star file if consolidated
+        tiltseries_data_locator = individual_tiltseries_path.parent / tiltseries_data_locator
+    return DataReader(str(tiltseries_data_locator))

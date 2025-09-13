@@ -37,6 +37,7 @@ def validate_particles_starfile():
         star_file_data = starfile.read(star_file)
         expected_data = starfile.read(expected_starfile)
         assert star_file_data["general"] == expected_data["general"]
+        star_file_data["optics"].drop(columns=["BoxSize"], inplace=True, errors="ignore")
         assert df_equal(star_file_data["optics"], expected_data["optics"])
         particles_simplified = star_file_data["particles"].drop(columns=["rlnImageName"])
         expected_particles_simplified = expected_data["particles"].drop(columns=["rlnImageName"])
