@@ -50,6 +50,7 @@ def extract_options():
             is_flag=True,
             help="Use float16 precision for the output mrcs files. Default is False (float32).",
         ),
+        click.option("--circle-precrop", is_flag=True, help="Enable circular precropping of the subtomograms."),
         click.option("--no-circle-crop", is_flag=True, help="Disable circular cropping of the subtomograms."),
         click.option("--no-ic", is_flag=True, help="Do not invert contrast of the subtomograms."),
     ]

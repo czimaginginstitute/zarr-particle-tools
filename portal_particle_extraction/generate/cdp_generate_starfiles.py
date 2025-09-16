@@ -41,8 +41,8 @@ from portal_particle_extraction.core.constants import (
     TOMO_HAND_DEFAULT_VALUE,
 )
 from portal_particle_extraction.core.data import get_data
+from portal_particle_extraction.core.forwardprojection import in_plane_rotation_to_tilt_axis_rotation
 from portal_particle_extraction.core.helpers import get_filter, get_optics_group_name, get_tomo_name, setup_logging
-from portal_particle_extraction.core.projection import in_plane_rotation_to_tilt_axis_rotation
 
 logger = logging.getLogger(__name__)
 

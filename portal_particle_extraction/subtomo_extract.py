@@ -26,15 +26,15 @@ from portal_particle_extraction.core.constants import OPTICS_DF_COLUMNS
 from portal_particle_extraction.core.ctf import calculate_ctf
 from portal_particle_extraction.core.data import get_tiltseries_datareader
 from portal_particle_extraction.core.dose import calculate_dose_weight_image
-from portal_particle_extraction.core.helpers import get_tiltseries_data, setup_logging, validate_and_setup
-from portal_particle_extraction.core.mask import circular_mask, circular_soft_mask
-from portal_particle_extraction.core.projection import (
+from portal_particle_extraction.core.forwardprojection import (
     apply_offsets_to_coordinates,
     calculate_projection_matrix_from_starfile_df,
     fourier_crop,
     get_particle_crop_and_visibility,
     get_particles_to_tiltseries_coordinates,
 )
+from portal_particle_extraction.core.helpers import get_tiltseries_data, setup_logging, validate_and_setup
+from portal_particle_extraction.core.mask import circular_mask, circular_soft_mask
 from portal_particle_extraction.generate.copick_generate_starfiles import copick_picks_to_starfile, get_copick_picks
 
 logger = logging.getLogger(__name__)
@@ -84,8 +84,10 @@ def process_tiltseries(
     bin: int,
     float16: bool,
     no_ctf: bool,
+    circle_precrop: bool,
     no_circle_crop: bool,
     no_ic: bool,
+    normalize_bin: bool,
     output_dir: Path,
     filtered_particles_df: pd.DataFrame,
     filtered_trajectories_dict: dict,
@@ -118,6 +120,8 @@ def process_tiltseries(
     tiltseries_datareader = get_tiltseries_datareader(individual_tiltseries_df, individual_tiltseries_path)
 
     # projection-relevant variables
+    pre_bin_background_mask = circular_mask(pre_bin_box_size, pre_bin_box_size) == 0.0
+    pre_bin_soft_mask = circular_soft_mask(pre_bin_box_size, pre_bin_box_size, falloff=5.0)
     background_mask = circular_mask(box_size, crop_size) == 0.0
     soft_mask = circular_soft_mask(box_size, crop_size, falloff=5.0)
     tiltseries_pixel_size = tiltseries_row_entry["rlnTomoTiltSeriesPixelSize"]
@@ -207,6 +211,12 @@ def process_tiltseries(
                 mode="edge",
             )
             tilt_stack[tilt] = padded_crop
+
+        if circle_precrop:
+            pre_bin_background_mean = tilt_stack[:, pre_bin_background_mask].mean(axis=1)
+            tilt_stack -= pre_bin_background_mean[:, None, None]
+            tilt_stack *= pre_bin_soft_mask
+
         fourier_tilt_stack = np.fft.rfft2(tilt_stack, norm="ortho", axes=(-2, -1))
 
         new_fourier_tilt_stack = np.zeros((len(particle_data), box_size, box_size // 2 + 1), dtype=np.complex64)
@@ -245,7 +255,7 @@ def process_tiltseries(
                 fourier_tilt *= dose_weights[section_index] * ctf_weights
             if not no_ic:
                 fourier_tilt *= -1  # phase flip for RELION compatibility
-            fourier_tilt /= float(bin) ** 2  # normalize by binning factor
+            fourier_tilt /= float(bin) ** (2 if normalize_bin else 1)  # normalize by binning factor
             new_fourier_tilt_stack[tilt] = fourier_tilt
 
         new_tilt_stack = np.fft.irfft2(new_fourier_tilt_stack, norm="ortho", axes=(-2, -1))
@@ -338,8 +348,10 @@ def extract_subtomograms(
     bin: int = 1,
     float16: bool = False,
     no_ctf: bool = False,
+    circle_precrop: bool = False,
     no_circle_crop: bool = False,
     no_ic: bool = False,
+    normalize_bin: bool = True,
     crop_size: int = None,
     tiltseries_relative_dir: Path = None,
     trajectories_starfile: Path = None,
@@ -388,8 +400,10 @@ def extract_subtomograms(
         "bin": bin,
         "float16": float16,
         "no_ctf": no_ctf,
+        "circle_precrop": circle_precrop,
         "no_circle_crop": no_circle_crop,
         "no_ic": no_ic,
+        "normalize_bin": normalize_bin,
         "output_dir": output_dir,
     }
     args_list = [{**args, **constant_args} for args in args_list if args is not None]
@@ -437,8 +451,10 @@ def parse_extract_local_subtomograms(
     bin: int = 1,
     float16: bool = False,
     no_ctf: bool = False,
+    circle_precrop: bool = False,
     no_circle_crop: bool = False,
     no_ic: bool = False,
+    normalize_bin: bool = True,
     crop_size: int = None,
     particles_starfile: Path = None,
     trajectories_starfile: Path = None,
@@ -480,8 +496,10 @@ def parse_extract_local_subtomograms(
         bin=bin,
         float16=float16,
         no_ctf=no_ctf,
+        circle_precrop=circle_precrop,
         no_circle_crop=no_circle_crop,
         no_ic=no_ic,
+        normalize_bin=normalize_bin,
         output_dir=output_dir,
         particles_starfile=particles_starfile,
         trajectories_starfile=trajectories_starfile,
@@ -514,8 +532,10 @@ def parse_extract_local_copick_subtomograms(
     bin: int = 1,
     float16: bool = False,
     no_ctf: bool = False,
+    circle_precrop: bool = False,
     no_circle_crop: bool = False,
     no_ic: bool = False,
+    normalize_bin: bool = True,
     copick_run_names: list[str] = None,
     crop_size: int = None,
     tiltseries_relative_dir: Path = None,
@@ -572,8 +592,10 @@ def parse_extract_local_copick_subtomograms(
         bin=bin,
         float16=float16,
         no_ctf=no_ctf,
+        circle_precrop=circle_precrop,
         no_circle_crop=no_circle_crop,
         no_ic=no_ic,
+        normalize_bin=normalize_bin,
         output_dir=output_dir,
         crop_size=crop_size,
         particles_starfile=particles_path,
@@ -605,8 +627,10 @@ def parse_extract_data_portal_subtomograms(
     bin: int = 1,
     float16: bool = False,
     no_ctf: bool = False,
+    circle_precrop: bool = False,
     no_circle_crop: bool = False,
     no_ic: bool = False,
+    normalize_bin: bool = True,
     crop_size: int = None,
     overwrite: bool = False,
     dry_run: bool = False,
@@ -663,8 +687,10 @@ def parse_extract_data_portal_subtomograms(
         bin=bin,
         float16=float16,
         no_ctf=no_ctf,
+        circle_precrop=circle_precrop,
         no_circle_crop=no_circle_crop,
         no_ic=no_ic,
+        normalize_bin=normalize_bin,
         output_dir=output_dir,
     )
 
@@ -694,8 +720,10 @@ def parse_extract_data_portal_copick_subtomograms(
     bin: int = 1,
     float16: bool = False,
     no_ctf: bool = False,
+    circle_precrop: bool = False,
     no_circle_crop: bool = False,
     no_ic: bool = False,
+    normalize_bin: bool = True,
     crop_size: int = None,
     overwrite: bool = False,
     dry_run: bool = False,
@@ -780,8 +808,10 @@ def parse_extract_data_portal_copick_subtomograms(
         bin=bin,
         float16=float16,
         no_ctf=no_ctf,
+        circle_precrop=circle_precrop,
         no_circle_crop=no_circle_crop,
         no_ic=no_ic,
+        normalize_bin=normalize_bin,
         output_dir=output_dir,
     )
 

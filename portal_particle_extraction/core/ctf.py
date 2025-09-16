@@ -7,7 +7,7 @@ from functools import cache
 
 import numpy as np
 
-from portal_particle_extraction.core.projection import project_3d_point_to_2d
+from portal_particle_extraction.core.forwardprojection import project_3d_point_to_2d
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +110,7 @@ def calculate_ctf(
         bin (int): The binning factor.
 
     Returns:
-        np.ndarray: A 2D array representing the CTF in Fourier space.
+        np.ndarray: A 2D array representing the CTF in Fourier space of shape (box_size, box_size // 2 + 1).
 
     """
     if (
@@ -164,7 +164,7 @@ def calculate_ctf(
     # dose weighting, which doesn't seem to be done on the CTF?
     # ctf *= calculate_dose_weights(u2, dose, bfactor)
 
-    # ctf *= ctf_scalefactor
+    ctf *= ctf_scalefactor
 
     mask = np.abs(ctf) < 1e-8
     ctf[mask] = np.sign(ctf[mask]) * 1e-8

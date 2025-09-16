@@ -1,5 +1,5 @@
 # portal-particle-extraction
-Subtomogram extraction in Python from local files and the CryoET Data Portal. A reimplementation of the RELION subtomogram extraction job, but designed to work on ZARR-based tiltseries with the CryoET Data Portal API and reduce the need for downloading entire tiltseries.
+Subtomogram extraction in Python from local files and the CryoET Data Portal. A reimplementation of the RELION subtomogram extraction and particle reconstruction jobs, but designed to work on ZARR-based tiltseries with the CryoET Data Portal API and remove the need for downloading the entire tiltseries.
 
 Primary steps in subtomogram extraction are:
 - 3D affine transformation matrix calculation
@@ -79,7 +79,6 @@ To ensure that the subtomogram extraction matches RELION's subtomogram extractio
 ## Known Limitations
 - Does not support gamma offset
 - Does not support spherical aberration correction
-- Does not support circle precrop
 - Does not support grid precorrection
 - Does not support whitening (power spectral flattening)
 - Does not support 3D volume extraction

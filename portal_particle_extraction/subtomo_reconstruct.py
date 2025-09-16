@@ -8,7 +8,7 @@ import logging
 import multiprocessing as mp
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Union
 
@@ -20,14 +20,20 @@ import starfile
 from tqdm import tqdm
 
 import portal_particle_extraction.cli.options as cli_options
+from portal_particle_extraction.core.backprojection import (
+    backproject_slice_backward,
+    ctf_correct_3d_heuristic,
+    get_rotation_matrix_from_euler,
+    gridding_correct_3d_sinc2,
+)
 from portal_particle_extraction.core.ctf import calculate_ctf
 from portal_particle_extraction.core.dose import calculate_dose_weight_image
-from portal_particle_extraction.core.helpers import get_tiltseries_data, setup_logging
-from portal_particle_extraction.core.projection import (
+from portal_particle_extraction.core.forwardprojection import (
     apply_offsets_to_coordinates,
     calculate_projection_matrix_from_starfile_df,
     get_particles_to_tiltseries_coordinates,
 )
+from portal_particle_extraction.core.helpers import get_tiltseries_data, setup_logging
 from portal_particle_extraction.subtomo_extract import (
     parse_extract_data_portal_copick_subtomograms,
     parse_extract_data_portal_subtomograms,
@@ -47,6 +53,7 @@ def reconstruct_single_tiltseries_wrapper(kwargs):
 def reconstruct_single_tiltseries(
     no_ctf: bool,
     crop_size: int,
+    cutoff_fraction: float,
     filtered_particles_df: pd.DataFrame,
     filtered_trajectories_dict: pd.DataFrame,
     tiltseries_row_entry: pd.Series,
@@ -61,13 +68,17 @@ def reconstruct_single_tiltseries(
     pixel_size = float(optics_row["rlnImagePixelSize"].iloc[0])
     bin = int(optics_row["rlnTomoSubtomogramBinning"].iloc[0])
     ctf_premultiplied = bool(optics_row["rlnCtfDataAreCtfPremultiplied"].iloc[0])
-    # in fourier space
-    particle_data = np.zeros(
-        (len(filtered_particles_df), len(individual_tiltseries_df), box_size, box_size // 2 + 1), dtype=np.complex64
-    )
-    ctf_data = np.zeros(
-        (len(filtered_particles_df), len(individual_tiltseries_df), box_size, box_size // 2 + 1), dtype=np.complex64
-    )
+    if ctf_premultiplied:
+        raise ValueError("CTF premultiplied particles are not supported for reconstruction.")
+    if {"rlnAngleRot", "rlnAngleTilt", "rlnAnglePsi"}.issubset(filtered_particles_df.columns):
+        particle_rotation_matrices = get_rotation_matrix_from_euler(
+            filtered_particles_df[["rlnAngleRot", "rlnAngleTilt", "rlnAnglePsi"]].to_numpy()
+        )
+    else:
+        particle_rotation_matrices = np.tile(np.eye(3), (len(filtered_particles_df), 1, 1))
+
+    data_fourier_volume = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex64)
+    weight_fourier_volume = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex64)
 
     # tiltseries variables
     tiltseries_pixel_size = tiltseries_row_entry["rlnTomoTiltSeriesPixelSize"]
@@ -110,7 +121,7 @@ def reconstruct_single_tiltseries(
     )
     dose_weights = np.stack(
         [
-            calculate_dose_weight_image(dose, tiltseries_pixel_size * bin, box_size, bfactor)
+            calculate_dose_weight_image(dose, tiltseries_pixel_size * bin, box_size, bfactor, cutoff_fraction)
             for dose, bfactor in zip(doses, bfactor_per_electron_dose)
         ],
         dtype=np.complex64,
@@ -120,7 +131,7 @@ def reconstruct_single_tiltseries(
         visible_sections = ast.literal_eval(particle["rlnTomoVisibleFrames"])
         assert len(visible_sections) == len(
             individual_tiltseries_df
-        ), f"Mismatch between visible sections and tilt series for {particle['rlnTomoParticleName']}"
+        ), f"Mismatch between visible sections and tiltseries for {particle['rlnTomoParticleName']}"
         particle_path = Path(particle["rlnImageName"])
         if not particle_path.exists():
             raise FileNotFoundError(
@@ -135,78 +146,89 @@ def reconstruct_single_tiltseries(
             mrc_data.shape[1] == box_size and mrc_data.shape[2] == box_size
         ), f"Mismatch between box size and particle data for {particle['rlnTomoParticleName']}"
         assert mrc_data.dtype == np.float32, f"Particle data must be float32 for {particle['rlnTomoParticleName']}"
-        fourier_data = np.fft.rfft2(mrc_data, norm="ortho", axes=(-2, -1))
 
-        visible_index = np.asarray(visible_sections, dtype=bool)
+        particle_projection_matrices = (
+            np.asarray(projection_matrices)[:, :3, :3] @ particle_rotation_matrices[particle_index]
+        )
 
-        particle_data[particle_index, visible_index] = fourier_data
+        particle_data = np.fft.rfft2(mrc_data, norm="ortho", axes=(-2, -1))
+
+        weight_data = np.ones((len(sections), box_size, box_size // 2 + 1), dtype=np.complex64)
+        particle_data_fourier_volume = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex64)
+        particle_weight_fourier_volume = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex64)
+
         # adapt to RELION 1-based indexing
         particle_coordinates = particles_to_tiltseries_coordinates[particle_index + 1]
+        particle_section_index = 0
         for section_index, section in enumerate(sections):
             if not visible_sections[section_index]:
                 continue
 
-            # phase flipping was already done, so no need to do it
             coordinate, _ = particle_coordinates[section]
-            ctf_data[particle_index, section_index] = (
-                calculate_ctf(
-                    coordinate=coordinate,
-                    tilt_projection_matrix=projection_matrices[section_index],
-                    voltage=voltage,
-                    spherical_aberration=spherical_aberration,
-                    amplitude_contrast=amplitude_contrast,
-                    handedness=handedness,
-                    tiltseries_pixel_size=tiltseries_pixel_size,
-                    phase_shift=phase_shift[section_index],
-                    defocus_u=defocus_u[section_index],
-                    defocus_v=defocus_v[section_index],
-                    defocus_angle=defocus_angle[section_index],
-                    dose=doses[section_index],
-                    ctf_scalefactor=ctf_scalefactor[section_index],
-                    bfactor=bfactor_per_electron_dose[section_index],
-                    box_size=box_size,
-                    bin=bin,
+            if not no_ctf:
+                weight_data[section_index] = (
+                    calculate_ctf(
+                        coordinate=coordinate,
+                        tilt_projection_matrix=projection_matrices[section_index],
+                        voltage=voltage,
+                        spherical_aberration=spherical_aberration,
+                        amplitude_contrast=amplitude_contrast,
+                        handedness=handedness,
+                        tiltseries_pixel_size=tiltseries_pixel_size,
+                        phase_shift=phase_shift[section_index],
+                        defocus_u=defocus_u[section_index],
+                        defocus_v=defocus_v[section_index],
+                        defocus_angle=defocus_angle[section_index],
+                        dose=doses[section_index],
+                        ctf_scalefactor=ctf_scalefactor[section_index],
+                        bfactor=bfactor_per_electron_dose[section_index],
+                        box_size=box_size,
+                        bin=bin,
+                    )
+                    * dose_weights[section_index]
                 )
-                * dose_weights[section_index]
-            )
+                particle_data[particle_section_index] *= weight_data[section_index]
+                weight_data[section_index] **= 2
 
-            if no_ctf and ctf_premultiplied:
-                logger.warning(
-                    "Particles have been CTF premultiplied but no_ctf is set to True. Reversing CTF premultiplication (not recommended)."
-                )
-                particle_data[particle_index, section_index] /= np.clip(
-                    ctf_data[particle_index, section_index], a_min=1e-9, a_max=None
-                )
-            elif not no_ctf and not ctf_premultiplied:
-                logger.warning(
-                    "Particles have not been CTF premultiplied but no_ctf is set to False. Applying CTF premultiplication."
-                )
-                particle_data[particle_index, section_index] *= ctf_data[particle_index, section_index]
+            backproject_slice_backward(
+                particle_data_slice=particle_data[particle_section_index],
+                particle_weight_slice=weight_data[section_index],
+                particle_data_fourier_volume=particle_data_fourier_volume,
+                particle_weight_fourier_volume=particle_weight_fourier_volume,
+                particle_projection_matrix=particle_projection_matrices[section_index],
+                freq_cutoff=np.argmax(dose_weights[section_index][0] < cutoff_fraction) if not no_ctf else box_size + 1,
+            )
+            particle_section_index += 1
+
+        logger.debug(
+            f"Processed particle {particle['rlnTomoParticleName']} from tiltseries {tiltseries_row_entry['rlnTomoName']}"
+        )
+        return particle_data_fourier_volume, particle_weight_fourier_volume
 
     with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = [
-            executor.submit(process_particle, particle_index, particle)
-            for particle_index, particle in filtered_particles_df.iterrows()
-        ]
-        for future in as_completed(futures):
-            future.result()
+        for particle_data_fourier_volume, particle_weight_fourier_volume in executor.map(
+            lambda t: process_particle(*t), filtered_particles_df.iterrows()
+        ):
+            data_fourier_volume += particle_data_fourier_volume
+            weight_fourier_volume += particle_weight_fourier_volume
 
-    ctf_data = ctf_data**2
+    return data_fourier_volume, weight_fourier_volume
 
 
 # TODO: implement tiltseries relative dir but for particles
-# TODO: modify the subtomo extract calls to output both (ic, float32) box size and crop size mrcs files if reconstruct is set to true (or handle this case smartly somehow)
+# TODO: support no_circle_crop
 # TODO: also list out things that are not supported (helical symmetry, etc)
 # TODO: figure out what's going on with (implement) taper
 # TODO: implement particle splitting? (with random seed?)
 # TODO: implement multiprocessing & multithreading
 # TODO: support multiple box sizes / crop sizes / pixel sizes
 def reconstruct_particle(
+    output_dir: Union[str, Path],
     crop_size: int = None,
     no_ctf: bool = False,
-    cutoff_fraction: float = 0.01,  # TODO: implement
+    cutoff_fraction: float = 0.01,
     particles_starfile: Union[str, Path] = None,
-    trajectories_starfile: Union[str, Path] = None,  # TODO: Implement
+    trajectories_starfile: Union[str, Path] = None,
     tiltseries_relative_dir: Union[str, Path] = None,
     tomograms_starfile: Union[str, Path] = None,
 ):
@@ -216,7 +238,6 @@ def reconstruct_particle(
     particles_df = apply_offsets_to_coordinates(particles_metadata["particles"])
     optics_df = particles_metadata["optics"]
     trajectories_dict = starfile.read(trajectories_starfile) if trajectories_starfile else None
-    tomograms_df = starfile.read(tomograms_starfile)
     tomograms_data = starfile.read(tomograms_starfile)
     tomograms_df = tomograms_data["global"] if isinstance(tomograms_data, dict) else tomograms_data
     if "rlnTomoTiltSeriesStarFile" not in tomograms_df.columns:
@@ -246,19 +267,41 @@ def reconstruct_particle(
         for _, tiltseries_row_entry in tomograms_df.iterrows()
     ]
 
-    constant_args = {"no_ctf": no_ctf, "crop_size": crop_size}
+    constant_args = {
+        "no_ctf": no_ctf,
+        "crop_size": crop_size,
+        "cutoff_fraction": cutoff_fraction,
+    }
 
     args_list = [{**args, **constant_args} for args in args_list if args is not None]
 
+    output_data_fourier_volume = None
+    output_weight_fourier_volume = None
+
     cpu_count = min(32, mp.cpu_count(), len(tomograms_df))
     with mp.Pool(processes=cpu_count) as pool:
-        for _ in tqdm(
+        for data_fourier_volume, weight_fourier_volume in tqdm(
             pool.imap_unordered(reconstruct_single_tiltseries_wrapper, args_list),
             total=len(args_list),
             desc="Reconstructing particles",
             file=sys.stdout,
         ):
-            pass
+            if output_data_fourier_volume is None:
+                output_data_fourier_volume = np.zeros((data_fourier_volume.shape), dtype=np.complex64)
+            output_data_fourier_volume += data_fourier_volume
+
+            if output_weight_fourier_volume is None:
+                output_weight_fourier_volume = np.zeros((weight_fourier_volume.shape), dtype=np.complex64)
+            output_weight_fourier_volume += weight_fourier_volume
+
+    grid_corrected_real_volume = gridding_correct_3d_sinc2(particle_fourier_volume=output_data_fourier_volume)
+    ctf_corrected_real_volume = ctf_correct_3d_heuristic(
+        real_space_volume=grid_corrected_real_volume, weights_fourier_volume=output_weight_fourier_volume
+    )
+
+    with mrcfile.new(Path(output_dir) / "merged.mrc", overwrite=True) as mrc:
+        mrc.set_data(ctf_corrected_real_volume.astype(np.float32))
+        mrc.voxel_size = float(optics_df["rlnImagePixelSize"].iloc[0])
 
     end_time = time.time()
     logger.info(f"Reconstructing particles took {end_time - start_time:.2f} seconds.")
@@ -270,9 +313,9 @@ def reconstruct_local_particle(
     bin: int = 1,
     crop_size: int = None,
     no_ctf: bool = False,
-    cutoff_fraction: float = 0.01,  # TODO: implement
+    cutoff_fraction: float = 1,
     particles_starfile: Union[str, Path] = None,
-    trajectories_starfile: Union[str, Path] = None,  # TODO: Implement
+    trajectories_starfile: Union[str, Path] = None,
     tiltseries_relative_dir: Union[str, Path] = None,
     tomograms_starfile: Union[str, Path] = None,
     optimisation_set_starfile: Union[str, Path] = None,
@@ -292,9 +335,11 @@ def reconstruct_local_particle(
         output_dir=output_dir,
         bin=bin,
         float16=False,
-        no_ctf=no_ctf,
-        no_circle_crop=False,
+        no_ctf=True,
+        circle_precrop=False,
+        no_circle_crop=True,
         no_ic=False,
+        normalize_bin=False,
         crop_size=box_size,  # extracted particles must be the same size as box size for reconstruction (due to how cropping is done)
         particles_starfile=particles_starfile,
         trajectories_starfile=trajectories_starfile,
@@ -305,6 +350,7 @@ def reconstruct_local_particle(
     )
 
     reconstruct_particle(
+        output_dir=output_dir,
         crop_size=crop_size if crop_size is not None else box_size,
         no_ctf=no_ctf,
         cutoff_fraction=cutoff_fraction,
@@ -325,7 +371,7 @@ def reconstruct_local_copick(
     bin: int = 1,
     crop_size: int = None,
     no_ctf: bool = False,
-    cutoff_fraction: float = 0.01,  # TODO: implement
+    cutoff_fraction: float = 0.01,
     copick_run_names: list[str] = None,
     tiltseries_relative_dir: Path = None,
     tomograms_starfile: Path = None,
@@ -349,9 +395,11 @@ def reconstruct_local_copick(
         copick_user_id=copick_user_id,
         bin=bin,
         float16=False,
-        no_ctf=no_ctf,
-        no_circle_crop=False,
+        no_ctf=True,
+        circle_precrop=True,
+        no_circle_crop=True,
         no_ic=False,
+        normalize_bin=False,
         copick_run_names=copick_run_names,
         crop_size=box_size,
         tiltseries_relative_dir=tiltseries_relative_dir,
@@ -360,6 +408,7 @@ def reconstruct_local_copick(
     )
 
     reconstruct_particle(
+        output_dir=output_dir,
         crop_size=crop_size if crop_size is not None else box_size,
         no_ctf=no_ctf,
         cutoff_fraction=cutoff_fraction,
@@ -376,7 +425,7 @@ def reconstruct_data_portal(
     bin: int = 1,
     crop_size: int = None,
     no_ctf: bool = False,
-    cutoff_fraction: float = 0.01,  # TODO: implement
+    cutoff_fraction: float = 0.01,
     overwrite: bool = False,
     **data_portal_args,
 ):
@@ -394,15 +443,18 @@ def reconstruct_data_portal(
         box_size=box_size,
         bin=bin,
         float16=False,
-        no_ctf=no_ctf,
-        no_circle_crop=False,
+        no_ctf=True,
+        circle_precrop=True,
+        no_circle_crop=True,
         no_ic=False,
+        normalize_bin=False,
         crop_size=box_size,
         overwrite=overwrite,
         **data_portal_args,
     )
 
     reconstruct_particle(
+        output_dir=output_dir,
         crop_size=crop_size if crop_size is not None else box_size,
         no_ctf=no_ctf,
         cutoff_fraction=cutoff_fraction,
@@ -425,7 +477,7 @@ def reconstruct_data_portal_copick(
     bin: int = 1,
     crop_size: int = None,
     no_ctf: bool = False,
-    cutoff_fraction: float = 0.01,  # TODO: implement
+    cutoff_fraction: float = 0.01,
     overwrite: bool = False,
     **extra_kwargs,
 ):
@@ -449,15 +501,18 @@ def reconstruct_data_portal_copick(
         box_size=box_size,
         bin=bin,
         float16=False,
-        no_ctf=no_ctf,
-        no_circle_crop=False,
+        no_ctf=True,
+        circle_precrop=True,
+        no_circle_crop=True,
         no_ic=False,
-        crop_size=box_size,  # reconstruction expects extracted size == box_size
+        normalize_bin=False,
+        crop_size=box_size,
         overwrite=overwrite,
         **extra_kwargs,
     )
 
     reconstruct_particle(
+        output_dir=output_dir,
         crop_size=crop_size if crop_size is not None else box_size,
         no_ctf=no_ctf,
         cutoff_fraction=cutoff_fraction,
