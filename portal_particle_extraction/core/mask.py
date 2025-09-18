@@ -19,6 +19,17 @@ def circular_soft_mask(box_size: int, crop_size: float, falloff: float) -> np.nd
     return mask
 
 
+def spherical_soft_mask(box_size: int, crop_size: float, falloff: float) -> np.ndarray:
+    """Return a centered spherical soft mask of radius crop_size within a cube of length box_size (in pixels) (based on RELION's Reconstruction::taper)."""
+    z, y, x = np.ogrid[-box_size // 2 : box_size // 2, -box_size // 2 : box_size // 2, -box_size // 2 : box_size // 2]
+    mask = np.zeros((box_size, box_size, box_size))
+    r = np.sqrt(x * x + y * y + z * z)
+    mask[r < crop_size / 2.0 - falloff] = 1.0
+    falloff_zone = (r >= crop_size / 2.0 - falloff) & (r < crop_size / 2.0)
+    mask[falloff_zone] = 0.5 - 0.5 * np.cos(np.pi * ((crop_size / 2.0) - r[falloff_zone]) / falloff)
+    return mask
+
+
 def nyquist_filter_mask(box_size):
     """
     Return a circular low-pass mask based on a physical resolution cutoff (in Fourier space).

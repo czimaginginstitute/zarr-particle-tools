@@ -1,14 +1,21 @@
 """
 A module for reconstructing from extracted particles. A numerically-precise reimplementation of RELION's Reconstruct particle job (relion_tomo_reconstruct_particle).
+
+Regarding output files:
+- data_merged.mrc: the uncorrected reconstruction (after gridding correction)
+- merged_full.mrc: the CTF-corrected reconstruction (before spherical masking and mean subtraction)
+- merged.mrc: the final reconstruction (after spherical masking and mean subtraction)
+
+The same applies for half1 and half2 if random subsets are present.
 """
 
 # TODO: write tests (at least for local)
 import ast
 import logging
 import multiprocessing as mp
+import shutil
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Union
 
@@ -34,6 +41,7 @@ from portal_particle_extraction.core.forwardprojection import (
     get_particles_to_tiltseries_coordinates,
 )
 from portal_particle_extraction.core.helpers import get_tiltseries_data, setup_logging
+from portal_particle_extraction.core.mask import spherical_soft_mask
 from portal_particle_extraction.subtomo_extract import (
     parse_extract_data_portal_copick_subtomograms,
     parse_extract_data_portal_subtomograms,
@@ -44,15 +52,119 @@ from portal_particle_extraction.subtomo_extract import (
 logger = logging.getLogger(__name__)
 
 
-def reconstruct_single_tiltseries_wrapper(kwargs):
-    return reconstruct_single_tiltseries(**kwargs)
+def process_particle_wrapper(args):
+    return process_particle(**args)
 
 
-# TODO: validate box, crop, pixel size, and bin here
-# TODO: do frequency cutoff here
+def process_particle(
+    particle: pd.Series,
+    particle_projection_matrices: np.ndarray,
+    particle_coordinates: dict[int, tuple[float, float]],
+    box_size: int,
+    sections: list[int],
+    tiltseries_projection_matrices: np.ndarray,
+    len_individual_tiltseries_df: int,
+    no_ctf: bool,
+    voltage: float,
+    spherical_aberration: float,
+    amplitude_contrast: float,
+    handedness: int,
+    tiltseries_pixel_size: float,
+    phase_shift: list[float],
+    defocus_u: list[float],
+    defocus_v: list[float],
+    defocus_angle: list[float],
+    doses: list[float],
+    ctf_scalefactor: list[float],
+    bfactor_per_electron_dose: list[float],
+    bin: int,
+    dose_weights: np.ndarray,
+    freq_cutoff_idx: list[int],
+) -> tuple[np.ndarray, np.ndarray, int]:
+    """
+    Read an extracted particle and backproject it into a Fourier volume.
+
+    Returns:
+        particle_data_fourier_volume (np.ndarray): The Fourier volume of the particle data.
+        particle_weight_fourier_volume (np.ndarray): The Fourier volume of the particle weights.
+        random_subset (int): The assigned random subset of the particle (for half-set reconstructions). If not present, returns 0.
+    """
+    visible_sections = ast.literal_eval(particle["rlnTomoVisibleFrames"])
+    assert (
+        len(visible_sections) == len_individual_tiltseries_df
+    ), f"Mismatch between visible sections and tiltseries for {particle['rlnTomoParticleName']}"
+    particle_path = Path(particle["rlnImageName"])
+    if not particle_path.exists():
+        raise FileNotFoundError(
+            f"Particle file {particle_path} does not exist. Please check the path (and current working directory) and try again."
+        )
+    with mrcfile.open(particle_path, permissive=True) as mrc:
+        mrc_data = mrc.data
+    assert (
+        sum(visible_sections) == mrc_data.shape[0]
+    ), f"Mismatch between visible sections and particle data for {particle['rlnTomoParticleName']}"
+    assert (
+        mrc_data.shape[1] == box_size and mrc_data.shape[2] == box_size
+    ), f"Mismatch between box size and particle data for {particle['rlnTomoParticleName']}"
+    assert mrc_data.dtype == np.float32, f"Particle data must be float32 for {particle['rlnTomoParticleName']}"
+
+    particle_data = np.fft.rfft2(mrc_data, norm="ortho", axes=(-2, -1))
+
+    weight_data = np.ones((len(sections), box_size, box_size // 2 + 1), dtype=np.complex64)
+    particle_data_fourier_volume = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex64)
+    particle_weight_fourier_volume = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex64)
+
+    particle_section_index = 0
+    for section_index, section in enumerate(sections):
+        if not visible_sections[section_index]:
+            continue
+
+        coordinate, _ = particle_coordinates[section]
+        if not no_ctf:
+            weight_data[section_index] = (
+                calculate_ctf(
+                    coordinate=coordinate,
+                    tilt_projection_matrix=tiltseries_projection_matrices[section_index],
+                    voltage=voltage,
+                    spherical_aberration=spherical_aberration,
+                    amplitude_contrast=amplitude_contrast,
+                    handedness=handedness,
+                    tiltseries_pixel_size=tiltseries_pixel_size,
+                    phase_shift=phase_shift[section_index],
+                    defocus_u=defocus_u[section_index],
+                    defocus_v=defocus_v[section_index],
+                    defocus_angle=defocus_angle[section_index],
+                    dose=doses[section_index],
+                    ctf_scalefactor=ctf_scalefactor[section_index],
+                    bfactor=bfactor_per_electron_dose[section_index],
+                    box_size=box_size,
+                    bin=bin,
+                )
+                * dose_weights[section_index]
+            )
+            particle_data[particle_section_index] *= weight_data[section_index]
+            weight_data[section_index] **= 2
+
+        backproject_slice_backward(
+            particle_data_slice=particle_data[particle_section_index],
+            particle_weight_slice=weight_data[section_index],
+            particle_data_fourier_volume=particle_data_fourier_volume,
+            particle_weight_fourier_volume=particle_weight_fourier_volume,
+            particle_projection_matrix=particle_projection_matrices[section_index],
+            freq_cutoff=freq_cutoff_idx[section_index] if not no_ctf else box_size // 2 + 1,
+        )
+        particle_section_index += 1
+
+    return (
+        particle_data_fourier_volume,
+        particle_weight_fourier_volume,
+        particle["rlnRandomSubset"] if "rlnRandomSubset" in particle else 1,
+    )
+
+
+# TODO: validate box, pixel size, and bin here
 def reconstruct_single_tiltseries(
     no_ctf: bool,
-    crop_size: int,
     cutoff_fraction: float,
     filtered_particles_df: pd.DataFrame,
     filtered_trajectories_dict: pd.DataFrame,
@@ -60,6 +172,7 @@ def reconstruct_single_tiltseries(
     individual_tiltseries_df: pd.DataFrame,
     individual_tiltseries_path: Path,
     optics_row: pd.DataFrame,
+    progress_bar: tqdm = None,
 ):
     filtered_particles_df = filtered_particles_df.reset_index(drop=True)
 
@@ -77,23 +190,24 @@ def reconstruct_single_tiltseries(
     else:
         particle_rotation_matrices = np.tile(np.eye(3), (len(filtered_particles_df), 1, 1))
 
-    data_fourier_volume = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex64)
-    weight_fourier_volume = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex64)
-
     # tiltseries variables
     tiltseries_pixel_size = tiltseries_row_entry["rlnTomoTiltSeriesPixelSize"]
     assert np.isclose(
         tiltseries_pixel_size * bin, pixel_size
     ), f"Mismatch between tiltseries pixel size and optics pixel size for {tiltseries_row_entry['rlnTomoName']}"
-    projection_matrices = calculate_projection_matrix_from_starfile_df(individual_tiltseries_df)
+    tiltseries_projection_matrices = calculate_projection_matrix_from_starfile_df(individual_tiltseries_df)
     particles_to_tiltseries_coordinates = get_particles_to_tiltseries_coordinates(
         filtered_particles_df,
         filtered_trajectories_dict,
         individual_tiltseries_df,
-        projection_matrices,
+        tiltseries_projection_matrices,
         use_tomo_particle_name_for_id=False,
     )
     sections = individual_tiltseries_df["rlnMicrographName"].str.split("@").str[0].astype(int).to_list()
+    all_particle_projection_matrices = (
+        np.asarray(tiltseries_projection_matrices)[:, :3, :3][None, :, :, :]
+        @ np.asarray(particle_rotation_matrices)[:, None, :, :]
+    )
 
     # ctf & dose-weighting parameters
     voltage = tiltseries_row_entry["rlnVoltage"]
@@ -126,104 +240,110 @@ def reconstruct_single_tiltseries(
         ],
         dtype=np.complex64,
     )
+    freq_cutoff = dose_weights[:, 0, :] < cutoff_fraction
+    freq_cutoff_idx = freq_cutoff.shape[1] - np.argmax(freq_cutoff[:, ::-1], axis=1)
 
-    def process_particle(particle_index, particle):
-        visible_sections = ast.literal_eval(particle["rlnTomoVisibleFrames"])
-        assert len(visible_sections) == len(
-            individual_tiltseries_df
-        ), f"Mismatch between visible sections and tiltseries for {particle['rlnTomoParticleName']}"
-        particle_path = Path(particle["rlnImageName"])
-        if not particle_path.exists():
-            raise FileNotFoundError(
-                f"Particle file {particle_path} does not exist. Please check the path (and current working directory) and try again."
-            )
-        with mrcfile.open(particle_path, permissive=True) as mrc:
-            mrc_data = mrc.data
-        assert (
-            sum(visible_sections) == mrc_data.shape[0]
-        ), f"Mismatch between visible sections and particle data for {particle['rlnTomoParticleName']}"
-        assert (
-            mrc_data.shape[1] == box_size and mrc_data.shape[2] == box_size
-        ), f"Mismatch between box size and particle data for {particle['rlnTomoParticleName']}"
-        assert mrc_data.dtype == np.float32, f"Particle data must be float32 for {particle['rlnTomoParticleName']}"
+    args_list = [
+        {
+            "particle": particle,
+            "particle_projection_matrices": all_particle_projection_matrices[particle_index],
+            "particle_coordinates": particles_to_tiltseries_coordinates[particle_index + 1],  # RELION 1-based indexing
+        }
+        for particle_index, particle in filtered_particles_df.iterrows()
+    ]
+    constant_args = {
+        "box_size": box_size,
+        "sections": sections,
+        "tiltseries_projection_matrices": tiltseries_projection_matrices,
+        "len_individual_tiltseries_df": len(individual_tiltseries_df),
+        "no_ctf": no_ctf,
+        "voltage": voltage,
+        "spherical_aberration": spherical_aberration,
+        "amplitude_contrast": amplitude_contrast,
+        "handedness": handedness,
+        "tiltseries_pixel_size": tiltseries_pixel_size,
+        "phase_shift": phase_shift,
+        "defocus_u": defocus_u,
+        "defocus_v": defocus_v,
+        "defocus_angle": defocus_angle,
+        "doses": doses,
+        "ctf_scalefactor": ctf_scalefactor,
+        "bfactor_per_electron_dose": bfactor_per_electron_dose,
+        "bin": bin,
+        "dose_weights": dose_weights,
+        "freq_cutoff_idx": freq_cutoff_idx,
+    }
+    args_list = [{**args, **constant_args} for args in args_list]
 
-        particle_projection_matrices = (
-            np.asarray(projection_matrices)[:, :3, :3] @ particle_rotation_matrices[particle_index]
-        )
+    data_fourier_volume_half1 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex64)
+    data_fourier_volume_half2 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex64)
+    weight_fourier_volume_half1 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex64)
+    weight_fourier_volume_half2 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex64)
 
-        particle_data = np.fft.rfft2(mrc_data, norm="ortho", axes=(-2, -1))
-
-        weight_data = np.ones((len(sections), box_size, box_size // 2 + 1), dtype=np.complex64)
-        particle_data_fourier_volume = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex64)
-        particle_weight_fourier_volume = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex64)
-
-        # adapt to RELION 1-based indexing
-        particle_coordinates = particles_to_tiltseries_coordinates[particle_index + 1]
-        particle_section_index = 0
-        for section_index, section in enumerate(sections):
-            if not visible_sections[section_index]:
-                continue
-
-            coordinate, _ = particle_coordinates[section]
-            if not no_ctf:
-                weight_data[section_index] = (
-                    calculate_ctf(
-                        coordinate=coordinate,
-                        tilt_projection_matrix=projection_matrices[section_index],
-                        voltage=voltage,
-                        spherical_aberration=spherical_aberration,
-                        amplitude_contrast=amplitude_contrast,
-                        handedness=handedness,
-                        tiltseries_pixel_size=tiltseries_pixel_size,
-                        phase_shift=phase_shift[section_index],
-                        defocus_u=defocus_u[section_index],
-                        defocus_v=defocus_v[section_index],
-                        defocus_angle=defocus_angle[section_index],
-                        dose=doses[section_index],
-                        ctf_scalefactor=ctf_scalefactor[section_index],
-                        bfactor=bfactor_per_electron_dose[section_index],
-                        box_size=box_size,
-                        bin=bin,
-                    )
-                    * dose_weights[section_index]
-                )
-                particle_data[particle_section_index] *= weight_data[section_index]
-                weight_data[section_index] **= 2
-
-            backproject_slice_backward(
-                particle_data_slice=particle_data[particle_section_index],
-                particle_weight_slice=weight_data[section_index],
-                particle_data_fourier_volume=particle_data_fourier_volume,
-                particle_weight_fourier_volume=particle_weight_fourier_volume,
-                particle_projection_matrix=particle_projection_matrices[section_index],
-                freq_cutoff=np.argmax(dose_weights[section_index][0] < cutoff_fraction) if not no_ctf else box_size + 1,
-            )
-            particle_section_index += 1
-
-        logger.debug(
-            f"Processed particle {particle['rlnTomoParticleName']} from tiltseries {tiltseries_row_entry['rlnTomoName']}"
-        )
-        return particle_data_fourier_volume, particle_weight_fourier_volume
-
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        for particle_data_fourier_volume, particle_weight_fourier_volume in executor.map(
-            lambda t: process_particle(*t), filtered_particles_df.iterrows()
+    cpu_count = min(mp.cpu_count(), len(filtered_particles_df))
+    with mp.Pool(processes=cpu_count) as pool:
+        for particle_data_fourier_volume, particle_weight_fourier_volume, random_subset in pool.imap_unordered(
+            process_particle_wrapper, args_list
         ):
-            data_fourier_volume += particle_data_fourier_volume
-            weight_fourier_volume += particle_weight_fourier_volume
+            if random_subset == 1:
+                data_fourier_volume_half1 += particle_data_fourier_volume
+                weight_fourier_volume_half1 += particle_weight_fourier_volume
+            elif random_subset == 2:
+                data_fourier_volume_half2 += particle_data_fourier_volume
+                weight_fourier_volume_half2 += particle_weight_fourier_volume
+            else:
+                raise ValueError(f"Invalid random subset {random_subset} found! Should be 1 or 2.")
+            if progress_bar is not None:
+                progress_bar.update(1)
 
-    return data_fourier_volume, weight_fourier_volume
+    return (
+        data_fourier_volume_half1,
+        weight_fourier_volume_half1,
+        data_fourier_volume_half2,
+        weight_fourier_volume_half2,
+    )
 
 
+def finalise_volume(data_fourier_volume, weight_fourier_volume, output_dir, voxel_size, crop_size, tag):
+    gridding_corrected_volume = gridding_correct_3d_sinc2(particle_fourier_volume=data_fourier_volume)
+    ctf_corrected_real_volume = ctf_correct_3d_heuristic(
+        real_space_volume=gridding_corrected_volume, weights_fourier_volume=weight_fourier_volume
+    )
+
+    with mrcfile.new(Path(output_dir) / f"data_{tag}.mrc", overwrite=True) as mrc:
+        mrc.set_data(gridding_corrected_volume.astype(np.float32))
+        mrc.voxel_size = voxel_size
+
+    with mrcfile.new(Path(output_dir) / f"{tag}_full.mrc", overwrite=True) as mrc:
+        mrc.set_data(ctf_corrected_real_volume.astype(np.float32))
+        mrc.voxel_size = voxel_size
+
+    final_volume = ctf_corrected_real_volume
+
+    if crop_size < ctf_corrected_real_volume.shape[0]:
+        start = (ctf_corrected_real_volume.shape[0] - crop_size) // 2
+        end = start + crop_size
+        final_volume = ctf_corrected_real_volume[start:end, start:end, start:end]
+
+    soft_mask = spherical_soft_mask(box_size=crop_size, crop_size=crop_size, falloff=5.0)
+    inner_mask = soft_mask > 0
+    inner_mean = (final_volume[inner_mask] * soft_mask[inner_mask]).sum() / soft_mask[inner_mask].sum()
+    final_volume[~inner_mask] = 0.0
+    final_volume[inner_mask] = soft_mask[inner_mask] * (final_volume[inner_mask] - inner_mean)
+
+    with mrcfile.new(Path(output_dir) / f"{tag}.mrc", overwrite=True) as mrc:
+        mrc.set_data(final_volume.astype(np.float32))
+        mrc.voxel_size = voxel_size
+
+
+# TODO: write out weight*.mrc files
 # TODO: implement tiltseries relative dir but for particles
 # TODO: support no_circle_crop
 # TODO: also list out things that are not supported (helical symmetry, etc)
-# TODO: figure out what's going on with (implement) taper
-# TODO: implement particle splitting? (with random seed?)
-# TODO: implement multiprocessing & multithreading
 # TODO: support multiple box sizes / crop sizes / pixel sizes
-def reconstruct_particle(
+def reconstruct(
     output_dir: Union[str, Path],
+    box_size: int,
     crop_size: int = None,
     no_ctf: bool = False,
     cutoff_fraction: float = 0.01,
@@ -233,6 +353,9 @@ def reconstruct_particle(
     tomograms_starfile: Union[str, Path] = None,
 ):
     start_time = time.time()
+
+    if not crop_size:
+        crop_size = box_size
 
     particles_metadata = starfile.read(particles_starfile)
     particles_df = apply_offsets_to_coordinates(particles_metadata["particles"])
@@ -248,11 +371,19 @@ def reconstruct_particle(
         tiltseries_relative_dir = Path("./")
 
     assert optics_df["rlnImageDimensionality"].unique() == [2], "Input particles must be 2D"
-
     # TODO: move this into a multiproc process support multiple
     assert optics_df["rlnImageSize"].nunique() == 1, "Currently only supports one crop size"
     assert optics_df["rlnImagePixelSize"].nunique() == 1, "Currently only supports one pixel size"
     assert optics_df["rlnTomoSubtomogramBinning"].nunique() == 1, "Currently only supports one binning"
+
+    voxel_size = float(optics_df["rlnImagePixelSize"].iloc[0])
+
+    logger.info(f"Starting particle reconstruction from {len(particles_df)} particles using {mp.cpu_count()} CPUs...")
+
+    if "rlnRandomSubset" in particles_df.columns:
+        logger.info("Random subsets for the particles. Reconstructing half-maps.")
+    else:
+        logger.info("No random subsets for the particles. Reconstructing full map only.")
 
     args_list = [
         get_tiltseries_data(
@@ -267,47 +398,70 @@ def reconstruct_particle(
         for _, tiltseries_row_entry in tomograms_df.iterrows()
     ]
 
+    progress_bar = tqdm(total=len(particles_df), file=sys.stdout, desc="Reconstructing particles", unit="particles")
     constant_args = {
         "no_ctf": no_ctf,
-        "crop_size": crop_size,
         "cutoff_fraction": cutoff_fraction,
+        "progress_bar": progress_bar,
     }
-
     args_list = [{**args, **constant_args} for args in args_list if args is not None]
 
-    output_data_fourier_volume = None
-    output_weight_fourier_volume = None
+    output_data_fourier_volume_half1 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex64)
+    output_data_fourier_volume_half2 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex64)
+    output_weight_fourier_volume_half1 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex64)
+    output_weight_fourier_volume_half2 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex64)
 
-    cpu_count = min(32, mp.cpu_count(), len(tomograms_df))
-    with mp.Pool(processes=cpu_count) as pool:
-        for data_fourier_volume, weight_fourier_volume in tqdm(
-            pool.imap_unordered(reconstruct_single_tiltseries_wrapper, args_list),
-            total=len(args_list),
-            desc="Reconstructing particles",
-            file=sys.stdout,
-        ):
-            if output_data_fourier_volume is None:
-                output_data_fourier_volume = np.zeros((data_fourier_volume.shape), dtype=np.complex64)
-            output_data_fourier_volume += data_fourier_volume
+    for arg in args_list:
+        (
+            data_fourier_volume_half1,
+            weight_fourier_volume_half1,
+            data_fourier_volume_half2,
+            weight_fourier_volume_half2,
+        ) = reconstruct_single_tiltseries(**arg)
 
-            if output_weight_fourier_volume is None:
-                output_weight_fourier_volume = np.zeros((weight_fourier_volume.shape), dtype=np.complex64)
-            output_weight_fourier_volume += weight_fourier_volume
+        output_data_fourier_volume_half1 += data_fourier_volume_half1
+        output_data_fourier_volume_half2 += data_fourier_volume_half2
+        output_weight_fourier_volume_half1 += weight_fourier_volume_half1
+        output_weight_fourier_volume_half2 += weight_fourier_volume_half2
 
-    grid_corrected_real_volume = gridding_correct_3d_sinc2(particle_fourier_volume=output_data_fourier_volume)
-    ctf_corrected_real_volume = ctf_correct_3d_heuristic(
-        real_space_volume=grid_corrected_real_volume, weights_fourier_volume=output_weight_fourier_volume
+    progress_bar.close()
+
+    output_data_fourier_volume = output_data_fourier_volume_half1 + output_data_fourier_volume_half2
+    output_weight_fourier_volume = output_weight_fourier_volume_half1 + output_weight_fourier_volume_half2
+
+    logging.info("Finalising volumes and writing to disk...")
+
+    if "rlnRandomSubset" in particles_df.columns:
+        finalise_volume(
+            output_data_fourier_volume_half1,
+            output_weight_fourier_volume_half1,
+            output_dir,
+            voxel_size,
+            crop_size,
+            tag="half1",
+        )
+        finalise_volume(
+            output_data_fourier_volume_half2,
+            output_weight_fourier_volume_half2,
+            output_dir,
+            voxel_size,
+            crop_size,
+            tag="half2",
+        )
+    finalise_volume(
+        output_data_fourier_volume, output_weight_fourier_volume, output_dir, voxel_size, crop_size, tag="merged"
     )
 
-    with mrcfile.new(Path(output_dir) / "merged.mrc", overwrite=True) as mrc:
-        mrc.set_data(ctf_corrected_real_volume.astype(np.float32))
-        mrc.voxel_size = float(optics_df["rlnImagePixelSize"].iloc[0])
+    # delete Subtomograms directory if it exists
+    subtomos_dir = Path(output_dir) / "Subtomograms"
+    if subtomos_dir.exists() and subtomos_dir.is_dir():
+        shutil.rmtree(subtomos_dir)
 
     end_time = time.time()
     logger.info(f"Reconstructing particles took {end_time - start_time:.2f} seconds.")
 
 
-def reconstruct_local_particle(
+def reconstruct_local(
     box_size: int,
     output_dir: Union[str, Path],
     bin: int = 1,
@@ -336,7 +490,7 @@ def reconstruct_local_particle(
         bin=bin,
         float16=False,
         no_ctf=True,
-        circle_precrop=False,
+        circle_precrop=True,
         no_circle_crop=True,
         no_ic=False,
         normalize_bin=False,
@@ -349,8 +503,9 @@ def reconstruct_local_particle(
         overwrite=overwrite,
     )
 
-    reconstruct_particle(
+    reconstruct(
         output_dir=output_dir,
+        box_size=box_size,
         crop_size=crop_size if crop_size is not None else box_size,
         no_ctf=no_ctf,
         cutoff_fraction=cutoff_fraction,
@@ -407,8 +562,9 @@ def reconstruct_local_copick(
         overwrite=overwrite,
     )
 
-    reconstruct_particle(
+    reconstruct(
         output_dir=output_dir,
+        box_size=box_size,
         crop_size=crop_size if crop_size is not None else box_size,
         no_ctf=no_ctf,
         cutoff_fraction=cutoff_fraction,
@@ -453,8 +609,9 @@ def reconstruct_data_portal(
         **data_portal_args,
     )
 
-    reconstruct_particle(
+    reconstruct(
         output_dir=output_dir,
+        box_size=box_size,
         crop_size=crop_size if crop_size is not None else box_size,
         no_ctf=no_ctf,
         cutoff_fraction=cutoff_fraction,
@@ -511,8 +668,9 @@ def reconstruct_data_portal_copick(
         **extra_kwargs,
     )
 
-    reconstruct_particle(
+    reconstruct(
         output_dir=output_dir,
+        box_size=box_size,
         crop_size=crop_size if crop_size is not None else box_size,
         no_ctf=no_ctf,
         cutoff_fraction=cutoff_fraction,
@@ -535,7 +693,7 @@ def cli():
 @cli_options.reconstruct_options()
 def cmd_local(**kwargs):
     setup_logging(kwargs.pop("debug", False))
-    reconstruct_local_particle(**kwargs)
+    reconstruct_local(**kwargs)
 
 
 @cli.command("local-copick", help="Reconstruct a particle map from local tiltseries with copick particles.")

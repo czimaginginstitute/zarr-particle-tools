@@ -19,8 +19,8 @@ def bilinear_interpolation_fourier(img: np.ndarray, x_coord: np.ndarray, y_coord
 
     y_coord = np.where(y_coord < 0.0, y_coord + y_dim, y_coord)
 
-    x0_int = np.floor(x_coord).astype(np.int64)
-    y0_int = np.floor(y_coord).astype(np.int64)
+    x0_int = np.floor(x_coord).astype(np.int32)
+    y0_int = np.floor(y_coord).astype(np.int32)
 
     x_offset = x_coord - x0_int
     y_offset = y_coord - y0_int
@@ -58,12 +58,13 @@ def backproject_slice_backward(
     Backproject a single slice into a 3D fourier volume. Based on RELION's FourierBackprojection::backprojectSlice_backward.
 
     Args:
-        max_freq (int): Maximum frequency to consider (pixels away from the center).
-        particle_data (np.ndarray): 2D complex image in np.rfft2 layout (box_size, box_size // 2 + 1).
-        weight_data (np.ndarray): 2D real image in np.rfft2 layout (box_size, box_size // 2 + 1). (Should be the square of the CTF * dose weighting)
-        part_proj_matrix (np.ndarray): 3x3 or 4x4 projection matrix. (Only 3x3 part is used) # TODO: integrate subtomogram orientations
-        particle_fourier_volume (np.ndarray): 3D complex volume of the particle in np.rfft3 layout (box_size, box_size, box_size // 2 + 1).
-        weight_fourier_volume (np.ndarray): 3D complex volume of the weights in np.rfft3 layout (box_size, box_size, box_size // 2 + 1).
+        particle_data_slice (np.ndarray): 2D complex image in np.rfft2 layout (box_size, box_size // 2 + 1).
+        particle_weight_slice (np.ndarray): 2D real image in np.rfft2 layout (box_size, box_size // 2 + 1). (Should be the square of the CTF * dose weighting)
+        particle_data_fourier_volume (np.ndarray): 3D complex volume of the particle in np.rfft3 layout (box_size, box_size, box_size // 2 + 1).
+        particle_weight_fourier_volume (np.ndarray): 3D complex volume of the weights in np.rfft3 layout (box_size, box_size, box_size // 2 + 1).
+        particle_projection_matrix (np.ndarray): 3x3 or 4x4 projection matrix. (Only 3x3 part is used) # TODO: integrate subtomogram orientations
+        freq_cutoff (int): Maximum frequency to consider (pixels away from the center).
+        z_chunk (int, optional): Number of z-slices to process at a time. Defaults to 8.
 
     Returns:
         tuple[np.ndarray, np.ndarray]: Updated particle_fourier_volume and weight_fourier_volume.
@@ -93,6 +94,9 @@ def backproject_slice_backward(
     zz_all[zz_all >= d3 // 2] -= d3
     x_all = np.arange(wh3, dtype=np.float64)
 
+    X = x_all[None, None, :]
+    Y = yy_all[None, :, None]
+
     r2_max = freq_cutoff**2
 
     # precompute spatial bounds used in mask for source sampling
@@ -102,8 +106,6 @@ def backproject_slice_backward(
     for z0 in range(0, d3, z_chunk):
         z1 = min(d3, z0 + z_chunk)
 
-        X = x_all[None, None, :]
-        Y = yy_all[None, :, None]
         Z = zz_all[z0:z1, None, None]
 
         # slab condition: -1 < nx*x + ny*yy + nz*zz < 1
@@ -176,9 +178,9 @@ def gridding_correct_3d_sinc2(
 
     real_volume = np.fft.irfftn(particle_fourier_volume, norm="ortho")
 
-    zz = np.arange(box_size)[:, None, None] - box_size / 2.0
-    yy = np.arange(box_size)[None, :, None] - box_size / 2.0
-    xx = np.arange(box_size)[None, None, :] - box_size / 2.0
+    zz = np.arange(box_size)[:, None, None] - box_size // 2
+    yy = np.arange(box_size)[None, :, None] - box_size // 2
+    xx = np.arange(box_size)[None, None, :] - box_size // 2
 
     radius = np.sqrt(xx**2 + yy**2 + zz**2)
     norm_radius = radius / box_size
@@ -200,23 +202,24 @@ def gridding_correct_3d_sinc2(
     return real_volume / denom
 
 
-def radial_avg_fftw_half_3d_lin(img: np.ndarray) -> np.ndarray:
+def radial_avg_half_3d_linear(volume: np.ndarray) -> np.ndarray:
     """
-    Linear (bin-splitting) radial average over a 3D FFTW half-volume.
-    Input shape: (h, d, wh) or (box, box, box//2+1), last axis is rfft axis (x>=0).
-    Matches the C++ RadialAvg::fftwHalf_3D_lin behavior.
+    Linear (bin-splitting) radial average over a 3D fourier-space half-volume. Based on RELION's RadialAvg::fftwHalf_3D_lin.
+
+    Args:
+        volume (np.ndarray): 3D volume in np.rfft3 layout (box_size, box_size, box_size // 2 + 1).
 
     Returns:
         avg: length = wh (i.e., xdim), complex if img is complex.
     """
-    h, d, wh = img.shape[0], img.shape[1], img.shape[2]
+    h, d, wh = volume.shape[0], volume.shape[1], volume.shape[2]
 
     # frequency-space coordinates
-    xx = np.arange(wh)[None, None, :]  # x in [0, wh-1]
+    xx = np.arange(wh)[None, None, :]
     yy = np.arange(h)[None, :, None]
-    yy = np.where(yy >= h / 2, yy - h, yy)  # wrap y
+    yy = np.where(yy >= h // 2, yy - h, yy)
     zz = np.arange(d)[:, None, None]
-    zz = np.where(zz >= d / 2, zz - d, zz)  # wrap z
+    zz = np.where(zz >= d // 2, zz - d, zz)
 
     r = np.sqrt(xx**2 + yy**2 + zz**2)
     r0 = np.floor(r).astype(np.int32)
@@ -229,10 +232,11 @@ def radial_avg_fftw_half_3d_lin(img: np.ndarray) -> np.ndarray:
     m0 = (r0 >= 0) & (r0 < wh)
     m1 = (r1 >= 0) & (r1 < wh)
 
-    if np.iscomplexobj(img):
-        v_real = img.real
-        v_imag = img.imag
+    if np.iscomplexobj(volume):
+        v_real = volume.real
+        v_imag = volume.imag
 
+        # interpolate real and imaginary parts separately
         sums_real = np.bincount(r0[m0].ravel(), weights=(w0[m0] * v_real[m0]).ravel(), minlength=wh) + np.bincount(
             r1[m1].ravel(), weights=(w1[m1] * v_real[m1]).ravel(), minlength=wh
         )
@@ -264,7 +268,7 @@ def ctf_correct_3d_heuristic(
 
     Args:
         real_space_volume (np.ndarray): Real-space volume (box_size, box_size, box_size).
-        weights_fourier_volume (np.ndarray): Half-spectrum fourier-space weights (box_size, box_size, box_size // 2 + 1). (Should be the square of the CTF * dose weighting)
+        weights_fourier_volume (np.ndarray): Half-volume fourier-space weights (box_size, box_size, box_size // 2 + 1). (Should be the square of the CTF * dose weighting)
         weight_fraction (float): Fraction used to set the per-radius minimum threshold for the weights. Default 0.001.
 
     Returns:
@@ -275,15 +279,15 @@ def ctf_correct_3d_heuristic(
 
     corrected_real_volume = np.fft.rfftn(real_space_volume, norm="ortho")
 
-    radial_average = radial_avg_fftw_half_3d_lin(weights_fourier_volume)
+    radial_average = radial_avg_half_3d_linear(weights_fourier_volume)
     num_radii = radial_average.size
 
     # frequency-space coordinates (match half-volume indexing)
     xx = np.arange(half_box_size)[None, None, :]
     yy = np.arange(box_size)[None, :, None]
-    yy = np.where(yy >= box_size / 2, yy - box_size, yy)
+    yy[yy >= box_size // 2] -= box_size
     zz = np.arange(box_size)[:, None, None]
-    zz = np.where(zz >= box_size / 2, zz - box_size, zz)
+    zz[zz >= box_size // 2] -= box_size
 
     radius = np.sqrt(xx**2 + yy**2 + zz**2)
     radius_floor = np.floor(radius).astype(np.int32)

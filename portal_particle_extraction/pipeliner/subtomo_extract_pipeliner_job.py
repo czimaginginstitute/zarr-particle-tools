@@ -22,8 +22,9 @@ class PythonRelionPseudoSubtomoJob(PipelinerJob):
         super().__init__()
         self.jobinfo.programs = [ExternalProgram(command="portal-particle-extraction")]
         self.jobinfo.display_name = "Extract subtomogram volumes (Python)."
-
-        self.jobinfo.short_desc = "Generate PseudoSubtomograms using Relion"
+        self.jobinfo.short_desc = (
+            "Extract subtomograms using portal-particle-extraction (Python reimplementation of RELION job)."
+        )
         self.joboptions = copy.deepcopy(RelionPseudoSubtomoJob().joboptions)
 
     def create_output_nodes(self):
