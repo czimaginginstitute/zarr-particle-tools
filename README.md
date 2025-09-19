@@ -30,7 +30,7 @@ poetry install # or "pip install ." or "uv pip install ."
 ```
 
 ## Example runs
-### See full options with `portal-particle-extraction local --help` and `portal-particle-extraction data-portal --help`. 
+### See full options with `portal-particle-extraction --help` and `portal-particle-reconstruction --help`.
 
 For RELION projects, a `--tiltseries-relative-dir` is not needed if this script is run from the RELION project directory root.
 
@@ -83,6 +83,7 @@ portal-particle-extraction data-portal \
 To ensure that the subtomogram extraction matches RELION's subtomogram extraction, we have a set of tests that compare the output of this script with RELION 5.0's output and ensure that they match within reasonable numerical precision. float16 data has a more relaxed tolerance due to the reduced precision of the data type, and the real experimental data has a more relaxed tolerance due to the noisier nature of the data.
 
 ## Known Limitations
+If you would like to see a feature added (on or off this limitation list), please open an issue!
 
 ### Extraction (and reconstruction) limitations
 - Does not (yet) support particle subtomogram orientation (rlnTomoSubtomogramRot, rlnTomoSubtomogramTilt, rlnTomoSubtomogramPsi)
@@ -103,13 +104,12 @@ To ensure that the subtomogram extraction matches RELION's subtomogram extractio
 ### Reconstruction limitations
 - Does not (yet) support a SNR value (`--snr`) flag
 - Does not (yet) support no_ctf
-- Does not support symmetry / helical symmetry
+- Does not support helical symmetry
 - Does not support backup / only do unfinished features 
 
 ## Project roadmap
-- [ ] TEST: Support multiple optics groups 
-- [ ] Support features that have (yet) to be implemented
-- [ ] Build primary entrypoints for package
 - [ ] Write tests for generating star files and pulling from the CryoET Data Portal
-- [ ] Add copick support
-- [ ] Notify teamtomo of this work and possible integration into their codebase
+- [ ] Write tests for subtomogram reconstruction
+- [ ] Support multiple optics groups 
+- [ ] Support features that have (yet) to be implemented
+- [ ] Add starfile generation from CryoET Data Portal into cryoet-alignment package

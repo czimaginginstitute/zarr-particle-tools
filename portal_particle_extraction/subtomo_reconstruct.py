@@ -162,7 +162,6 @@ def process_particle(
     )
 
 
-# TODO: validate box, pixel size, and bin here
 def reconstruct_single_tiltseries(
     no_ctf: bool,
     cutoff_fraction: float,
@@ -325,7 +324,7 @@ def finalise_volume(data_fourier_volume, weight_fourier_volume, output_dir, voxe
         end = start + crop_size
         final_volume = ctf_corrected_real_volume[start:end, start:end, start:end]
 
-    soft_mask = spherical_soft_mask(box_size=crop_size, crop_size=crop_size, falloff=5.0)
+    soft_mask = spherical_soft_mask(box_size=crop_size, crop_size=crop_size, falloff=10.0)
     inner_mask = soft_mask > 0
     inner_mean = (final_volume[inner_mask] * soft_mask[inner_mask]).sum() / soft_mask[inner_mask].sum()
     final_volume[~inner_mask] = 0.0
@@ -339,7 +338,6 @@ def finalise_volume(data_fourier_volume, weight_fourier_volume, output_dir, voxe
 # TODO: write out weight*.mrc files
 # TODO: implement tiltseries relative dir but for particles
 # TODO: support no_circle_crop
-# TODO: also list out things that are not supported (helical symmetry, etc)
 # TODO: support multiple box sizes / crop sizes / pixel sizes
 def reconstruct(
     output_dir: Union[str, Path],

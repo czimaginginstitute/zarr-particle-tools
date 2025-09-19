@@ -741,6 +741,7 @@ def parse_extract_data_portal_copick_subtomograms(
         overwrite=overwrite,
         output_dir=output_dir,
         dry_run=dry_run,
+        copick_data_portal=True,
     )
 
     if not copick_run_names:

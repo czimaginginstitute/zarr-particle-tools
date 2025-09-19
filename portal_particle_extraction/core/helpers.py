@@ -82,6 +82,7 @@ def validate_and_setup(
     crop_size: int = None,
     overwrite: bool = False,
     dry_run: bool = False,
+    copick_data_portal: bool = False,
 ) -> tuple[Path, Path, Path, Path, Path, Path]:
     if not dry_run and box_size is None:
         raise ValueError("Box size must be specified.")
@@ -125,7 +126,7 @@ def validate_and_setup(
             "Cannot specify both optimisation set star file and individual star files. Please provide only one of them."
         )
 
-    if not optimisation_set_starfile and not particles_starfile and not tomograms_starfile:
+    if not copick_data_portal and not optimisation_set_starfile and not particles_starfile and not tomograms_starfile:
         raise ValueError("Either optimisation set star file or particles and tomograms star files must be provided.")
 
     if optimisation_set_starfile:

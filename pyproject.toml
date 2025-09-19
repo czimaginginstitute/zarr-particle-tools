@@ -47,4 +47,4 @@ portal-particle-reconstruct = "portal_particle_extraction.subtomo_reconstruct:cl
 
 [project.entry-points."ccpem_pipeliner.jobs"]
 "portalparticleextraction.pseudosubtomo" = "portal_particle_extraction.pipeliner.subtomo_extract_pipeliner_job:PythonRelionPseudoSubtomoJob"
-"portalparticleextraction.subtomoreconstruct" = "portal_particle_extraction.pipeliner.subtomo_reconstruct_pipeliner_job:PythonRelionSubtomoReconstructJob"
+"portalparticleextraction.reconstruct" = "portal_particle_extraction.pipeliner.subtomo_reconstruct_pipeliner_job:PythonRelionSubtomoReconstructJob"
