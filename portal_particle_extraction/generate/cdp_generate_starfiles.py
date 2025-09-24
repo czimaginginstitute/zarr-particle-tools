@@ -286,7 +286,9 @@ def get_tomograms_df(optics_df: pd.DataFrame, output_dir: Path) -> tuple[pd.Data
     tomograms_df["rlnMicrographOriginalPixelSize"] = tomograms_df["rlnTomoTiltSeriesPixelSize"]
     tomograms_df["rlnTomoHand"] = TOMO_HAND_DEFAULT_VALUE
     tomograms_df["rlnTomoTiltSeriesStarFile"] = tomograms_df["rlnTomoName"].apply(
-        lambda x: (output_dir / "tiltseries" / f"{x}.star").resolve()
+        lambda x: (
+            output_dir / "tiltseries" / f"{x}.star"
+        )  # can't make this an absolute path because RELION assumes relative paths
     )
 
     # add tomogram dimensions rlnTomoSizeX, rlnTomoSizeY, rlnTomoSizeZ
@@ -375,7 +377,7 @@ def generate_individual_tomogram_starfile(
     # reorder rows and columns to match RELION format
     individual_tomogram_df.sort_values(by="z_index", inplace=True)
     individual_tomogram_df["rlnMicrographName"] = individual_tomogram_df["z_index"].apply(
-        lambda x: f"{str(int(x))}@{(output_dir / TILTSERIES_MRCS_PLACEHOLDER).resolve()}"
+        lambda x: f"{str(int(x))}@{(output_dir / TILTSERIES_MRCS_PLACEHOLDER)}"  # can't make this an absolute path because RELION assumes relative paths
     )
     individual_tomogram_df[TILTSERIES_URI_RELION_COLUMN] = tiltseries.s3_omezarr_dir
     individual_tomogram_df = individual_tomogram_df.drop(columns=["z_index"])

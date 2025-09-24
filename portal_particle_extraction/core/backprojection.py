@@ -87,7 +87,7 @@ def backproject_slice_backward(
     AinvT = np.linalg.inv(A).T
     nx, ny, nz = AinvT[2, 0], AinvT[2, 1], AinvT[2, 2]
 
-    # precompute (y,z)-centered coordinates for all indices (vectorized)
+    # precompute (y,z)-centered coordinates for all indices
     yy_all = np.arange(h3, dtype=np.float64)
     yy_all[yy_all >= h3 // 2] -= h3
     zz_all = np.arange(d3, dtype=np.float64)

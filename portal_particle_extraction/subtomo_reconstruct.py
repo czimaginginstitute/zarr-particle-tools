@@ -279,7 +279,7 @@ def reconstruct_single_tiltseries(
     weight_fourier_volume_half1 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex64)
     weight_fourier_volume_half2 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex64)
 
-    cpu_count = min(mp.cpu_count(), len(filtered_particles_df))
+    cpu_count = min(32, mp.cpu_count(), len(filtered_particles_df))
     with mp.Pool(processes=cpu_count) as pool:
         for particle_data_fourier_volume, particle_weight_fourier_volume, random_subset in pool.imap_unordered(
             process_particle_wrapper, args_list
@@ -376,12 +376,12 @@ def reconstruct(
 
     voxel_size = float(optics_df["rlnImagePixelSize"].iloc[0])
 
-    logger.info(f"Starting particle reconstruction from {len(particles_df)} particles using {mp.cpu_count()} CPUs...")
+    logger.info(f"Starting particle reconstruction from {len(particles_df)} particles...")
 
     if "rlnRandomSubset" in particles_df.columns:
-        logger.info("Random subsets for the particles. Reconstructing half-maps.")
+        logger.info("Random subsets exist for the particles. Reconstructing half-maps.")
     else:
-        logger.info("No random subsets for the particles. Reconstructing full map only.")
+        logger.info("No random subsets exist for the particles. Reconstructing full map only.")
 
     args_list = [
         get_tiltseries_data(
@@ -454,6 +454,16 @@ def reconstruct(
     subtomos_dir = Path(output_dir) / "Subtomograms"
     if subtomos_dir.exists() and subtomos_dir.is_dir():
         shutil.rmtree(subtomos_dir)
+
+    # delete particles.star if it exists
+    particles_star_path = Path(output_dir) / "particles.star"
+    if particles_star_path.exists() and particles_star_path.is_file():
+        particles_star_path.unlink()
+
+    # delete optimisation_set.star if it exists
+    optimisation_set_star_path = Path(output_dir) / "optimisation_set.star"
+    if optimisation_set_star_path.exists() and optimisation_set_star_path.is_file():
+        optimisation_set_star_path.unlink()
 
     end_time = time.time()
     logger.info(f"Reconstructing particles took {end_time - start_time:.2f} seconds.")
