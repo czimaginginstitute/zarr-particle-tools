@@ -427,7 +427,7 @@ def reconstruct(
     output_data_fourier_volume = output_data_fourier_volume_half1 + output_data_fourier_volume_half2
     output_weight_fourier_volume = output_weight_fourier_volume_half1 + output_weight_fourier_volume_half2
 
-    logging.info("Finalising volumes and writing to disk...")
+    logger.info("Finalising volumes and writing to disk...")
 
     if "rlnRandomSubset" in particles_df.columns:
         finalise_volume(

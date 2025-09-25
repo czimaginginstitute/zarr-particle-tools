@@ -40,6 +40,9 @@ def setup_logging(debug: bool = False):
 
     suppress_noisy_loggers(NOISY_LOGGERS)
 
+    for name in logging.root.manager.loggerDict:
+        logging.getLogger(name).propagate = True
+
 
 def get_filter(values, field, inexact_match, label=""):
     """Helper to append filters depending on inexact_match."""

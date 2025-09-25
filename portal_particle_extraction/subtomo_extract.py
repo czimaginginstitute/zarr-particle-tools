@@ -95,6 +95,7 @@ def process_tiltseries(
     individual_tiltseries_df: pd.DataFrame,
     individual_tiltseries_path: Path,
     optics_row: pd.DataFrame,
+    debug: bool = False,
 ) -> Union[None, tuple[pd.DataFrame, int]]:
     """
     Processes a single alignment file to extract subtomograms from the tiltseries.
@@ -105,7 +106,7 @@ def process_tiltseries(
 
     Returns the updated particles DataFrame and the number of skipped particles.
     """
-    setup_logging()
+    setup_logging(debug=debug)
     # following RELION convention
     pre_bin_box_size = int(round(box_size * bin))
     pre_bin_crop_size = crop_size * bin
@@ -212,6 +213,11 @@ def process_tiltseries(
             )
             tilt_stack[tilt] = padded_crop
 
+            if particle_id % 100 == 0:
+                logger.debug(
+                    f"particle {particle_id}, tilt {tilt}, crop min/max: {padded_crop.min()}/{padded_crop.max()}, key: {tiltseries_key}, pre/post padding: ({y_pre_padding},{x_pre_padding})/({y_post_padding},{x_post_padding})"
+                )
+
         if circle_precrop:
             pre_bin_background_mean = tilt_stack[:, pre_bin_background_mask].mean(axis=1)
             tilt_stack -= pre_bin_background_mean[:, None, None]
@@ -274,6 +280,8 @@ def process_tiltseries(
 
         output_path = output_folder / f"{particle_id}_stack2d.mrcs"
         with mrcfile.new(output_path) as mrc:
+            if particle_id % 100 == 0:
+                logger.debug(f"particle {particle_id}, {cropped_tilt_stack.min()} to {cropped_tilt_stack.max()}")
             mrc.set_data(cropped_tilt_stack.astype(np.float16 if float16 else np.float32))
             mrc.voxel_size = (tiltseries_pixel_size * bin, tiltseries_pixel_size * bin, 1.0)
 
@@ -355,6 +363,7 @@ def extract_subtomograms(
     crop_size: int = None,
     tiltseries_relative_dir: Path = None,
     trajectories_starfile: Path = None,
+    debug: bool = False,
 ) -> tuple[int, int, int]:
     """
     Extracts subtomograms from a provided particles *.star file, tiltseries *.star file, and set of *.aln files.
@@ -405,6 +414,7 @@ def extract_subtomograms(
         "no_ic": no_ic,
         "normalize_bin": normalize_bin,
         "output_dir": output_dir,
+        "debug": debug,
     }
     args_list = [{**args, **constant_args} for args in args_list if args is not None]
 
@@ -462,6 +472,7 @@ def parse_extract_local_subtomograms(
     tomograms_starfile: Path = None,
     optimisation_set_starfile: Path = None,
     overwrite: bool = False,
+    debug: bool = False,
     no_logging: bool = False,
 ) -> tuple[Path, Path, Path, Path, Path]:
     """
@@ -505,6 +516,7 @@ def parse_extract_local_subtomograms(
         trajectories_starfile=trajectories_starfile,
         tiltseries_relative_dir=tiltseries_relative_dir,
         tomograms_starfile=tomograms_starfile,
+        debug=debug,
     )
     end_time = time.time()
     if not no_logging:
@@ -604,6 +616,7 @@ def parse_extract_local_copick_subtomograms(
         tomograms_starfile=tomograms_starfile,
         optimisation_set_starfile=None,
         overwrite=overwrite,
+        debug=False,
         no_logging=True,
     )
 
@@ -634,6 +647,7 @@ def parse_extract_data_portal_subtomograms(
     crop_size: int = None,
     overwrite: bool = False,
     dry_run: bool = False,
+    debug: bool = False,
     **data_portal_args,
 ) -> tuple[Path, Path, Path, Path, Path]:
     """
@@ -692,6 +706,7 @@ def parse_extract_data_portal_subtomograms(
         no_ic=no_ic,
         normalize_bin=normalize_bin,
         output_dir=output_dir,
+        debug=debug,
     )
 
     end_time = time.time()
@@ -727,6 +742,7 @@ def parse_extract_data_portal_copick_subtomograms(
     crop_size: int = None,
     overwrite: bool = False,
     dry_run: bool = False,
+    debug: bool = False,
 ) -> tuple[Path, Path, Path, Path, Path]:
     """
     Extracts subtomograms from the CryoET Data Portal using copick picks and the provided parameters.
@@ -814,6 +830,7 @@ def parse_extract_data_portal_copick_subtomograms(
         no_ic=no_ic,
         normalize_bin=normalize_bin,
         output_dir=output_dir,
+        debug=debug,
     )
 
     end_time = time.time()
@@ -841,7 +858,7 @@ def cli():
 @cli_options.common_options()
 @cli_options.extract_options()
 def cmd_local(**kwargs):
-    setup_logging(debug=kwargs.pop("debug", False))
+    setup_logging(debug=kwargs.get("debug", False))
     parse_extract_local_subtomograms(**kwargs)
 
 
@@ -853,7 +870,7 @@ def cmd_local(**kwargs):
 @cli_options.extract_options()
 @cli_options.dry_run_option
 def cmd_local_copick(**kwargs):
-    setup_logging(debug=kwargs.pop("debug", False))
+    setup_logging(debug=kwargs.get("debug", False))
     kwargs["copick_run_names"] = cli_options.flatten(kwargs["copick_run_names"])
     parse_extract_local_copick_subtomograms(**kwargs)
 
@@ -865,7 +882,7 @@ def cmd_local_copick(**kwargs):
 @cli_options.data_portal_options()
 @cli_options.dry_run_option
 def cmd_data_portal(**kwargs):
-    setup_logging(debug=kwargs.pop("debug", False))
+    setup_logging(debug=kwargs.get("debug", False))
     kwargs = cli_options.flatten_data_portal_args(kwargs)
     parse_extract_data_portal_subtomograms(**kwargs)
 
@@ -878,7 +895,7 @@ def cmd_data_portal(**kwargs):
 @cli_options.data_portal_copick_options()
 @cli_options.dry_run_option
 def cmd_data_portal_copick(**kwargs):
-    setup_logging(debug=kwargs.pop("debug", False))
+    setup_logging(debug=kwargs.get("debug", False))
     kwargs["copick_run_names"] = cli_options.flatten(kwargs["copick_run_names"])
     kwargs["copick_dataset_ids"] = cli_options.flatten(kwargs["copick_dataset_ids"])
     parse_extract_data_portal_copick_subtomograms(**kwargs)
