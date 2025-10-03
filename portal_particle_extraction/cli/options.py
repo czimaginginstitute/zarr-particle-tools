@@ -239,13 +239,13 @@ def reconstruct_options():
             show_default=True,
             help="Ignore shells for which the dose weight falls below this value.",
         ),
-        #         click.option(
-        #             "--symmetry",
-        #             type=str,
-        #             default="C1",
-        #             show_default=True,
-        #             help="Symmetry group to apply during reconstruction (e.g. C1, C2, D2, etc).",
-        #         )
+        click.option(
+            "--symmetry",
+            type=str,
+            default="C1",
+            show_default=True,
+            help="Symmetry group to apply during reconstruction (e.g. C1, C2, D2, etc).",
+        ),
     ]
 
     return compose_options(opts)

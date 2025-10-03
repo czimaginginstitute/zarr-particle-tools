@@ -231,9 +231,108 @@ def oh_affines() -> list[np.ndarray]:
     return O_matrices + MO_matrices
 
 
+@cache
+def i_affines(n: int) -> list[np.ndarray]:
+    if n == 1:
+        raise NotImplementedError("I1 symmetry is not implemented yet.")
+    elif n == 2:
+        raise NotImplementedError("I2 symmetry is not implemented yet.")
+    elif n == 3:
+        raise NotImplementedError("I3 symmetry is not implemented yet.")
+    elif n == 4:
+        raise NotImplementedError("I4 symmetry is not implemented yet.")
+    elif n == 5:
+        raise NotImplementedError("I5/I5H symmetry is not supported by RELION, so not implemented.")
+    else:
+        raise ValueError("Invalid n for I symmetry. Must be 1, 2, 3, or 4.")
+
+
+@cache
+def ih_affines(n: int) -> list[np.ndarray]:
+    I_matrices = i_affines(n)
+    if n == 1:
+        M = _mirror_from_normal([0.0, 0.0, -1.0])
+    elif n == 2:
+        M = _mirror_from_normal([1.0, 0.0, 0.0])
+    elif n == 3:
+        M = _mirror_from_normal([0.850650807, 0.0, 0.525731114])
+    elif n == 4:
+        M = _mirror_from_normal([0.850650807, 0.0, -0.525731114])
+    elif n == 5:
+        raise NotImplementedError("I5/I5H symmetry is not supported by RELION, so not implemented.")
+    else:
+        raise ValueError("Invalid n for IH symmetry. Must be 1, 2, 3, or 4.")
+
+    MI_matrices = [_embed(M @ T[:3, :3]) for T in I_matrices]
+    return I_matrices + MI_matrices
+
+
+def sanitize_transform(T, atol=1e-12):
+    T = T.copy().astype(np.float64)
+    T[np.isclose(T, 0.0, atol=atol)] = 0.0
+    T[np.isclose(T, 1.0, atol=atol)] = 1.0
+    T[np.isclose(T, -1.0, atol=atol)] = -1.0
+    return T
+
+
+def get_transforms_from_symmetry(symmetry: str) -> list[np.ndarray]:
+    """
+    Given a symmetry string, return the corresponding list of 4x4 affine transformation matrices.
+    Supported symmetries: C1, Cn, Ci, Cs, Cnv, Cnh, Dn, Dnv, Dnh, Sn (n even), T, Td, O, Oh.
+    """
+    symmetry = symmetry.upper()
+    transforms = None
+    if symmetry == "C1":
+        transforms = [np.eye(4)]
+    elif symmetry.startswith("C") and symmetry[1:].isdigit():
+        n = int(symmetry[1:])
+        transforms = cn_affines(n)
+    elif symmetry == "CI":
+        transforms = ci_affines()
+    elif symmetry == "CS":
+        transforms = cs_affines()
+    elif symmetry.startswith("CNV") and symmetry[3:].isdigit():
+        n = int(symmetry[3:])
+        transforms = cnv_affines(n)
+    elif symmetry.startswith("CNH") and symmetry[3:].isdigit():
+        n = int(symmetry[3:])
+        transforms = cnh_affines(n)
+    elif symmetry.startswith("SN") and symmetry[2:].isdigit():
+        n = int(symmetry[2:])
+        transforms = sn_affines(n)
+    elif symmetry.startswith("DN") and symmetry[2:].isdigit():
+        n = int(symmetry[2:])
+        transforms = dn_affines(n)
+    elif symmetry.startswith("DNV") and symmetry[3:].isdigit():
+        n = int(symmetry[3:])
+        transforms = dnv_affines(n)
+    elif symmetry.startswith("DNH") and symmetry[3:].isdigit():
+        n = int(symmetry[3:])
+        transforms = dnh_affines(n)
+    elif symmetry == "T":
+        transforms = t_affines()
+    elif symmetry == "TD":
+        transforms = td_affines()
+    elif symmetry == "O":
+        transforms = o_affines()
+    elif symmetry == "OH":
+        transforms = oh_affines()
+    elif symmetry.startswith("IH"):
+        n = int(symmetry[2:]) if symmetry != "IH" else 2
+        transforms = ih_affines(n)
+    elif symmetry.startswith("I"):
+        n = int(symmetry[1:]) if symmetry != "I" else 2
+        transforms = i_affines(n)
+    else:
+        raise ValueError(f"Unsupported symmetry: {symmetry}")
+
+    transforms = [sanitize_transform(T) for T in transforms]
+    return transforms
+
+
 def _trilinear_fftw_half_complex(volume: np.ndarray, x: np.ndarray, y: np.ndarray, z: np.ndarray) -> np.ndarray:
     """
-    Trilinear interpolation for a half Fourier volume. Based on RELION's Interpolation::linearXYZ_FftwHalf_complex.
+    Trilinear interpolation for a half complex Fourier volume. Based on RELION's Interpolation::linearXYZ_FftwHalf_complex.
     Returns the interpolated values at the (x,y,z) coordinates.
     """
     d, h, wh = volume.shape
@@ -268,12 +367,11 @@ def _trilinear_fftw_half_complex(volume: np.ndarray, x: np.ndarray, y: np.ndarra
     z0 = np.clip(z0_raw, 0, d - 1)
     z1 = (z0 + 1) % d
 
-    # gather the eight corners (note: ndarray order is [z, y, x])
+    # interpolate
     vx00 = (1 - xf) * volume[z0, y0, x0] + xf * volume[z0, y0, x1]
     vx10 = (1 - xf) * volume[z0, y1, x0] + xf * volume[z0, y1, x1]
     vx01 = (1 - xf) * volume[z1, y0, x0] + xf * volume[z1, y0, x1]
     vx11 = (1 - xf) * volume[z1, y1, x0] + xf * volume[z1, y1, x1]
-
     vxy0 = (1 - yf) * vx00 + yf * vx10
     vxy1 = (1 - yf) * vx01 + yf * vx11
     vxyz = (1 - zf) * vxy0 + zf * vxy1
@@ -283,36 +381,82 @@ def _trilinear_fftw_half_complex(volume: np.ndarray, x: np.ndarray, y: np.ndarra
     return out
 
 
+def _trilinear_fftw_half_real(volume: np.ndarray, x: np.ndarray, y: np.ndarray, z: np.ndarray) -> np.ndarray:
+    """
+    Trilinear interpolation for a half-Fourier real volume. Based on RELION's Interpolation::linearXYZ_FftwHalf_real.
+    Returns the interpolated values at the (x,y,z) coordinates.
+    """
+    d, h, w = volume.shape
+
+    # sign handling (mirror if x < 0)
+    mirror_mask = x <= 0.0
+    xd = np.where(mirror_mask, -x, x)
+    yd = np.where(mirror_mask, -y, y)
+    zd = np.where(mirror_mask, -z, z)
+
+    # wrap negatives in y/z
+    yd = np.where(yd < 0.0, yd + h, yd)
+    zd = np.where(zd < 0.0, zd + d, zd)
+
+    # integer bases computed BEFORE clamping (to match C++)
+    x0_raw = np.floor(xd).astype(np.int64)
+    y0_raw = np.floor(yd).astype(np.int64)
+    z0_raw = np.floor(zd).astype(np.int64)
+
+    xf = xd - x0_raw
+    yf = yd - y0_raw
+    zf = zd - z0_raw
+
+    # clamp / wrap indices like in the C++ code
+    x0 = np.minimum(x0_raw, w - 1)
+    x1 = x0 + 1
+    x1 = np.where(x1 >= w, w - 2, x1)
+
+    y0 = np.clip(y0_raw, 0, h - 1)
+    y1 = (y0 + 1) % h
+
+    z0 = np.clip(z0_raw, 0, d - 1)
+    z1 = (z0 + 1) % d
+
+    # interpolate
+    vx00 = (1 - xf) * volume[z0, y0, x0] + xf * volume[z0, y0, x1]
+    vx10 = (1 - xf) * volume[z0, y1, x0] + xf * volume[z0, y1, x1]
+    vx01 = (1 - xf) * volume[z1, y0, x0] + xf * volume[z1, y0, x1]
+    vx11 = (1 - xf) * volume[z1, y1, x0] + xf * volume[z1, y1, x1]
+
+    vxy0 = (1 - yf) * vx00 + yf * vx10
+    vxy1 = (1 - yf) * vx01 + yf * vx11
+    vxyz = (1 - zf) * vxy0 + zf * vxy1
+
+    return vxyz
+
+
 def symmetrise_fs_complex(volume: np.ndarray, transforms: np.ndarray) -> np.ndarray:
     """
     Symmetrise a half Fourier volume given a set of 4x4 affine transformation matrices. Based on RELION's Symmetry::symmetrise_FS_complex.
 
     Returns the symmetrised volume.
     """
-    box_size = volume.shape[0]
-    half_box_size = box_size // 2 + 1
-
-    # precompute (y,z)-centered coordinates for all indices
-    yy_all = np.arange(box_size, dtype=np.float64)
-    yy_all[yy_all >= box_size // 2] -= box_size
-    zz_all = np.arange(box_size, dtype=np.float64)
-    zz_all[zz_all >= box_size // 2] -= box_size
-    x_all = np.arange(half_box_size, dtype=np.float64)
-
-    # start with the original volume
-    accum = volume.astype(np.complex128, copy=True)
+    d, h, wh = volume.shape
+    w = 2 * (wh - 1)
+    X = np.arange(wh, dtype=np.float64)[None, None, :]
+    Y = np.arange(h, dtype=np.float64)[None, :, None]
+    Y = np.where(Y >= h // 2, Y - h, Y)
+    Z = np.arange(d, dtype=np.float64)[:, None, None]
+    Z = np.where(Z >= d // 2, Z - d, Z)
 
     # normalized coordinates for phase factor
-    nx = x_all / half_box_size
-    ny = yy_all / half_box_size
-    nz = zz_all / half_box_size
+    nx = X / w
+    ny = Y / h
+    nz = Z / d
 
-    # skip identity at index 0
-    for transform in transforms[1:]:
+    accum = np.zeros_like(volume, dtype=np.complex128)
+
+    for transform in transforms:
         # apply linear part of transform to coordinates; translation excluded here (w=0)
-        px = transform[0, 0] * x_all + transform[0, 1] * yy_all + transform[0, 2] * zz_all
-        py = transform[1, 0] * x_all + transform[1, 1] * yy_all + transform[1, 2] * zz_all
-        pz = transform[2, 0] * x_all + transform[2, 1] * yy_all + transform[2, 2] * zz_all
+        px = transform[0, 0] * X + transform[0, 1] * Y + transform[0, 2] * Z
+        py = transform[1, 0] * X + transform[1, 1] * Y + transform[1, 2] * Z
+        pz = transform[2, 0] * X + transform[2, 1] * Y + transform[2, 2] * Z
 
         # trilinear sampling in the FFTW-half volume with the x-sign conjugation logic
         val = _trilinear_fftw_half_complex(volume, px, py, pz)
@@ -323,5 +467,31 @@ def symmetrise_fs_complex(volume: np.ndarray, transforms: np.ndarray) -> np.ndar
         phase = np.cos(dotp) + 1j * np.sin(dotp)
 
         accum += val * phase
+
+    return (accum / len(transforms)).astype(volume.dtype)
+
+
+def symmetrise_fs_real(volume: np.ndarray, transforms: np.ndarray) -> np.ndarray:
+    """
+    Symmetrise a half-Fourier real volume given a set of 4x4 affine transformation matrices. Based on RELION's Symmetry::symmetrise_FS_real.
+
+    Returns the symmetrised volume.
+    """
+    d, h, w = volume.shape
+
+    X = np.arange(w, dtype=np.float64)[None, None, :]
+    Y = np.arange(h, dtype=np.float64)[None, :, None]
+    Y = np.where(Y >= h // 2, Y - h, Y)
+    Z = np.arange(d, dtype=np.float64)[:, None, None]
+    Z = np.where(Z >= d // 2, Z - d, Z)
+
+    accum = np.zeros_like(volume, dtype=np.complex128)
+
+    for transform in transforms:
+        px = transform[0, 0] * X + transform[0, 1] * Y + transform[0, 2] * Z
+        py = transform[1, 0] * X + transform[1, 1] * Y + transform[1, 2] * Z
+        pz = transform[2, 0] * X + transform[2, 1] * Y + transform[2, 2] * Z
+
+        accum += _trilinear_fftw_half_real(volume, px, py, pz)
 
     return (accum / len(transforms)).astype(volume.dtype)

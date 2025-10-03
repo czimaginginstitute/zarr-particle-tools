@@ -1,6 +1,19 @@
 # portal-particle-extraction
 Subtomogram extraction and reconstruction in Python from local files and the CryoET Data Portal. A reimplementation of the RELION subtomogram extraction and particle reconstruction jobs, but designed to work on ZARR-based tiltseries with the CryoET Data Portal API and remove the need for downloading the entire tiltseries.
 
+In addition to particle extraction and reconstruction, this package is built in a modular way to allow for use of individual functions (see `core/`), such as:
+- Projection matrix generation & point projection
+- CTF premultiplication
+- Dose weighting
+- Fourier cropping
+- Masking
+- S3 & Zarr Data I/O
+- Backprojection
+- Interpolation
+- Symmetry operations
+- and more!
+
+
 Primary steps in subtomogram extraction are:
 - 3D affine transformation matrix calculation
 - Projection of 3D coordinates to 2D tiltseries coordinates
@@ -13,6 +26,7 @@ Primary steps in subtomogram extraction are:
 Primary steps in subtomogram reconstruction are:
 - Subtomogram extraction
 - Backprojection into 3D Fourier space with interpolation
+- Symmetry application
 - Gridding correction
 - CTF correction
 
@@ -126,6 +140,7 @@ If you would like to see a feature added (on or off this limitation list), pleas
 - Does not (yet) support a SNR value (`--snr`) flag
 - Does not (yet) support no_ctf
 - Does not (yet) support symmetry (e.g. `--sym D7`)
+- Does not support weight_*.mrc output files
 - Does not support helical symmetry
 - Does not support backup / only do unfinished features 
 

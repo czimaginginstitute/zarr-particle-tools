@@ -42,6 +42,11 @@ from portal_particle_extraction.core.forwardprojection import (
 )
 from portal_particle_extraction.core.helpers import get_tiltseries_data, setup_logging
 from portal_particle_extraction.core.mask import spherical_soft_mask
+from portal_particle_extraction.core.symmetry import (
+    get_transforms_from_symmetry,
+    symmetrise_fs_complex,
+    symmetrise_fs_real,
+)
 from portal_particle_extraction.subtomo_extract import (
     parse_extract_data_portal_copick_subtomograms,
     parse_extract_data_portal_subtomograms,
@@ -110,9 +115,9 @@ def process_particle(
 
     particle_data = np.fft.rfft2(mrc_data, norm="ortho", axes=(-2, -1))
 
-    weight_data = np.ones((len(sections), box_size, box_size // 2 + 1), dtype=np.complex64)
-    particle_data_fourier_volume = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex64)
-    particle_weight_fourier_volume = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex64)
+    weight_data = np.ones((len(sections), box_size, box_size // 2 + 1), dtype=np.complex128)
+    particle_data_fourier_volume = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
+    particle_weight_fourier_volume = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
 
     particle_section_index = 0
     for section_index, section in enumerate(sections):
@@ -172,7 +177,15 @@ def reconstruct_single_tiltseries(
     individual_tiltseries_path: Path,
     optics_row: pd.DataFrame,
     progress_bar: tqdm = None,
-):
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Reconstruct particles from a single tiltseries.
+    Returns:
+        data_fourier_volume_half1 (np.ndarray): The Fourier volume of the particle data for random subset 1.
+        weight_fourier_volume_half1 (np.ndarray): The Fourier volume of the particle weights for random subset 1.
+        data_fourier_volume_half2 (np.ndarray): The Fourier volume of the particle data for random subset 2.
+        weight_fourier_volume_half2 (np.ndarray): The Fourier volume of the particle weights for random subset 2.
+    """
     filtered_particles_df = filtered_particles_df.reset_index(drop=True)
 
     # particle variables
@@ -237,7 +250,7 @@ def reconstruct_single_tiltseries(
             calculate_dose_weight_image(dose, tiltseries_pixel_size * bin, box_size, bfactor, cutoff_fraction)
             for dose, bfactor in zip(doses, bfactor_per_electron_dose)
         ],
-        dtype=np.complex64,
+        dtype=np.complex128,
     )
     freq_cutoff = dose_weights[:, 0, :] < cutoff_fraction
     freq_cutoff_idx = freq_cutoff.shape[1] - np.argmax(freq_cutoff[:, ::-1], axis=1)
@@ -274,10 +287,10 @@ def reconstruct_single_tiltseries(
     }
     args_list = [{**args, **constant_args} for args in args_list]
 
-    data_fourier_volume_half1 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex64)
-    data_fourier_volume_half2 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex64)
-    weight_fourier_volume_half1 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex64)
-    weight_fourier_volume_half2 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex64)
+    data_fourier_volume_half1 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
+    data_fourier_volume_half2 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
+    weight_fourier_volume_half1 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
+    weight_fourier_volume_half2 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
 
     cpu_count = min(32, mp.cpu_count(), len(filtered_particles_df))
     with mp.Pool(processes=cpu_count) as pool:
@@ -303,17 +316,40 @@ def reconstruct_single_tiltseries(
     )
 
 
-def finalise_volume(data_fourier_volume, weight_fourier_volume, output_dir, voxel_size, crop_size, tag):
+def finalise_volume(
+    data_fourier_volume: np.ndarray,
+    weight_fourier_volume: np.ndarray,
+    output_dir: Union[str, Path],
+    voxel_size: float,
+    crop_size: int,
+    symmetry: str,
+    tag: str,
+) -> tuple[Path, Path, Path]:
+    """
+    Finalise the volume by applying symmetry, gridding correction, CTF correction, and spherical masking with mean subtraction.
+    Writes out data_*.mrc, *_full.mrc, and *.mrc files.
+    Returns:
+        data_path (Path): The path to the non-CTF-corrected reconstruction, after gridding correction (data_*.mrc).
+        full_path (Path): The path to the non-masked reconstruction, after CTF correction (*_full.mrc).
+        final_path (Path): The path to the final reconstruction, after masking and mean subtraction (*.mrc).
+    """
+    if symmetry.upper() != "C1":
+        transforms = get_transforms_from_symmetry(symmetry)
+        data_fourier_volume = symmetrise_fs_complex(data_fourier_volume, transforms)
+        weight_fourier_volume = symmetrise_fs_real(weight_fourier_volume, transforms)
+
     gridding_corrected_volume = gridding_correct_3d_sinc2(particle_fourier_volume=data_fourier_volume)
     ctf_corrected_real_volume = ctf_correct_3d_heuristic(
         real_space_volume=gridding_corrected_volume, weights_fourier_volume=weight_fourier_volume
     )
 
-    with mrcfile.new(Path(output_dir) / f"data_{tag}.mrc", overwrite=True) as mrc:
+    data_path = Path(output_dir) / f"data_{tag}.mrc"
+    with mrcfile.new(data_path, overwrite=True) as mrc:
         mrc.set_data(gridding_corrected_volume.astype(np.float32))
         mrc.voxel_size = voxel_size
 
-    with mrcfile.new(Path(output_dir) / f"{tag}_full.mrc", overwrite=True) as mrc:
+    full_path = Path(output_dir) / f"{tag}_full.mrc"
+    with mrcfile.new(full_path, overwrite=True) as mrc:
         mrc.set_data(ctf_corrected_real_volume.astype(np.float32))
         mrc.voxel_size = voxel_size
 
@@ -330,9 +366,13 @@ def finalise_volume(data_fourier_volume, weight_fourier_volume, output_dir, voxe
     final_volume[~inner_mask] = 0.0
     final_volume[inner_mask] = soft_mask[inner_mask] * (final_volume[inner_mask] - inner_mean)
 
-    with mrcfile.new(Path(output_dir) / f"{tag}.mrc", overwrite=True) as mrc:
+    final_path = Path(output_dir) / f"{tag}.mrc"
+    with mrcfile.new(final_path, overwrite=True) as mrc:
         mrc.set_data(final_volume.astype(np.float32))
         mrc.voxel_size = voxel_size
+
+    logger.info(f"Wrote out {data_path}, {full_path}, and {final_path}.")
+    return data_path, full_path, final_path
 
 
 # TODO: write out weight*.mrc files
@@ -343,13 +383,17 @@ def reconstruct(
     output_dir: Union[str, Path],
     box_size: int,
     crop_size: int = None,
+    symmetry: str = "C1",
     no_ctf: bool = False,
     cutoff_fraction: float = 0.01,
     particles_starfile: Union[str, Path] = None,
     trajectories_starfile: Union[str, Path] = None,
     tiltseries_relative_dir: Union[str, Path] = None,
     tomograms_starfile: Union[str, Path] = None,
-):
+) -> None:
+    """
+    Reconstruct a particle map from particles and tiltseries.
+    """
     start_time = time.time()
 
     if not crop_size:
@@ -404,10 +448,10 @@ def reconstruct(
     }
     args_list = [{**args, **constant_args} for args in args_list if args is not None]
 
-    output_data_fourier_volume_half1 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex64)
-    output_data_fourier_volume_half2 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex64)
-    output_weight_fourier_volume_half1 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex64)
-    output_weight_fourier_volume_half2 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex64)
+    output_data_fourier_volume_half1 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
+    output_data_fourier_volume_half2 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
+    output_weight_fourier_volume_half1 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
+    output_weight_fourier_volume_half2 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
 
     for arg in args_list:
         (
@@ -436,6 +480,7 @@ def reconstruct(
             output_dir,
             voxel_size,
             crop_size,
+            symmetry,
             tag="half1",
         )
         finalise_volume(
@@ -444,10 +489,17 @@ def reconstruct(
             output_dir,
             voxel_size,
             crop_size,
+            symmetry,
             tag="half2",
         )
     finalise_volume(
-        output_data_fourier_volume, output_weight_fourier_volume, output_dir, voxel_size, crop_size, tag="merged"
+        output_data_fourier_volume,
+        output_weight_fourier_volume,
+        output_dir,
+        voxel_size,
+        crop_size,
+        symmetry,
+        tag="merged",
     )
 
     # delete Subtomograms directory if it exists
@@ -474,6 +526,7 @@ def reconstruct_local(
     output_dir: Union[str, Path],
     bin: int = 1,
     crop_size: int = None,
+    symmetry: str = "C1",
     no_ctf: bool = False,
     cutoff_fraction: float = 1,
     particles_starfile: Union[str, Path] = None,
@@ -515,6 +568,7 @@ def reconstruct_local(
         output_dir=output_dir,
         box_size=box_size,
         crop_size=crop_size if crop_size is not None else box_size,
+        symmetry=symmetry,
         no_ctf=no_ctf,
         cutoff_fraction=cutoff_fraction,
         particles_starfile=new_particles_starfile,
@@ -533,6 +587,7 @@ def reconstruct_local_copick(
     copick_user_id: str,
     bin: int = 1,
     crop_size: int = None,
+    symmetry: str = "C1",
     no_ctf: bool = False,
     cutoff_fraction: float = 0.01,
     copick_run_names: list[str] = None,
@@ -574,6 +629,7 @@ def reconstruct_local_copick(
         output_dir=output_dir,
         box_size=box_size,
         crop_size=crop_size if crop_size is not None else box_size,
+        symmetry=symmetry,
         no_ctf=no_ctf,
         cutoff_fraction=cutoff_fraction,
         particles_starfile=particles_starfile,
@@ -588,6 +644,7 @@ def reconstruct_data_portal(
     box_size: int = None,
     bin: int = 1,
     crop_size: int = None,
+    symmetry: str = "C1",
     no_ctf: bool = False,
     cutoff_fraction: float = 0.01,
     overwrite: bool = False,
@@ -621,6 +678,7 @@ def reconstruct_data_portal(
         output_dir=output_dir,
         box_size=box_size,
         crop_size=crop_size if crop_size is not None else box_size,
+        symmetry=symmetry,
         no_ctf=no_ctf,
         cutoff_fraction=cutoff_fraction,
         particles_starfile=particles_starfile,
@@ -641,6 +699,7 @@ def reconstruct_data_portal_copick(
     box_size: int = None,
     bin: int = 1,
     crop_size: int = None,
+    symmetry: str = "C1",
     no_ctf: bool = False,
     cutoff_fraction: float = 0.01,
     overwrite: bool = False,
@@ -680,6 +739,7 @@ def reconstruct_data_portal_copick(
         output_dir=output_dir,
         box_size=box_size,
         crop_size=crop_size if crop_size is not None else box_size,
+        symmetry=symmetry,
         no_ctf=no_ctf,
         cutoff_fraction=cutoff_fraction,
         particles_starfile=particles_starfile,
