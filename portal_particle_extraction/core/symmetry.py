@@ -3,11 +3,13 @@ Functions to generate symmetry operators as 4x4 affine matrices.
 Based on RELION symmetry definitions in src/symmetries.cpp.
 """
 
-# TODO: test these functions
+# TODO: WRITE TESTS!!! test these functions
 # TODO: improve variable names for clarity
 from functools import cache
 
 import numpy as np
+
+from portal_particle_extraction.core.symmetry_constants import i_transforms
 
 
 def _embed(R) -> np.ndarray:
@@ -18,7 +20,7 @@ def _embed(R) -> np.ndarray:
 
 def _rotz(theta) -> np.ndarray:
     c, s = np.cos(theta), np.sin(theta)
-    return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+    return np.array([[c, s, 0.0], [-s, c, 0.0], [0.0, 0.0, 1.0]])
 
 
 def _rotx(theta) -> np.ndarray:
@@ -42,7 +44,7 @@ def _mirror_from_normal(n) -> np.ndarray:
 
 
 @cache
-def cn_affines(n: int) -> list[np.ndarray]:
+def cn_transforms(n: int) -> list[np.ndarray]:
     """
     RELION CN (rot_axis n 0 0 1): rotations about +Z by k*2π/n, k=0..n-1.
     Returns list of n 4x4 matrices.
@@ -51,7 +53,7 @@ def cn_affines(n: int) -> list[np.ndarray]:
 
 
 @cache
-def ci_affines() -> list[np.ndarray]:
+def ci_transforms() -> list[np.ndarray]:
     """
     RELION CI (inversion): { I, -I } in 3D, embedded in 4x4.
     """
@@ -62,7 +64,7 @@ def ci_affines() -> list[np.ndarray]:
 
 
 @cache
-def cs_affines() -> list[np.ndarray]:
+def cs_transforms() -> list[np.ndarray]:
     """
     RELION CS (mirror_plane 0 0 1): reflect in the XY-plane (normal +Z).
     Returns [I4, M_h].
@@ -72,31 +74,31 @@ def cs_affines() -> list[np.ndarray]:
 
 
 @cache
-def cnv_affines(n: int) -> list[np.ndarray]:
+def cnv_transforms(n: int) -> list[np.ndarray]:
     """
     RELION CNV: CN around +Z plus a vertical mirror (normal in XZ plane).
     Returns list of 2n 4x4 matrices.
     """
-    rots = cn_affines(n)
+    rots = cn_transforms(n)
     Mv = _mirror_from_normal([0, 1.0, 0])
     mirrors = [_embed(Mv @ T[:3, :3]) for T in rots]
     return rots + mirrors
 
 
 @cache
-def cnh_affines(n: int) -> list[np.ndarray]:
+def cnh_transforms(n: int) -> list[np.ndarray]:
     """
     RELION CNH: CN around +Z plus a horizontal mirror (normal +Z).
     Returns list of 2n 4x4 matrices.
     """
-    rots = cn_affines(n)
+    rots = cn_transforms(n)
     Mh = _mirror_from_normal([0, 0, 1.0])
     mirrors = [_embed(Mh @ T[:3, :3]) for T in rots]
     return rots + mirrors
 
 
 @cache
-def sn_affines(n: int) -> list[np.ndarray]:
+def sn_transforms(n: int) -> list[np.ndarray]:
     """
     RELION SN: n-fold improper rotation about +Z (rotation by 2π/n followed by reflection in XY-plane).
     Returns list of n 4x4 matrices.
@@ -104,7 +106,7 @@ def sn_affines(n: int) -> list[np.ndarray]:
     if n % 2 != 0:
         raise ValueError("SN is only defined for even n.")
     m = n // 2
-    rots = cn_affines(m)
+    rots = cn_transforms(m)
     inv = np.eye(4)
     inv[:3, :3] = -np.eye(3)
     impropers = [inv @ T for T in rots]
@@ -112,48 +114,48 @@ def sn_affines(n: int) -> list[np.ndarray]:
 
 
 @cache
-def dn_affines(n: int) -> list[np.ndarray]:
+def dn_transforms(n: int) -> list[np.ndarray]:
     """
     RELION DN: CN around +Z plus CN after rotation by π about +X.
     Returns list of 2n 4x4 matrices.
     """
-    rots = cn_affines(n)
+    rots = cn_transforms(n)
     rx = _rotx(np.pi)
     half_rots = [_embed(rx @ T[:3, :3]) for T in rots]
     return rots + half_rots
 
 
 @cache
-def dnv_affines(n: int) -> list[np.ndarray]:
+def dnv_transforms(n: int) -> list[np.ndarray]:
     """
     RELION DNV: DN plus vertical mirrors (normals in YZ planes).
     Returns list of 4n 4x4 matrices.
     """
-    dns = dn_affines(n)
+    dns = dn_transforms(n)
     Mv = _mirror_from_normal([1.0, 0, 0])
     mirrors = [_embed(Mv @ T[:3, :3]) for T in dns]
     return dns + mirrors
 
 
 @cache
-def dnh_affines(n: int) -> list[np.ndarray]:
+def dnh_transforms(n: int) -> list[np.ndarray]:
     """
     RELION DNH: DN plus a horizontal mirrors (normals in XY planes).
     Returns list of 4n 4x4 matrices.
     """
-    dns = dn_affines(n)
+    dns = dn_transforms(n)
     Mh = _mirror_from_normal([0, 0, 1.0])
     mirrors = [_embed(Mh @ T[:3, :3]) for T in dns]
     return dns + mirrors
 
 
 @cache
-def t_affines() -> list[np.ndarray]:
+def t_transforms() -> list[np.ndarray]:
     """
     RELION tetrahedral T symmetry.
     Returns list of 12 4x4 matrices.
     """
-    c3 = cn_affines(3)  # I, Rz(120), Rz(240) as 4×4
+    c3 = cn_transforms(3)  # I, Rz(120), Rz(240) as 4×4
     Rz120 = c3[1][:3, :3]  # 3×3
     z = np.array([0.0, 0.0, 1.0])
 
@@ -174,19 +176,32 @@ def t_affines() -> list[np.ndarray]:
 
 
 @cache
-def td_affines() -> list[np.ndarray]:
+def th_transforms() -> list[np.ndarray]:
+    """
+    RELION tetrahedral + inversion TH symmetry.
+    Returns list of 24 4x4 matrices.
+    """
+    T = t_transforms()
+    inv = np.eye(4)
+    inv[:3, :3] = -np.eye(3)
+    TI = [inv @ A for A in T]
+    return T + TI
+
+
+@cache
+def td_transforms() -> list[np.ndarray]:
     """
     RELION tetrahedral + inversion TD symmetry.
     Returns list of 24 4x4 matrices.
     """
-    T = t_affines()
+    T = t_transforms()
     M = _mirror_from_normal([1.4142136, 2.4494897, 0.0])  # RELION's plane
     MT = [_embed(M @ A[:3, :3]) for A in T]
     return T + MT
 
 
 @cache
-def o_affines() -> list[np.ndarray]:
+def o_transforms() -> list[np.ndarray]:
     """
     RELION octahedral O symmetry.
     Returns list of 24 4x4 matrices.
@@ -220,36 +235,20 @@ def o_affines() -> list[np.ndarray]:
 
 
 @cache
-def oh_affines() -> list[np.ndarray]:
+def oh_transforms() -> list[np.ndarray]:
     """
     RELION octahedral + inversion OH symmetry.
     Returns list of 48 4x4 matrices.
     """
-    O_matrices = o_affines()
+    O_matrices = o_transforms()
     M = _mirror_from_normal([0.0, 1.0, 1.0])
     MO_matrices = [_embed(M @ T[:3, :3]) for T in O_matrices]
     return O_matrices + MO_matrices
 
 
 @cache
-def i_affines(n: int) -> list[np.ndarray]:
-    if n == 1:
-        raise NotImplementedError("I1 symmetry is not implemented yet.")
-    elif n == 2:
-        raise NotImplementedError("I2 symmetry is not implemented yet.")
-    elif n == 3:
-        raise NotImplementedError("I3 symmetry is not implemented yet.")
-    elif n == 4:
-        raise NotImplementedError("I4 symmetry is not implemented yet.")
-    elif n == 5:
-        raise NotImplementedError("I5/I5H symmetry is not supported by RELION, so not implemented.")
-    else:
-        raise ValueError("Invalid n for I symmetry. Must be 1, 2, 3, or 4.")
-
-
-@cache
-def ih_affines(n: int) -> list[np.ndarray]:
-    I_matrices = i_affines(n)
+def ih_transforms(n: int) -> list[np.ndarray]:
+    I_matrices = i_transforms(n)
     if n == 1:
         M = _mirror_from_normal([0.0, 0.0, -1.0])
     elif n == 2:
@@ -272,57 +271,61 @@ def sanitize_transform(T, atol=1e-12):
     T[np.isclose(T, 0.0, atol=atol)] = 0.0
     T[np.isclose(T, 1.0, atol=atol)] = 1.0
     T[np.isclose(T, -1.0, atol=atol)] = -1.0
+    T[np.isclose(T, 0.5, atol=atol)] = 0.5
+    T[np.isclose(T, -0.5, atol=atol)] = -0.5
     return T
 
 
 def get_transforms_from_symmetry(symmetry: str) -> list[np.ndarray]:
     """
     Given a symmetry string, return the corresponding list of 4x4 affine transformation matrices.
-    Supported symmetries: C1, Cn, Ci, Cs, Cnv, Cnh, Dn, Dnv, Dnh, Sn (n even), T, Td, O, Oh.
+    Supported symmetries: C1, CN, Ci, Cs, CNv, CNh, DN, DNv, DNh, SN (N even), T, Td, O, Oh.
     """
     symmetry = symmetry.upper()
     transforms = None
     if symmetry == "C1":
         transforms = [np.eye(4)]
+    elif symmetry == "CI":
+        transforms = ci_transforms()
+    elif symmetry == "CS":
+        transforms = cs_transforms()
+    elif symmetry.startswith("C") and symmetry.endswith("V") and symmetry[1:-1].isdigit():
+        n = int(symmetry[1:-1])
+        transforms = cnv_transforms(n)
+    elif symmetry.startswith("C") and symmetry.endswith("H") and symmetry[1:-1].isdigit():
+        n = int(symmetry[1:-1])
+        transforms = cnh_transforms(n)
     elif symmetry.startswith("C") and symmetry[1:].isdigit():
         n = int(symmetry[1:])
-        transforms = cn_affines(n)
-    elif symmetry == "CI":
-        transforms = ci_affines()
-    elif symmetry == "CS":
-        transforms = cs_affines()
-    elif symmetry.startswith("CNV") and symmetry[3:].isdigit():
-        n = int(symmetry[3:])
-        transforms = cnv_affines(n)
-    elif symmetry.startswith("CNH") and symmetry[3:].isdigit():
-        n = int(symmetry[3:])
-        transforms = cnh_affines(n)
-    elif symmetry.startswith("SN") and symmetry[2:].isdigit():
-        n = int(symmetry[2:])
-        transforms = sn_affines(n)
-    elif symmetry.startswith("DN") and symmetry[2:].isdigit():
-        n = int(symmetry[2:])
-        transforms = dn_affines(n)
-    elif symmetry.startswith("DNV") and symmetry[3:].isdigit():
-        n = int(symmetry[3:])
-        transforms = dnv_affines(n)
-    elif symmetry.startswith("DNH") and symmetry[3:].isdigit():
-        n = int(symmetry[3:])
-        transforms = dnh_affines(n)
+        transforms = cn_transforms(n)
+    elif symmetry.startswith("S") and symmetry[1:].isdigit():
+        n = int(symmetry[1:])
+        transforms = sn_transforms(n)
+    elif symmetry.startswith("D") and symmetry.endswith("V") and symmetry[1:-1].isdigit():
+        n = int(symmetry[1:-1])
+        transforms = dnv_transforms(n)
+    elif symmetry.startswith("D") and symmetry.endswith("H") and symmetry[1:-1].isdigit():
+        n = int(symmetry[1:-1])
+        transforms = dnh_transforms(n)
+    elif symmetry.startswith("D") and symmetry[1:].isdigit():
+        n = int(symmetry[1:])
+        transforms = dn_transforms(n)
     elif symmetry == "T":
-        transforms = t_affines()
+        transforms = t_transforms()
     elif symmetry == "TD":
-        transforms = td_affines()
+        transforms = td_transforms()
+    elif symmetry == "TH":
+        transforms = th_transforms()
     elif symmetry == "O":
-        transforms = o_affines()
+        transforms = o_transforms()
     elif symmetry == "OH":
-        transforms = oh_affines()
-    elif symmetry.startswith("IH"):
-        n = int(symmetry[2:]) if symmetry != "IH" else 2
-        transforms = ih_affines(n)
+        transforms = oh_transforms()
+    elif symmetry.startswith("I") and symmetry.endswith("H") and symmetry[1:-1].isdigit():
+        n = int(symmetry[1:-1]) if symmetry != "IH" else 2
+        transforms = ih_transforms(n)
     elif symmetry.startswith("I"):
         n = int(symmetry[1:]) if symmetry != "I" else 2
-        transforms = i_affines(n)
+        transforms = i_transforms(n)
     else:
         raise ValueError(f"Unsupported symmetry: {symmetry}")
 
