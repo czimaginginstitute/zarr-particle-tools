@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import starfile
 
-from tests.helpers.compare import df_equal, mrcs_equal
+from tests.helpers.compare import df_equal, mrc_equal
 
 
 @pytest.fixture(autouse=True)
@@ -75,6 +75,6 @@ def compare_mrcs_dirs():
             file2 = dir2 / relative_path
 
             assert file2.exists(), f"Expected file missing: {file2}"
-            assert mrcs_equal(file1, file2, tol=tol), f"{file1} and {file2} differ beyond tol={tol}"
+            assert mrc_equal(file1, file2, tol=tol), f"{file1} and {file2} differ beyond tol={tol}"
 
     return _compare_dirs

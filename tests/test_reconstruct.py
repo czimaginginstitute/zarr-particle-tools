@@ -1,0 +1,130 @@
+# TODO: failing, need to fix D8, OH, binned / cropped ones
+import shutil
+from pathlib import Path
+
+import pytest
+from click.testing import CliRunner
+
+from portal_particle_extraction.subtomo_reconstruct import cli, reconstruct_local
+from tests.helpers.compare import mrc_equal
+
+DATASET_CONFIGS = {
+    "synthetic": {
+        "data_root": Path("tests/data/relion_project_synthetic"),
+        "tol": 1e-3,  # TODO: try to tighten this
+    },
+}
+
+RECONSTRUCT_PARAMETERS = {
+    "baseline": {"box_size": 64},
+    "baseline_C2": {"box_size": 64, "symmetry": "C2"},
+    "baseline_C3": {"box_size": 64, "symmetry": "C3"},
+    "baseline_C4": {"box_size": 64, "symmetry": "C4"},
+    "baseline_C5": {"box_size": 64, "symmetry": "C5"},
+    "baseline_C6": {"box_size": 64, "symmetry": "C6"},
+    "baseline_C7": {"box_size": 64, "symmetry": "C7"},
+    "baseline_C8": {"box_size": 64, "symmetry": "C8"},
+    "baseline_D2": {"box_size": 64, "symmetry": "D2"},
+    "baseline_D3": {"box_size": 64, "symmetry": "D3"},
+    "baseline_D4": {"box_size": 64, "symmetry": "D4"},
+    "baseline_D5": {"box_size": 64, "symmetry": "D5"},
+    "baseline_D6": {"box_size": 64, "symmetry": "D6"},
+    "baseline_D7": {"box_size": 64, "symmetry": "D7"},
+    "baseline_D8": {"box_size": 64, "symmetry": "D8"},
+    "baseline_T": {"box_size": 64, "symmetry": "T"},
+    "baseline_O": {"box_size": 64, "symmetry": "O"},
+    "baseline_OH": {"box_size": 64, "symmetry": "OH"},
+    "baseline_I": {"box_size": 64, "symmetry": "I"},
+    "baseline_I1": {"box_size": 64, "symmetry": "I1"},
+    "baseline_I2": {"box_size": 64, "symmetry": "I2"},
+    "baseline_I3": {"box_size": 64, "symmetry": "I3"},
+    "baseline_I4": {"box_size": 64, "symmetry": "I4"},
+    "box32_bin2": {"box_size": 32, "bin": 2},
+    "box16_bin4": {"box_size": 16, "bin": 4},
+    "box16_bin6": {"box_size": 16, "bin": 6},
+    "box128_crop64": {"box_size": 128, "bin": 1, "crop_size": 64},
+    "box64_bin2_crop32": {"box_size": 64, "bin": 2, "crop_size": 32},
+    "box32_bin4_crop16": {"box_size": 32, "bin": 4, "crop_size": 16},
+}
+
+PARAMS = [
+    (dataset, dataset_config, reconstruct_suffix, reconstruct_arguments)
+    for dataset, dataset_config in DATASET_CONFIGS.items()
+    for reconstruct_suffix, reconstruct_arguments in RECONSTRUCT_PARAMETERS.items()
+]
+
+
+@pytest.mark.parametrize(
+    "dataset, dataset_config, reconstruct_suffix, reconstruct_arguments",
+    PARAMS,
+    ids=[f"{dataset}_{reconstruct_suffix}" for dataset, _, reconstruct_suffix, _ in PARAMS],
+)
+def test_reconstruct_local_parametrized(
+    dataset,
+    dataset_config,
+    reconstruct_suffix,
+    reconstruct_arguments,
+):
+    data_root = dataset_config["data_root"]
+    tol = dataset_config["tol"]
+
+    output_dir = Path(f"tests/output/{dataset}_{reconstruct_suffix}/")
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+
+    print(reconstruct_arguments.get("box_size"))
+
+    reconstruct_local(
+        box_size=reconstruct_arguments.get("box_size"),
+        crop_size=reconstruct_arguments.get("crop_size"),
+        bin=reconstruct_arguments.get("bin", 1),
+        symmetry=reconstruct_arguments.get("symmetry", "C1"),
+        output_dir=output_dir,
+        particles_starfile=data_root / "particles.star",
+        tiltseries_relative_dir=data_root,
+        tomograms_starfile=data_root / "tomograms.star",
+    )
+
+    reconstruct_dir = output_dir
+    relion_dir = data_root / "Reconstruct" / f"relion_output_{reconstruct_suffix}"
+    # TODO: add onto this
+    assert mrc_equal(relion_dir / "merged.mrc", reconstruct_dir / "merged.mrc", tol=tol)
+
+
+@pytest.mark.parametrize(
+    "dataset, reconstruct_suffix",
+    [
+        ("synthetic", "baseline"),
+    ],
+    ids=["synthetic_baseline"],
+)
+def test_cli_reconstruct_local(tmp_path, dataset, reconstruct_suffix):
+    dataset_config = DATASET_CONFIGS[dataset]
+    reconstruct_arguments = RECONSTRUCT_PARAMETERS[reconstruct_suffix]
+
+    output_dir = tmp_path / f"{dataset}_{reconstruct_suffix}"
+    data_root = dataset_config["data_root"]
+
+    args = [
+        "local",
+        "--particles-starfile",
+        str(data_root / "particles.star"),
+        "--tiltseries-relative-dir",
+        str(data_root),
+        "--tomograms-starfile",
+        str(data_root / "tomograms.star"),
+        "--box-size",
+        str(reconstruct_arguments["box_size"]),
+        "--bin",
+        str(reconstruct_arguments.get("bin", 1)),
+        "--output-dir",
+        str(output_dir),
+    ]
+
+    runner = CliRunner()
+    runner.invoke(cli, args, catch_exceptions=False)
+
+    reconstruct_dir = output_dir
+    relion_dir = data_root / "Reconstruct" / f"relion_output_{reconstruct_suffix}"
+    # TODO: add onto this
+    assert mrc_equal(relion_dir / "merged.mrc", reconstruct_dir / "merged.mrc", tol=dataset_config["tol"])

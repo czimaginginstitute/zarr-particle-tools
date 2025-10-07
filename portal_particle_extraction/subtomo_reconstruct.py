@@ -528,7 +528,7 @@ def reconstruct_local(
     crop_size: int = None,
     symmetry: str = "C1",
     no_ctf: bool = False,
-    cutoff_fraction: float = 1,
+    cutoff_fraction: float = 0.01,
     particles_starfile: Union[str, Path] = None,
     trajectories_starfile: Union[str, Path] = None,
     tiltseries_relative_dir: Union[str, Path] = None,

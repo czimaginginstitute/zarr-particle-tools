@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 
 
-def mrcs_equal(file1: Path, file2: Path, tol: float) -> bool:
+def mrc_equal(file1: Path, file2: Path, tol: float = 1e-8, rtol: float = 1e-5) -> bool:
     # should not compare the same file
     if file1 == file2:
         raise ValueError("Cannot compare the same file.")
@@ -16,13 +16,15 @@ def mrcs_equal(file1: Path, file2: Path, tol: float) -> bool:
 
     with mrcfile.open(file1, mode="r") as mrc1, mrcfile.open(file2, mode="r") as mrc2:
         assert np_arrays_equal(
-            mrc1.data, mrc2.data, tol=tol, metadata=f"Comparing MRC files {file1.name} and {file2.name}."
+            mrc1.data, mrc2.data, tol=tol, rtol=rtol, metadata=f"Comparing MRC files {file1.name} and {file2.name}."
         )
 
     return True
 
 
-def np_arrays_equal(arr1: np.ndarray, arr2: np.ndarray, tol: float, metadata: str, percentile: float = 99.5) -> bool:
+def np_arrays_equal(
+    arr1: np.ndarray, arr2: np.ndarray, metadata: str, tol: float = 1e-8, rtol: float = 1e-5, percentile: float = 99.5
+) -> bool:
     if arr1.shape != arr2.shape:
         print(f"Arrays must have the same shape. {arr1.shape} != {arr2.shape}")
         return False
@@ -30,9 +32,9 @@ def np_arrays_equal(arr1: np.ndarray, arr2: np.ndarray, tol: float, metadata: st
     abs_diff = np.abs(arr1 - arr2)
     threshold = np.percentile(abs_diff, percentile)
     mask = abs_diff <= threshold
-    if not np.allclose(arr1[mask], arr2[mask], atol=tol):
+    if not np.allclose(arr1[mask], arr2[mask], atol=tol, rtol=rtol):
         print(
-            f"{metadata} Arrays differ beyond tolerance: {np.max(abs_diff[mask])} at {np.unravel_index(np.argmax(abs_diff[mask]), arr1.shape)}"
+            f"{metadata} Arrays differ beyond tolerance: {np.max(abs_diff[mask])} at {np.unravel_index(np.argmax(abs_diff[mask]), arr1.shape)}, (range of values: {np.min(arr1[mask])} to {np.max(arr1[mask])} and {np.min(arr2[mask])} to {np.max(arr2[mask])})"
         )
         return False
 
