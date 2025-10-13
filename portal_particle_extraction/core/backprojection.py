@@ -277,7 +277,7 @@ def ctf_correct_3d_heuristic(
     box_size = real_space_volume.shape[0]
     half_box_size = box_size // 2 + 1
 
-    corrected_real_volume = np.fft.rfftn(real_space_volume, norm="ortho")
+    corrected_fourier_volume = np.fft.rfftn(real_space_volume, norm="ortho")
 
     radial_average = radial_avg_half_3d_linear(weights_fourier_volume)
     num_radii = radial_average.size
@@ -303,13 +303,13 @@ def ctf_correct_3d_heuristic(
     weights = np.maximum(weights_fourier_volume, interpolated_avg * weight_fraction)
 
     # apply CTF correction within nyquist, zero out beyond
-    corrected_real_volume = np.where(
+    corrected_fourier_volume = np.where(
         radius_ceil < num_radii,
-        corrected_real_volume / np.where(weights > 0.0, weights, 1.0),
+        corrected_fourier_volume / np.where(weights > 0.0, weights, 1.0),
         0.0,
     )
 
-    corrected_volume = np.fft.irfftn(corrected_real_volume, norm="ortho")
+    corrected_volume = np.fft.irfftn(corrected_fourier_volume, norm="ortho")
     return corrected_volume
 
 

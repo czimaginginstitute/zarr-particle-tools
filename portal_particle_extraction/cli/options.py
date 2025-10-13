@@ -53,6 +53,9 @@ def extract_options():
         click.option("--circle-precrop", is_flag=True, help="Enable circular precropping of the subtomograms."),
         click.option("--no-circle-crop", is_flag=True, help="Disable circular cropping of the subtomograms."),
         click.option("--no-ic", is_flag=True, help="Do not invert contrast of the subtomograms."),
+        click.option(
+            "--write-fourier", is_flag=True, help="Write Fourier space stacks (.npy) in addition to real space (.mrcs)."
+        ),
     ]
     return compose_options(opts)
 

@@ -88,6 +88,7 @@ def process_tiltseries(
     no_circle_crop: bool,
     no_ic: bool,
     normalize_bin: bool,
+    write_fourier: bool,
     output_dir: Path,
     filtered_particles_df: pd.DataFrame,
     filtered_trajectories_dict: dict,
@@ -280,10 +281,13 @@ def process_tiltseries(
 
         output_path = output_folder / f"{particle_id}_stack2d.mrcs"
         with mrcfile.new(output_path) as mrc:
-            if particle_id % 100 == 0:
-                logger.debug(f"particle {particle_id}, {cropped_tilt_stack.min()} to {cropped_tilt_stack.max()}")
             mrc.set_data(cropped_tilt_stack.astype(np.float16 if float16 else np.float32))
             mrc.voxel_size = (tiltseries_pixel_size * bin, tiltseries_pixel_size * bin, 1.0)
+
+        if write_fourier:
+            # fourier stacks
+            final_fourier_tilt_stack = np.fft.rfft2(cropped_tilt_stack, norm="ortho", axes=(-2, -1))
+            np.save(output_folder / f"{particle_id}_stack2d.npy", final_fourier_tilt_stack)
 
     start_time = time.time()
     with ThreadPoolExecutor(max_workers=4) as executor:  # emperically determined 4 threads is optimal for this task
@@ -360,6 +364,7 @@ def extract_subtomograms(
     no_circle_crop: bool = False,
     no_ic: bool = False,
     normalize_bin: bool = True,
+    write_fourier: bool = False,
     crop_size: int = None,
     tiltseries_relative_dir: Path = None,
     trajectories_starfile: Path = None,
@@ -413,6 +418,7 @@ def extract_subtomograms(
         "no_circle_crop": no_circle_crop,
         "no_ic": no_ic,
         "normalize_bin": normalize_bin,
+        "write_fourier": write_fourier,
         "output_dir": output_dir,
         "debug": debug,
     }
@@ -465,6 +471,7 @@ def parse_extract_local_subtomograms(
     no_circle_crop: bool = False,
     no_ic: bool = False,
     normalize_bin: bool = True,
+    write_fourier: bool = False,
     crop_size: int = None,
     particles_starfile: Path = None,
     trajectories_starfile: Path = None,
@@ -511,6 +518,7 @@ def parse_extract_local_subtomograms(
         no_circle_crop=no_circle_crop,
         no_ic=no_ic,
         normalize_bin=normalize_bin,
+        write_fourier=write_fourier,
         output_dir=output_dir,
         particles_starfile=particles_starfile,
         trajectories_starfile=trajectories_starfile,
@@ -548,6 +556,7 @@ def parse_extract_local_copick_subtomograms(
     no_circle_crop: bool = False,
     no_ic: bool = False,
     normalize_bin: bool = True,
+    write_fourier: bool = False,
     copick_run_names: list[str] = None,
     crop_size: int = None,
     tiltseries_relative_dir: Path = None,
@@ -608,6 +617,7 @@ def parse_extract_local_copick_subtomograms(
         no_circle_crop=no_circle_crop,
         no_ic=no_ic,
         normalize_bin=normalize_bin,
+        write_fourier=write_fourier,
         output_dir=output_dir,
         crop_size=crop_size,
         particles_starfile=particles_path,
@@ -644,6 +654,7 @@ def parse_extract_data_portal_subtomograms(
     no_circle_crop: bool = False,
     no_ic: bool = False,
     normalize_bin: bool = True,
+    write_fourier: bool = False,
     crop_size: int = None,
     overwrite: bool = False,
     dry_run: bool = False,
@@ -705,6 +716,7 @@ def parse_extract_data_portal_subtomograms(
         no_circle_crop=no_circle_crop,
         no_ic=no_ic,
         normalize_bin=normalize_bin,
+        write_fourier=write_fourier,
         output_dir=output_dir,
         debug=debug,
     )
@@ -739,6 +751,7 @@ def parse_extract_data_portal_copick_subtomograms(
     no_circle_crop: bool = False,
     no_ic: bool = False,
     normalize_bin: bool = True,
+    write_fourier: bool = False,
     crop_size: int = None,
     overwrite: bool = False,
     dry_run: bool = False,
@@ -829,6 +842,7 @@ def parse_extract_data_portal_copick_subtomograms(
         no_circle_crop=no_circle_crop,
         no_ic=no_ic,
         normalize_bin=normalize_bin,
+        write_fourier=write_fourier,
         output_dir=output_dir,
         debug=debug,
     )

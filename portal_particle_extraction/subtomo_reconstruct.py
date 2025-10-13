@@ -103,17 +103,15 @@ def process_particle(
         raise FileNotFoundError(
             f"Particle file {particle_path} does not exist. Please check the path (and current working directory) and try again."
         )
-    with mrcfile.open(particle_path, permissive=True) as mrc:
-        mrc_data = mrc.data
+
+    # Reading fourier data prevents loss of precision due to FFT and inverse FFT in float32
+    particle_data = np.load(particle_path.with_suffix(".npy"))
     assert (
-        sum(visible_sections) == mrc_data.shape[0]
+        sum(visible_sections) == particle_data.shape[0]
     ), f"Mismatch between visible sections and particle data for {particle['rlnTomoParticleName']}"
     assert (
-        mrc_data.shape[1] == box_size and mrc_data.shape[2] == box_size
+        particle_data.shape[1] == box_size and particle_data.shape[2] == box_size // 2 + 1
     ), f"Mismatch between box size and particle data for {particle['rlnTomoParticleName']}"
-    assert mrc_data.dtype == np.float32, f"Particle data must be float32 for {particle['rlnTomoParticleName']}"
-
-    particle_data = np.fft.rfft2(mrc_data, norm="ortho", axes=(-2, -1))
 
     weight_data = np.ones((len(sections), box_size, box_size // 2 + 1), dtype=np.complex128)
     particle_data_fourier_volume = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
@@ -555,6 +553,7 @@ def reconstruct_local(
         no_circle_crop=True,
         no_ic=False,
         normalize_bin=False,
+        write_fourier=True,
         crop_size=box_size,  # extracted particles must be the same size as box size for reconstruction (due to how cropping is done)
         particles_starfile=particles_starfile,
         trajectories_starfile=trajectories_starfile,
@@ -618,6 +617,7 @@ def reconstruct_local_copick(
         no_circle_crop=True,
         no_ic=False,
         normalize_bin=False,
+        write_fourier=True,
         copick_run_names=copick_run_names,
         crop_size=box_size,
         tiltseries_relative_dir=tiltseries_relative_dir,
@@ -669,6 +669,7 @@ def reconstruct_data_portal(
         no_circle_crop=True,
         no_ic=False,
         normalize_bin=False,
+        write_fourier=True,
         crop_size=box_size,
         overwrite=overwrite,
         **data_portal_args,
@@ -730,6 +731,7 @@ def reconstruct_data_portal_copick(
         no_circle_crop=True,
         no_ic=False,
         normalize_bin=False,
+        write_fourier=True,
         crop_size=box_size,
         overwrite=overwrite,
         **extra_kwargs,
