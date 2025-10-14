@@ -5,7 +5,7 @@ import copick
 import pandas as pd
 from copick.models import CopickPicks
 
-from portal_particle_extraction.core.constants import PARTICLES_DF_COLUMNS
+from zarr_particle_tools.core.constants import PARTICLES_DF_COLUMNS
 
 logger = logging.getLogger(__name__)
 

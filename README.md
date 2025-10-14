@@ -1,4 +1,4 @@
-# portal-particle-extraction
+# zarr-particle-tools
 Subtomogram extraction and reconstruction in Python from local files and the CryoET Data Portal. A reimplementation of the RELION subtomogram extraction and particle reconstruction jobs, but designed to work on ZARR-based tiltseries with the CryoET Data Portal API and remove the need for downloading the entire tiltseries.
 
 In addition to particle extraction and reconstruction, this package is built in a modular way to allow for use of individual functions (see `core/`), such as:
@@ -34,8 +34,8 @@ Primary steps in subtomogram reconstruction are:
 
 Create a new conda environment if you'd like to keep this separate from your other Python environments:
 ```bash
-conda create -n portal-particle-extraction python=3.11
-conda activate portal-particle-extraction
+conda create -n zarr-particle-tools python=3.11
+conda activate zarr-particle-tools
 ```
 
 And then install:
@@ -44,14 +44,14 @@ poetry install # or "pip install ." or "uv pip install ."
 ```
 
 ## Example runs
-### See full options with `portal-particle-extraction --help` and `portal-particle-reconstruction --help`.
+### See full options with `zarr-particle-extract --help` and `zarr-particle-reconstruct --help`.
 
 For RELION projects, a `--tiltseries-relative-dir` is not needed if this script is run from the RELION project directory root.
 
 #### Subtomogram extraction
 
 ```
-portal-particle-extraction local \
+zarr-particle-extract local \
   --particles-starfile tests/data/relion_project_synthetic/particles.star \
   --tomograms-starfile tests/data/relion_project_synthetic/tomograms.star \
   --tiltseries-relative-dir tests/data/relion_project_synthetic/ \
@@ -60,7 +60,7 @@ portal-particle-extraction local \
 ```
 
 ```
-portal-particle-extraction local \
+zarr-particle-extract local \
   --particles-starfile tests/data/relion_project_unroofing/particles.star \
   --tomograms-starfile tests/data/relion_project_unroofing/tomograms.star \
   --tiltseries-relative-dir tests/data/relion_project_unroofing/ \
@@ -69,7 +69,7 @@ portal-particle-extraction local \
 ```
 
 ```
-portal-particle-extraction local \
+zarr-particle-extract local \
   --particles-starfile tests/data/relion_project_synthetic/particles.star \
   --tomograms-starfile tests/data/relion_project_synthetic/tomograms.star \
   --tiltseries-relative-dir tests/data/relion_project_synthetic/ \
@@ -78,7 +78,7 @@ portal-particle-extraction local \
 ```
 
 ```
-portal-particle-extraction data-portal \
+zarr-particle-extract data-portal \
   --run-id 16468 \
   --annotation-names "ribosome" \
   --inexact-match \
@@ -87,7 +87,7 @@ portal-particle-extraction data-portal \
 ```
 
 ```
-portal-particle-extraction data-portal \
+zarr-particle-extract data-portal \
   --run-id 17700 \
   --annotation-names "ferritin complex" \
   --ground-truth \
@@ -95,22 +95,35 @@ portal-particle-extraction data-portal \
   --box-size 32
 ```
 
+```
+zarr-particle-extract local-copick --help
+```
+
+```
+zarr-particle-extract copick-data-portal --help
+```
+
 #### Subtomogram reconstruction (WIP, EXPERIMENTAL)
 
 ```
-portal-particle-reconstruction local --help
+zarr-particle-reconstruct local \
+  --particles-starfile tests/data/relion_project_unroofing/reconstruct_particles.star \
+  --tiltseries-relative-dir tests/data/relion_project_unroofing/ \
+  --tomograms-starfile tests/data/relion_project_unroofing/tomograms.star \
+  --output-dir tests/output/sample_local_reconstruct_test/ \
+  --box-size 384 --crop-size 256
 ```
 
 ```
-portal-particle-reconstruction data-portal --help
+zarr-particle-reconstruct data-portal --help
 ```
 
 ```
-portal-particle-reconstruction local-copick --help
+zarr-particle-reconstruct local-copick --help
 ```
 
 ```
-portal-particle-reconstruction copick-data-portal --help
+zarr-particle-reconstruct copick-data-portal --help
 ```
 
 ## Pytest

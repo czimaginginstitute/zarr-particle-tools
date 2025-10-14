@@ -4,21 +4,12 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from portal_particle_extraction.subtomo_reconstruct import cli, reconstruct_local
 from tests.helpers.compare import mrc_equal
-
-DATASET_CONFIGS = {
-    "synthetic": {
-        "data_root": Path("tests/data/relion_project_synthetic"),
-        "tol": 1e-3,
-        "corr_tol": 1e-4,
-        "error_median_tol": 1e-5,
-    },
-}
+from zarr_particle_tools.subtomo_reconstruct import cli, reconstruct_local
 
 # TODO: need to add real datasets
 # TODO: need to resolve bugs in reconstruction (tolerances should not be customized this much)
-RECONSTRUCT_PARAMETERS = {
+SYNTHETIC_RECONSTRUCT_PARAMETERS = {
     "baseline": {"box_size": 64},
     "baseline_C2": {"box_size": 64, "symmetry": "C2"},
     "baseline_C3": {"box_size": 64, "symmetry": "C3"},
@@ -94,10 +85,39 @@ RECONSTRUCT_PARAMETERS = {
     },  # TODO: debug & fix
 }
 
+UNROOFING_RECONSTRUCT_PARAMETERS = {
+    "baseline": {"box_size": 384, "crop_size": 256},
+    "baseline_polished": {
+        "box_size": 384,
+        "crop_size": 256,
+        "particles_starfile": Path("tests/data/relion_project_unroofing/reconstruct_particles_polished.star"),
+        "tomograms_starfile": Path("tests/data/relion_project_unroofing/tomograms_polished.star"),
+        "trajectories_starfile": Path("tests/data/relion_project_unroofing/motion.star"),
+    },
+}
+
+DATASET_CONFIGS = {
+    "synthetic": {
+        "data_root": Path("tests/data/relion_project_synthetic"),
+        "tol": 1e-3,
+        "corr_tol": 1e-4,
+        "error_median_tol": 1e-5,
+        "reconstruct_parameters": SYNTHETIC_RECONSTRUCT_PARAMETERS,
+    },
+    "unroofing": {
+        "data_root": Path("tests/data/relion_project_unroofing"),
+        "particles_starfile": Path("tests/data/relion_project_unroofing/reconstruct_particles.star"),
+        "tol": 1e-4,
+        "corr_tol": 1e-5,
+        "error_median_tol": 1e-6,
+        "reconstruct_parameters": UNROOFING_RECONSTRUCT_PARAMETERS,
+    },
+}
+
 PARAMS = [
     (dataset, dataset_config, reconstruct_suffix, reconstruct_arguments)
     for dataset, dataset_config in DATASET_CONFIGS.items()
-    for reconstruct_suffix, reconstruct_arguments in RECONSTRUCT_PARAMETERS.items()
+    for reconstruct_suffix, reconstruct_arguments in dataset_config["reconstruct_parameters"].items()
 ]
 
 
@@ -130,9 +150,12 @@ def test_reconstruct_local_parametrized(
         bin=reconstruct_arguments.get("bin", 1),
         symmetry=reconstruct_arguments.get("symmetry", "C1"),
         output_dir=output_dir,
-        particles_starfile=data_root / "particles.star",
+        particles_starfile=reconstruct_arguments.get(
+            "particles_starfile", dataset_config.get("particles_starfile", data_root / "particles.star")
+        ),
+        trajectories_starfile=reconstruct_arguments.get("trajectories_starfile", None),
         tiltseries_relative_dir=data_root,
-        tomograms_starfile=data_root / "tomograms.star",
+        tomograms_starfile=reconstruct_arguments.get("tomograms_starfile", data_root / "tomograms.star"),
         no_ctf=no_ctf,
     )
 
@@ -157,7 +180,7 @@ def test_reconstruct_local_parametrized(
 )
 def test_cli_reconstruct_local(tmp_path, dataset, reconstruct_suffix):
     dataset_config = DATASET_CONFIGS[dataset]
-    reconstruct_arguments = RECONSTRUCT_PARAMETERS[reconstruct_suffix]
+    reconstruct_arguments = dataset_config["reconstruct_parameters"][reconstruct_suffix]
 
     output_dir = tmp_path / f"{dataset}_{reconstruct_suffix}"
     data_root = dataset_config["data_root"]

@@ -9,7 +9,7 @@ from functools import cache
 
 import numpy as np
 
-from portal_particle_extraction.core.symmetry_constants import i_transforms
+from zarr_particle_tools.core.symmetry_constants import i_transforms
 
 
 def _embed(R) -> np.ndarray:

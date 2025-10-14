@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from cryoet_alignment.io.aretomo3 import AreTomo3ALN
 
-from portal_particle_extraction.core.data import DataReader
+from zarr_particle_tools.core.data import DataReader
 
 
 def in_plane_rotation_to_tilt_axis_rotation(rotation_matrix: list[list[float]]) -> float:

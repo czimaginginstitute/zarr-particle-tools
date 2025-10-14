@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from click.testing import CliRunner
 
-from portal_particle_extraction.generate.cdp_generate_starfiles import cli, resolve_annotation_files
+from zarr_particle_tools.generate.cdp_generate_starfiles import cli, resolve_annotation_files
 
 # TODO: add more tests that actually check the values (after real testing)
 # TODO: add tests - with all possible parameters and edge cases, including:

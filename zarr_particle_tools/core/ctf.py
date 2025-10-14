@@ -7,7 +7,7 @@ from functools import cache
 
 import numpy as np
 
-from portal_particle_extraction.core.forwardprojection import project_3d_point_to_2d
+from zarr_particle_tools.core.forwardprojection import project_3d_point_to_2d
 
 logger = logging.getLogger(__name__)
 

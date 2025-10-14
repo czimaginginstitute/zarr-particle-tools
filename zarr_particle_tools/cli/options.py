@@ -5,7 +5,7 @@ from typing import Any
 
 import click
 
-from portal_particle_extraction.cli.types import INT_LIST, PARAM_TYPE_FOR_TYPE, STR_LIST
+from zarr_particle_tools.cli.types import INT_LIST, PARAM_TYPE_FOR_TYPE, STR_LIST
 
 
 def compose_options(opts: list[click.Option]) -> callable:

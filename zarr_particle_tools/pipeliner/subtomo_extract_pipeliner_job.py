@@ -14,16 +14,16 @@ from pipeliner.results_display_objects import ResultsDisplayObject
 
 
 class PythonRelionPseudoSubtomoJob(PipelinerJob):
-    PROCESS_NAME = "portalparticleextraction.pseudosubtomo"
+    PROCESS_NAME = "zarrparticletools.pseudosubtomo"
     OUT_DIR = TOMO_SUBTOMO_DIR
     CATEGORY_LABEL = "PseudoSubTomogram Generation"
 
     def __init__(self):
         super().__init__()
-        self.jobinfo.programs = [ExternalProgram(command="portal-particle-extraction")]
+        self.jobinfo.programs = [ExternalProgram(command="zarr-particle-extract")]
         self.jobinfo.display_name = "Extract subtomogram volumes (Python)."
         self.jobinfo.short_desc = (
-            "Extract subtomograms using portal-particle-extraction (Python reimplementation of RELION job)."
+            "Extract subtomograms using zarr-particle-extract (Python reimplementation of RELION job)."
         )
         self.joboptions = copy.deepcopy(RelionPseudoSubtomoJob().joboptions)
 
@@ -33,7 +33,7 @@ class PythonRelionPseudoSubtomoJob(PipelinerJob):
 
     def get_commands(self):
         # TODO: remove --debug
-        command = ["portal-particle-extraction", "local", "--overwrite", "--debug"]
+        command = ["zarr-particle-extract", "local", "--overwrite", "--debug"]
 
         optimisation_starfile = self.joboptions["in_optimisation"].get_string()
         if optimisation_starfile:

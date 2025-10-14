@@ -18,15 +18,15 @@ from pipeliner.results_display_objects import ResultsDisplayObject
 
 
 class PythonRelionSubtomoReconstructJob(PipelinerJob):
-    PROCESS_NAME = "portalparticleextraction.reconstruct"
+    PROCESS_NAME = "zarrparticletools.reconstruct"
     OUT_DIR = TOMO_RECONSTRUCT_DIR
     CATEGORY_LABEL = "Reconstruct"
 
     def __init__(self):
         super().__init__()
-        self.jobinfo.programs = [ExternalProgram(command="portal-particle-reconstruct")]
+        self.jobinfo.programs = [ExternalProgram(command="zarr-particle-reconstruct")]
         self.jobinfo.display_name = "Reconstruct 3D particle (Python)."
-        self.jobinfo.short_desc = "Reconstruct a 3D particle density map using portal-particle-reconstruct (Python reimplementation of RELION job)."
+        self.jobinfo.short_desc = "Reconstruct a 3D particle density map using zarr-particle-reconstruct (Python reimplementation of RELION job)."
         self.joboptions = copy.deepcopy(RelionReconstructParticleJob().joboptions)
 
         # remove options not supported by the Python implementation
@@ -41,7 +41,7 @@ class PythonRelionSubtomoReconstructJob(PipelinerJob):
         self.add_output_node("optimisation_set.star", NODE_TOMOOPTIMISATIONSET, ["relion", "reconstruct", "python"])
 
     def get_commands(self):
-        cmd = ["portal-particle-reconstruct", "local", "--overwrite", "--debug"]
+        cmd = ["zarr-particle-reconstruct", "local", "--overwrite", "--debug"]
 
         optimisation_starfile = self.joboptions["in_optimisation"].get_string()
         if optimisation_starfile:

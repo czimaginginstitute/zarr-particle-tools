@@ -10,7 +10,7 @@ import pandas as pd
 import s3fs
 from dask.core import flatten
 
-from portal_particle_extraction.core.constants import TILTSERIES_URI_RELION_COLUMN
+from zarr_particle_tools.core.constants import TILTSERIES_URI_RELION_COLUMN
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +159,7 @@ def get_data(s3_uri: str, as_bytes: bool = False) -> bytes | str:
         return f.read()
 
 
-def get_tiltseries_datareader(individual_tiltseries_df: pd.DataFrame, individual_tiltseries_path: Path) -> DataReader:
+def get_tiltseries_datareader(individual_tiltseries_df: pd.DataFrame, tiltseries_relative_dir: Path) -> DataReader:
     """
     Given a tiltseries dataframe, returns a DataReader object for the tiltseries data.
     """
@@ -175,6 +175,6 @@ def get_tiltseries_datareader(individual_tiltseries_df: pd.DataFrame, individual
         )
     tiltseries_data_locator = tiltseries_data_locators[0]
     if not tiltseries_data_locator.startswith("s3://") and not tiltseries_data_locator.startswith("/"):
-        # assume it's a local relative path, relative to the individual tiltseries star file or the tomograms star file if consolidated
-        tiltseries_data_locator = individual_tiltseries_path.parent / tiltseries_data_locator
+        # assume it's a local relative path, relative to the tiltseries relative dir
+        tiltseries_data_locator = tiltseries_relative_dir / tiltseries_data_locator
     return DataReader(str(tiltseries_data_locator))

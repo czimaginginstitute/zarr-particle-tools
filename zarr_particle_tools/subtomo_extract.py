@@ -1,7 +1,7 @@
 # TODO: Add support for a consolidated tiltseries star file (where all the tiltseries entries are just in the tomograms.star file)
 """
 Primary entry point for extracting subtomograms from local files and the CryoET Data Portal.
-Run portal-particle-extraction --help for usage instructions.
+Run zarr-particle-extract --help for usage instructions.
 """
 
 import logging
@@ -20,22 +20,22 @@ import starfile
 from scipy.ndimage import fourier_shift
 from tqdm import tqdm
 
-import portal_particle_extraction.cli.options as cli_options
-import portal_particle_extraction.generate.cdp_generate_starfiles as cdp_generate
-from portal_particle_extraction.core.constants import OPTICS_DF_COLUMNS
-from portal_particle_extraction.core.ctf import calculate_ctf
-from portal_particle_extraction.core.data import get_tiltseries_datareader
-from portal_particle_extraction.core.dose import calculate_dose_weight_image
-from portal_particle_extraction.core.forwardprojection import (
+import zarr_particle_tools.cli.options as cli_options
+import zarr_particle_tools.generate.cdp_generate_starfiles as cdp_generate
+from zarr_particle_tools.core.constants import OPTICS_DF_COLUMNS
+from zarr_particle_tools.core.ctf import calculate_ctf
+from zarr_particle_tools.core.data import get_tiltseries_datareader
+from zarr_particle_tools.core.dose import calculate_dose_weight_image
+from zarr_particle_tools.core.forwardprojection import (
     apply_offsets_to_coordinates,
     calculate_projection_matrix_from_starfile_df,
     fourier_crop,
     get_particle_crop_and_visibility,
     get_particles_to_tiltseries_coordinates,
 )
-from portal_particle_extraction.core.helpers import get_tiltseries_data, setup_logging, validate_and_setup
-from portal_particle_extraction.core.mask import circular_mask, circular_soft_mask
-from portal_particle_extraction.generate.copick_generate_starfiles import copick_picks_to_starfile, get_copick_picks
+from zarr_particle_tools.core.helpers import get_tiltseries_data, setup_logging, validate_and_setup
+from zarr_particle_tools.core.mask import circular_mask, circular_soft_mask
+from zarr_particle_tools.generate.copick_generate_starfiles import copick_picks_to_starfile, get_copick_picks
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ def process_tiltseries(
     filtered_trajectories_dict: dict,
     tiltseries_row_entry: pd.Series,
     individual_tiltseries_df: pd.DataFrame,
-    individual_tiltseries_path: Path,
+    tiltseries_relative_dir: Path,
     optics_row: pd.DataFrame,
     debug: bool = False,
 ) -> Union[None, tuple[pd.DataFrame, int]]:
@@ -102,8 +102,6 @@ def process_tiltseries(
     Processes a single alignment file to extract subtomograms from the tiltseries.
     Does projection math to map from 3D coordinates to 2D tiltseries coordinates and then applies CTF premultiplication, dose weighting, and background subtraction.
     Writes resulting data to .mrcs files (2D stack) for each particle.
-
-    individual_tiltseries_path is either the individual tiltseries star file or the tomograms star file if consolidated
 
     Returns the updated particles DataFrame and the number of skipped particles.
     """
@@ -119,7 +117,7 @@ def process_tiltseries(
         f"Extracting subtomograms for {len(filtered_particles_df)} particles (filtered by rlnTomoName: {particles_tomo_name})"
     )
 
-    tiltseries_datareader = get_tiltseries_datareader(individual_tiltseries_df, individual_tiltseries_path)
+    tiltseries_datareader = get_tiltseries_datareader(individual_tiltseries_df, tiltseries_relative_dir)
 
     # projection-relevant variables
     pre_bin_background_mask = circular_mask(pre_bin_box_size, pre_bin_box_size) == 0.0
@@ -419,6 +417,7 @@ def extract_subtomograms(
         "no_ic": no_ic,
         "normalize_bin": normalize_bin,
         "write_fourier": write_fourier,
+        "tiltseries_relative_dir": tiltseries_relative_dir,
         "output_dir": output_dir,
         "debug": debug,
     }

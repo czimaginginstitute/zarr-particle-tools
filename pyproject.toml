@@ -1,5 +1,5 @@
 [project]
-name = "portal-particle-extraction"
+name = "zarr-particle-tools"
 version = "0.1.0"
 description = "Subtomogram extraction from local files and the CryoET Data Portal"
 authors = [{ name = "Daniel Ji" }, { name = "Utz Ermel" }]
@@ -42,9 +42,9 @@ requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
-portal-particle-extraction = "portal_particle_extraction.subtomo_extract:cli"
-portal-particle-reconstruct = "portal_particle_extraction.subtomo_reconstruct:cli"
+zarr-particle-extract = "zarr_particle_tools.subtomo_extract:cli"
+zarr-particle-reconstruct = "zarr_particle_tools.subtomo_reconstruct:cli"
 
 [project.entry-points."ccpem_pipeliner.jobs"]
-"portalparticleextraction.pseudosubtomo" = "portal_particle_extraction.pipeliner.subtomo_extract_pipeliner_job:PythonRelionPseudoSubtomoJob"
-"portalparticleextraction.reconstruct" = "portal_particle_extraction.pipeliner.subtomo_reconstruct_pipeliner_job:PythonRelionSubtomoReconstructJob"
+"zarrparticletools.pseudosubtomo" = "zarr_particle_tools.pipeliner.subtomo_extract_pipeliner_job:PythonRelionPseudoSubtomoJob"
+"zarrparticletools.reconstruct" = "zarr_particle_tools.pipeliner.subtomo_reconstruct_pipeliner_job:PythonRelionSubtomoReconstructJob"

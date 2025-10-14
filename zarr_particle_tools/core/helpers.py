@@ -8,7 +8,7 @@ import pandas as pd
 import starfile
 from tqdm import tqdm
 
-from portal_particle_extraction.core.constants import NOISY_LOGGERS
+from zarr_particle_tools.core.constants import NOISY_LOGGERS
 
 logger = logging.getLogger(__name__)
 
@@ -208,8 +208,5 @@ def get_tiltseries_data(
         "filtered_trajectories_dict": filtered_trajectories_dict,
         "tiltseries_row_entry": tiltseries_row_entry,
         "individual_tiltseries_df": individual_tiltseries_df,
-        "individual_tiltseries_path": (
-            individual_tiltseries_path if individual_tiltseries_path else tomograms_starfile
-        ),
         "optics_row": optics_row,
     }

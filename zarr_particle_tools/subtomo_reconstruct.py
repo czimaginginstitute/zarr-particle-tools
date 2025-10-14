@@ -26,28 +26,28 @@ import pandas as pd
 import starfile
 from tqdm import tqdm
 
-import portal_particle_extraction.cli.options as cli_options
-from portal_particle_extraction.core.backprojection import (
+import zarr_particle_tools.cli.options as cli_options
+from zarr_particle_tools.core.backprojection import (
     backproject_slice_backward,
     ctf_correct_3d_heuristic,
     get_rotation_matrix_from_euler,
     gridding_correct_3d_sinc2,
 )
-from portal_particle_extraction.core.ctf import calculate_ctf
-from portal_particle_extraction.core.dose import calculate_dose_weight_image
-from portal_particle_extraction.core.forwardprojection import (
+from zarr_particle_tools.core.ctf import calculate_ctf
+from zarr_particle_tools.core.dose import calculate_dose_weight_image
+from zarr_particle_tools.core.forwardprojection import (
     apply_offsets_to_coordinates,
     calculate_projection_matrix_from_starfile_df,
     get_particles_to_tiltseries_coordinates,
 )
-from portal_particle_extraction.core.helpers import get_tiltseries_data, setup_logging
-from portal_particle_extraction.core.mask import spherical_soft_mask
-from portal_particle_extraction.core.symmetry import (
+from zarr_particle_tools.core.helpers import get_tiltseries_data, setup_logging
+from zarr_particle_tools.core.mask import spherical_soft_mask
+from zarr_particle_tools.core.symmetry import (
     get_transforms_from_symmetry,
     symmetrise_fs_complex,
     symmetrise_fs_real,
 )
-from portal_particle_extraction.subtomo_extract import (
+from zarr_particle_tools.subtomo_extract import (
     parse_extract_data_portal_copick_subtomograms,
     parse_extract_data_portal_subtomograms,
     parse_extract_local_copick_subtomograms,
@@ -172,7 +172,6 @@ def reconstruct_single_tiltseries(
     filtered_trajectories_dict: pd.DataFrame,
     tiltseries_row_entry: pd.Series,
     individual_tiltseries_df: pd.DataFrame,
-    individual_tiltseries_path: Path,
     optics_row: pd.DataFrame,
     progress_bar: tqdm = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:

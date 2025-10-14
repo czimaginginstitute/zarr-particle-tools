@@ -25,9 +25,9 @@ import pandas as pd
 import starfile
 from tqdm import tqdm
 
-import portal_particle_extraction.cli.options as cli_options
-import portal_particle_extraction.generate.cdp_cache as cdp_cache
-from portal_particle_extraction.core.constants import (
+import zarr_particle_tools.cli.options as cli_options
+import zarr_particle_tools.generate.cdp_cache as cdp_cache
+from zarr_particle_tools.core.constants import (
     DEFAULT_AMPLITUDE_CONTRAST,
     INDIVIDUAL_TOMOGRAM_ALN_COLUMNS,
     INDIVIDUAL_TOMOGRAM_COLUMNS,
@@ -40,9 +40,9 @@ from portal_particle_extraction.core.constants import (
     TILTSERIES_URI_RELION_COLUMN,
     TOMO_HAND_DEFAULT_VALUE,
 )
-from portal_particle_extraction.core.data import get_data
-from portal_particle_extraction.core.forwardprojection import in_plane_rotation_to_tilt_axis_rotation
-from portal_particle_extraction.core.helpers import get_filter, get_optics_group_name, get_tomo_name, setup_logging
+from zarr_particle_tools.core.data import get_data
+from zarr_particle_tools.core.forwardprojection import in_plane_rotation_to_tilt_axis_rotation
+from zarr_particle_tools.core.helpers import get_filter, get_optics_group_name, get_tomo_name, setup_logging
 
 logger = logging.getLogger(__name__)
 
@@ -744,4 +744,4 @@ if __name__ == "__main__":
     cli()
 
 # Example usage:
-# python -m portal_particle_extraction.generate.cdp_generate_starfiles --run-ids 16463 --annotation-names "cytosolic ribosome" --output-dir tests/output/data_portal_16363_ribosome
+# python -m zarr_particle_tools.generate.cdp_generate_starfiles --run-ids 16463 --annotation-names "cytosolic ribosome" --output-dir tests/output/data_portal_16363_ribosome
