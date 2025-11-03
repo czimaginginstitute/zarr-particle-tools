@@ -164,7 +164,7 @@ If you would like to see a feature added (on or off this limitation list), pleas
 
 ## License
 
-`copick-utils` is distributed under the terms of the [MIT](https://spdx.org/licenses/MIT.html) license.
+`zarr-particle-tools` is distributed under the terms of the [MIT](https://spdx.org/licenses/MIT.html) license.
 
 ## Code of Conduct
 
