@@ -4,6 +4,7 @@ from pathlib import Path
 import mrcfile
 import numpy as np
 import pytest
+import starfile
 from click.testing import CliRunner
 
 from zarr_particle_tools.generate.cdp_generate_starfiles import cli, resolve_annotation_files
@@ -149,6 +150,17 @@ def test_cli_baseline(validate_starfile):
     assert particles_reference_starfile.exists(), "Expected particles reference star file not found"
     assert tomograms_reference_starfile.exists(), "Expected tomograms reference star file not found"
 
-    validate_starfile(tomograms_starfile, tomograms_reference_starfile)
+    # validate rlnTomoTiltSeriesStarFile separately
+    tomograms_starfile_data = starfile.read(tomograms_starfile)
+    assert Path(tomograms_starfile_data["rlnTomoTiltSeriesStarFile"].iloc[0]).exists()
+    validate_starfile(tomograms_starfile, tomograms_reference_starfile, ignore_columns=["rlnTomoTiltSeriesStarFile"])
     validate_starfile(particles_starfile, particles_reference_starfile)
-    validate_starfile(tiltseries_starfile, tiltseries_reference_starfile)
+    # validate rlnMicrographName separately
+    tiltseries_starfile_data = starfile.read(tiltseries_starfile)
+    micrograph_names = tiltseries_starfile_data["rlnMicrographName"].tolist()
+    before_at = [int(name.split("@")[0]) for name in micrograph_names]
+    after_at = set(name.split("@")[1] for name in micrograph_names)
+    assert before_at == list(range(1, len(before_at) + 1))
+    assert len(after_at) == 1
+    assert Path(after_at.pop()).exists()
+    validate_starfile(tiltseries_starfile, tiltseries_reference_starfile, ignore_columns=["rlnMicrographName"])

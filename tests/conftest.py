@@ -48,9 +48,23 @@ def validate_particles_starfile():
 
 @pytest.fixture
 def validate_starfile():
-    def _validate_starfile(star_file: Path, expected_starfile: Path):
+    def _validate_starfile(star_file: Path, expected_starfile: Path, ignore_columns=None):
         star_file_data = starfile.read(star_file)
         expected_data = starfile.read(expected_starfile)
+        if not isinstance(expected_data, dict):
+            assert not isinstance(
+                star_file_data, dict
+            ), "Expected both expected and actual data to be dicts or non-dicts"
+            expected_data = {"data": expected_data}
+            star_file_data = {"data": star_file_data}
+
+        if ignore_columns is not None:
+            for key in expected_data:
+                for col in ignore_columns:
+                    if col in expected_data[key].columns:
+                        expected_data[key] = expected_data[key].drop(columns=[col])
+                        star_file_data[key] = star_file_data[key].drop(columns=[col])
+
         assert type(star_file_data) is type(
             expected_data
         ), f"Type mismatch: {type(star_file_data)} vs {type(expected_data)}"
