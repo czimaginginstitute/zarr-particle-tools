@@ -10,6 +10,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
 
     strategy:
       matrix:
@@ -69,9 +72,9 @@ jobs:
           cd tests/data
 
           # Download both files with retries and resume
-          curl -L --fail --retry 5 --retry-delay 5 --continue-at - \
-            -o zarr_particle_tools_test_data_large.tar.gz \
-            "https://zenodo.org/records/17338016/files/zarr_particle_tools_test_data_large.tar.gz?download=1"
+          # curl -L --fail --retry 5 --retry-delay 5 --continue-at - \
+          #   -o zarr_particle_tools_test_data_large.tar.gz \
+          #   "https://zenodo.org/records/17338016/files/zarr_particle_tools_test_data_large.tar.gz?download=1"
 
           curl -L --fail --retry 5 --retry-delay 5 --continue-at - \
             -o zarr_particle_tools_test_data_small.tar.gz \
