@@ -7,12 +7,13 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: pytest
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
-    concurrency:
-      group: ${{ github.workflow }}-${{ github.ref }}
-      cancel-in-progress: true
 
     strategy:
       matrix:
@@ -61,7 +62,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: tests/data
-          key: zenodo-17338016
+          key: zenodo-17529862
 
       - name: Download and extract test data from Zenodo (cache miss)
         if: ${{ steps.cache.outputs.cache-hit != 'true' }}
@@ -74,11 +75,11 @@ jobs:
           # Download both files with retries and resume
           curl -L --fail --retry 5 --retry-delay 5 --continue-at - \
             -o zarr_particle_tools_test_data_large.tar.gz \
-            "https://zenodo.org/records/17338016/files/zarr_particle_tools_test_data_large.tar.gz?download=1"
+            "https://zenodo.org/records/17529862/files/zarr_particle_tools_test_data_large.tar.gz?download=1"
 
           curl -L --fail --retry 5 --retry-delay 5 --continue-at - \
             -o zarr_particle_tools_test_data_small.tar.gz \
-            "https://zenodo.org/records/17338016/files/zarr_particle_tools_test_data_small.tar.gz?download=1"
+            "https://zenodo.org/records/17529862/files/zarr_particle_tools_test_data_small.tar.gz?download=1"
 
           # Extract
           for f in *.tar.gz; do tar -xzf "$f"; done
@@ -90,7 +91,7 @@ jobs:
         if: ${{ matrix.upload-artifact }}
         uses: actions/upload-artifact@v4
         with:
-          name: zenodo-17338016
+          name: zenodo-17529862
           path: tests/data
 
       - name: Run tests
