@@ -129,6 +129,23 @@ zarr-particle-reconstruct copick-data-portal --help
 ## Pytest
 To ensure that the subtomogram extraction matches RELION's subtomogram extraction, we have a set of tests that compare the output of this script with RELION 5.0's output and ensure that they match within reasonable numerical precision. float16 data has a more relaxed tolerance due to the reduced precision of the data type, and the real experimental data has a more relaxed tolerance due to the noisier nature of the data.
 
+To download the test data and run it yourself:
+
+```
+pip install -e .[dev] # Install development dependencies
+mkdir -p tests/data
+cd tests/data
+# Download both files with retries and resume
+curl -L --fail --retry 5 --retry-delay 5 --continue-at - \
+  -o zarr_particle_tools_test_data_large.tar.gz \
+  "https://zenodo.org/records/17338016/files/zarr_particle_tools_test_data_large.tar.gz?download=1"
+curl -L --fail --retry 5 --retry-delay 5 --continue-at - \
+  -o zarr_particle_tools_test_data_small.tar.gz \
+  "https://zenodo.org/records/17338016/files/zarr_particle_tools_test_data_small.tar.gz?download=1"
+# Extract
+for f in *.tar.gz; do tar -xzf "$f"; done
+```
+
 ## Known Limitations
 If you would like to see a feature added (on or off this limitation list), please open an issue!
 
