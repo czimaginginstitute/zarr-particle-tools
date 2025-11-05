@@ -16,9 +16,9 @@ jobs:
 
     strategy:
       matrix:
-        python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
+        python-version: ['3.10', '3.11', '3.12', '3.13']
         include:
-          - python-version: '3.9'
+          - python-version: '3.10'
             upload-artifact: true
 
     steps:
@@ -72,9 +72,9 @@ jobs:
           cd tests/data
 
           # Download both files with retries and resume
-          # curl -L --fail --retry 5 --retry-delay 5 --continue-at - \
-          #   -o zarr_particle_tools_test_data_large.tar.gz \
-          #   "https://zenodo.org/records/17338016/files/zarr_particle_tools_test_data_large.tar.gz?download=1"
+          curl -L --fail --retry 5 --retry-delay 5 --continue-at - \
+            -o zarr_particle_tools_test_data_large.tar.gz \
+            "https://zenodo.org/records/17338016/files/zarr_particle_tools_test_data_large.tar.gz?download=1"
 
           curl -L --fail --retry 5 --retry-delay 5 --continue-at - \
             -o zarr_particle_tools_test_data_small.tar.gz \
