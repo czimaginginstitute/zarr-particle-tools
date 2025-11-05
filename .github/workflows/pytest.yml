@@ -1,5 +1,4 @@
 name: Run Pytest
-description: Tests for ensuring subtomogram extraction matches RELION's subtomogram extraction.
 
 on:
   push:
@@ -15,6 +14,9 @@ jobs:
     strategy:
       matrix:
         python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
+        include:
+          - python-version: '3.9'
+            upload-artifact: true
 
     steps:
       - name: Maximize build space (#1)
@@ -56,10 +58,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: tests/data
-          key: zenodo-17338016-v1
+          key: zenodo-17338016
 
       - name: Download and extract test data from Zenodo (cache miss)
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
         shell: bash
         run: |
           set -euxo pipefail
@@ -82,11 +84,11 @@ jobs:
         run: ls -lah tests/data
 
       - name: Upload artifact
+        if: ${{ matrix.upload-artifact }}
         uses: actions/upload-artifact@v4
         with:
           name: zenodo-17338016
           path: tests/data
-          retention-days: 30
 
       - name: Run tests
         run: |
