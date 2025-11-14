@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/czimaginginstitute/zarr-particle-tools/compare/zarr-particle-tools-v0.2.0...zarr-particle-tools-v0.3.0) (2025-11-14)
+
+
+### ✨ Features
+
+* add rich logging, minor README updates, add tests & bugfix extraction from data portal ([#4](https://github.com/czimaginginstitute/zarr-particle-tools/issues/4)) ([b9feb7e](https://github.com/czimaginginstitute/zarr-particle-tools/commit/b9feb7e90464dfb33e09e7650b319ecb849ba624))
+
+
+### 🐞 Bug Fixes
+
+* pytest caching ([#5](https://github.com/czimaginginstitute/zarr-particle-tools/issues/5)) ([8102fd9](https://github.com/czimaginginstitute/zarr-particle-tools/commit/8102fd9297085fafcfb912f1cba7c44a90ec3f5e))
+
 ## [0.2.0](https://github.com/czimaginginstitute/zarr-particle-tools/compare/zarr-particle-tools-v0.1.0...zarr-particle-tools-v0.2.0) (2025-11-14)
 
 
