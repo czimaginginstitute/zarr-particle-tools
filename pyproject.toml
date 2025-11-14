@@ -25,10 +25,10 @@ dependencies = [
     "mrcfile",
     "numpy",
     "pandas",
+    "rich",
     "s3fs",
     "scipy",
     "starfile",
-    "tqdm",
 ]
 authors = [{ name = "Daniel Ji" }, { name = "Utz Heinrich Ermel" }]
 description = "Subtomogram extraction from local files and the CryoET Data Portal."

@@ -14,7 +14,6 @@ import ast
 import logging
 import multiprocessing as mp
 import shutil
-import sys
 import time
 from pathlib import Path
 from typing import Union
@@ -24,7 +23,7 @@ import mrcfile
 import numpy as np
 import pandas as pd
 import starfile
-from tqdm import tqdm
+from rich.progress import Progress, TaskID
 
 import zarr_particle_tools.cli.options as cli_options
 from zarr_particle_tools.core.backprojection import (
@@ -173,7 +172,8 @@ def reconstruct_single_tiltseries(
     tiltseries_row_entry: pd.Series,
     individual_tiltseries_df: pd.DataFrame,
     optics_row: pd.DataFrame,
-    progress_bar: tqdm = None,
+    progress_bar: Progress = None,
+    progress_task: TaskID = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Reconstruct particles from a single tiltseries.
@@ -303,7 +303,7 @@ def reconstruct_single_tiltseries(
             else:
                 raise ValueError(f"Invalid random subset {random_subset} found! Should be 1 or 2.")
             if progress_bar is not None:
-                progress_bar.update(1)
+                progress_bar.advance(progress_task)
 
     return (
         data_fourier_volume_half1,
@@ -437,33 +437,38 @@ def reconstruct(
         for _, tiltseries_row_entry in tomograms_df.iterrows()
     ]
 
-    progress_bar = tqdm(total=len(particles_df), file=sys.stdout, desc="Reconstructing particles", unit="particles")
-    constant_args = {
-        "no_ctf": no_ctf,
-        "cutoff_fraction": cutoff_fraction,
-        "progress_bar": progress_bar,
-    }
-    args_list = [{**args, **constant_args} for args in args_list if args is not None]
+    progress_bar = Progress()
+    progress_bar.start()
 
-    output_data_fourier_volume_half1 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
-    output_data_fourier_volume_half2 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
-    output_weight_fourier_volume_half1 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
-    output_weight_fourier_volume_half2 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
+    try:
+        progress_task = progress_bar.add_task("Reconstructing particles", total=len(particles_df))
+        constant_args = {
+            "no_ctf": no_ctf,
+            "cutoff_fraction": cutoff_fraction,
+            "progress_bar": progress_bar,
+            "progress_task": progress_task,
+        }
+        args_list = [{**args, **constant_args} for args in args_list if args is not None]
 
-    for arg in args_list:
-        (
-            data_fourier_volume_half1,
-            weight_fourier_volume_half1,
-            data_fourier_volume_half2,
-            weight_fourier_volume_half2,
-        ) = reconstruct_single_tiltseries(**arg)
+        output_data_fourier_volume_half1 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
+        output_data_fourier_volume_half2 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
+        output_weight_fourier_volume_half1 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
+        output_weight_fourier_volume_half2 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
 
-        output_data_fourier_volume_half1 += data_fourier_volume_half1
-        output_data_fourier_volume_half2 += data_fourier_volume_half2
-        output_weight_fourier_volume_half1 += weight_fourier_volume_half1
-        output_weight_fourier_volume_half2 += weight_fourier_volume_half2
+        for arg in args_list:
+            (
+                data_fourier_volume_half1,
+                weight_fourier_volume_half1,
+                data_fourier_volume_half2,
+                weight_fourier_volume_half2,
+            ) = reconstruct_single_tiltseries(**arg)
 
-    progress_bar.close()
+            output_data_fourier_volume_half1 += data_fourier_volume_half1
+            output_data_fourier_volume_half2 += data_fourier_volume_half2
+            output_weight_fourier_volume_half1 += weight_fourier_volume_half1
+            output_weight_fourier_volume_half2 += weight_fourier_volume_half2
+    finally:
+        progress_bar.stop()
 
     output_data_fourier_volume = output_data_fourier_volume_half1 + output_data_fourier_volume_half2
     output_weight_fourier_volume = output_weight_fourier_volume_half1 + output_weight_fourier_volume_half2

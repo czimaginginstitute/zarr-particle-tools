@@ -3228,10 +3228,10 @@ dependencies = [
     { name = "mrcfile" },
     { name = "numpy" },
     { name = "pandas" },
+    { name = "rich" },
     { name = "s3fs" },
     { name = "scipy" },
     { name = "starfile" },
-    { name = "tqdm" },
 ]
 
 [package.optional-dependencies]
@@ -3268,12 +3268,12 @@ requires-dist = [
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.2.0" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-xdist", marker = "extra == 'dev'" },
+    { name = "rich" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12.0" },
     { name = "s3fs" },
     { name = "scipy" },
     { name = "seaborn", marker = "extra == 'dev'" },
     { name = "starfile" },
-    { name = "tqdm" },
 ]
 provides-extras = ["dev", "pipeliner"]
 
