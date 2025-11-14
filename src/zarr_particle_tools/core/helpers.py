@@ -1,28 +1,17 @@
 import logging
 import shutil
-import sys
 from pathlib import Path
 from typing import Union
 
 import pandas as pd
 import starfile
-from tqdm import tqdm
+from rich.logging import RichHandler
 
 from zarr_particle_tools.core.constants import NOISY_LOGGERS
 
 logger = logging.getLogger(__name__)
 
 # ====================== global helpers ======================
-
-
-class TqdmLoggingHandler(logging.Handler):
-    def emit(self, record):
-        try:
-            msg = self.format(record)
-            tqdm.write(msg, file=sys.stdout)
-            self.flush()
-        except Exception:
-            self.handleError(record)
 
 
 def suppress_noisy_loggers(loggers, level=logging.ERROR):
@@ -33,8 +22,9 @@ def suppress_noisy_loggers(loggers, level=logging.ERROR):
 def setup_logging(debug: bool = False):
     logging.basicConfig(
         level=logging.DEBUG if debug else logging.INFO,
-        handlers=[TqdmLoggingHandler()],
-        format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=[RichHandler(rich_tracebacks=True, show_time=True, show_level=True, show_path=False, markup=True)],
+        format="%(message)s",
+        datefmt="[%Y-%m-%d %H:%M:%S]",
         force=True,
     )
 

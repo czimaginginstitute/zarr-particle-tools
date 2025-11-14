@@ -34,13 +34,14 @@ Primary steps in subtomogram reconstruction are:
 
 Create a new conda environment if you'd like to keep this separate from your other Python environments:
 ```bash
-conda create -n zarr-particle-tools python=3.11
+conda create -n zarr-particle-tools python=3.12
 conda activate zarr-particle-tools
+pip install uv
 ```
 
 And then install:
 ```bash
-poetry install # or "pip install ." or "uv pip install ."
+uv pip install zarr-particle-tools
 ```
 
 ## Example runs
@@ -79,7 +80,16 @@ zarr-particle-extract local \
 
 ```
 zarr-particle-extract data-portal \
-  --run-id 16468 \
+  --dataset-id "10426" \
+  --annotation-names "ribosome" \
+  --inexact-match \
+  --output-dir tests/output/sample_data_portal_test/ \
+  --box-size 128 --bin 2
+```
+
+```
+zarr-particle-extract data-portal \
+  --run-id "16848, 16851, 16861" \
   --annotation-names "ribosome" \
   --inexact-match \
   --output-dir tests/output/sample_data_portal_test/ \
@@ -178,6 +188,19 @@ If you would like to see a feature added (on or off this limitation list), pleas
 - [ ] Support multiple optics groups 
 - [ ] Support features that have (yet) to be implemented
 - [ ] Add starfile generation from CryoET Data Portal into cryoet-alignment package
+
+## Development
+To set up a development environment, run the following commands:
+
+```bash
+conda create -n zarr-particle-tools python=3.12
+conda activate zarr-particle-tools
+pip install uv
+
+git clone git@github.com:czimaginginstitute/zarr-particle-tools.git
+cd zarr-particle-tools
+uv pip install -e .[dev]
+```
 
 ## License
 

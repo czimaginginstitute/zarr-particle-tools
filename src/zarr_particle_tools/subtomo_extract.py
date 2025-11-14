@@ -6,7 +6,6 @@ Run zarr-particle-extract --help for usage instructions.
 
 import logging
 import multiprocessing as mp
-import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -17,8 +16,8 @@ import mrcfile
 import numpy as np
 import pandas as pd
 import starfile
+from rich.progress import track
 from scipy.ndimage import fourier_shift
-from tqdm import tqdm
 
 import zarr_particle_tools.cli.options as cli_options
 import zarr_particle_tools.generate.cdp_generate_starfiles as cdp_generate
@@ -430,10 +429,10 @@ def extract_subtomograms(
     logger.info(f"Starting extraction of subtomograms from {len(tomograms_df)} tiltseries using {cpu_count} CPU cores.")
 
     with mp.Pool(processes=cpu_count) as pool:
-        for updated_filtered_particles_df, skipped_count in tqdm(
+        for updated_filtered_particles_df, skipped_count in track(
             pool.imap_unordered(process_tiltseries_wrapper, args_list, chunksize=1),
+            description="Extracting subtomograms...",
             total=len(args_list),
-            file=sys.stdout,
         ):
             if updated_filtered_particles_df is not None and not updated_filtered_particles_df.empty:
                 particles_df_results.append(updated_filtered_particles_df)
@@ -673,6 +672,7 @@ def parse_extract_data_portal_subtomograms(
         overwrite=overwrite,
         output_dir=output_dir,
         dry_run=dry_run,
+        copick_data_portal=True,
     )
 
     particles_path, tomograms_path, tiltseries_folder = cdp_generate.generate_starfiles(
@@ -704,7 +704,7 @@ def parse_extract_data_portal_subtomograms(
     particles_count, total_skipped_count, individual_tiltseries_count = extract_subtomograms(
         particles_starfile=particles_path,
         trajectories_starfile=None,  # No trajectories data in Data Portal
-        tiltseries_relative_dir=output_dir,
+        tiltseries_relative_dir=Path("./"),
         tomograms_starfile=tomograms_path,
         box_size=box_size,
         crop_size=crop_size,
@@ -830,7 +830,7 @@ def parse_extract_data_portal_copick_subtomograms(
     particles_count, total_skipped_count, individual_tiltseries_count = extract_subtomograms(
         particles_starfile=particles_path,
         trajectories_starfile=None,  # No trajectories data in Data Portal
-        tiltseries_relative_dir=output_dir,
+        tiltseries_relative_dir=Path("./"),
         tomograms_starfile=tomograms_path,
         box_size=box_size,
         crop_size=crop_size,

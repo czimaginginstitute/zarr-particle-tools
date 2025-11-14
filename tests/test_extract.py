@@ -147,3 +147,44 @@ def test_cli_extract_local(tmp_path, compare_mrcs_dirs, dataset, extract_suffix)
         compare_mrcs_dirs(relion_dir, subtomo_dir, tol=dataset_config["tol"] * 100)
     else:
         compare_mrcs_dirs(relion_dir, subtomo_dir, tol=dataset_config["tol"])
+
+
+@pytest.mark.parametrize("dataset, extract_suffix", [("unroofing", "baseline"), ("unroofing", "box64_bin2_crop32")])
+def test_cli_extract_data_portal(tmp_path, compare_mrcs_dirs, dataset, extract_suffix):
+    dataset_config = DATASET_CONFIGS[dataset]
+    extract_arguments = EXTRACTION_PARAMETERS[extract_suffix]
+
+    output_dir = tmp_path / f"{dataset}_{extract_suffix}"
+    data_root = dataset_config["data_root"]
+
+    args = [
+        "data-portal",
+        "--run-id",
+        "16848,16851,16861",
+        "--annotation-names",
+        "ribosome",
+        "--inexact-match",
+        "--box-size",
+        str(extract_arguments["box_size"]),
+        "--crop-size",
+        str(extract_arguments.get("crop_size", extract_arguments["box_size"])),
+        "--output-dir",
+        str(output_dir),
+    ]
+
+    if extract_arguments.get("bin", 1) != 1:
+        args.append("--bin")
+        args.append(str(extract_arguments["bin"]))
+    if extract_arguments.get("float16"):
+        args.append("--float16")
+    if extract_arguments.get("no_ctf"):
+        args.append("--no-ctf")
+    if extract_arguments.get("no_circle_crop"):
+        args.append("--no-circle-crop")
+
+    runner = CliRunner()
+    runner.invoke(cli, args, catch_exceptions=False)
+
+    subtomo_dir = output_dir / "Subtomograms/"
+    relion_dir = data_root / f"relion_output_{extract_suffix}/Subtomograms/"
+    compare_mrcs_dirs(relion_dir, subtomo_dir, tol=dataset_config["tol"] * 100)

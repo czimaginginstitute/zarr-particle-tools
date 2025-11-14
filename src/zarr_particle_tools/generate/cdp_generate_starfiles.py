@@ -12,7 +12,6 @@ Generates:
 
 import json
 import logging
-import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -23,7 +22,7 @@ import mrcfile
 import numpy as np
 import pandas as pd
 import starfile
-from tqdm import tqdm
+from rich.progress import track
 
 import zarr_particle_tools.cli.options as cli_options
 import zarr_particle_tools.generate.cdp_cache as cdp_cache
@@ -240,7 +239,7 @@ def get_particles_df_optics_df(annotation_files: list[cdp.AnnotationFile]) -> tu
     with ThreadPoolExecutor(max_workers=THREAD_POOL_WORKER_COUNT) as thread_pool:
         futures = [thread_pool.submit(get_particles_df_from_file, file) for file in annotation_files]
 
-        for fut in tqdm(as_completed(futures), total=len(futures), desc="Downloading particle data", file=sys.stdout):
+        for fut in track(as_completed(futures), description="Downloading particle data", total=len(futures)):
             particles_df = fut.result()
             if particles_df.empty:
                 continue
@@ -425,8 +424,8 @@ def generate_individual_tomogram_starfiles(
             for (alignment_id, voxel_spacing_id) in alignment_and_voxel_spacing_ids
         ]
 
-        for fut in tqdm(
-            as_completed(futures), total=len(futures), desc="Generating individual tomogram star files", file=sys.stdout
+        for fut in track(
+            as_completed(futures), description="Generating individual tomogram star files", total=len(futures)
         ):
             individual_tomogram_df, tomo_name = fut.result()
             if individual_tomogram_df is not None:
@@ -744,4 +743,4 @@ if __name__ == "__main__":
     cli()
 
 # Example usage:
-# python -m zarr_particle_tools.generate.cdp_generate_starfiles --run-ids 16463 --annotation-names "cytosolic ribosome" --output-dir tests/output/data_portal_16363_ribosome
+# python -m zarr_particle_tools.generate.cdp_generate_starfiles --run-ids "16848" --annotation-names "cytosolic ribosome" --output-dir tests/output/data_portal_run_16848_ribosomes
