@@ -55,7 +55,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install .[dev]
+          pip install uv
+          uv pip install -e .[dev]
 
       - name: Restore test data from cache
         id: cache
@@ -72,16 +73,16 @@ jobs:
           mkdir -p tests/data
           cd tests/data
 
-          # # Download both files with retries and resume
-          # curl -L --fail --retry 5 --retry-delay 5 --continue-at - \
-          #   -o zarr_particle_tools_test_data_large.tar.gz \
-          #   "https://zenodo.org/records/17529862/files/zarr_particle_tools_test_data_large.tar.gz?download=1"
+          # Download both files with retries and resume
+          curl -L --fail --retry 5 --retry-delay 5 --continue-at - \
+            -o zarr_particle_tools_test_data_large.tar.gz \
+            "https://zenodo.org/records/17529862/files/zarr_particle_tools_test_data_large.tar.gz?download=1"
 
           curl -L --fail --retry 5 --retry-delay 5 --continue-at - \
             -o zarr_particle_tools_test_data_small.tar.gz \
             "https://zenodo.org/records/17529862/files/zarr_particle_tools_test_data_small.tar.gz?download=1"
 
-      - name: Upload artifact
+      - name: Save test data to cache
         if: ${{ (matrix.cache) && (steps.cache.outputs.cache-hit != 'true') }}
         uses: actions/cache/save@v4
         with:
