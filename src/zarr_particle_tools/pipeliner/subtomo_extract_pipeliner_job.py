@@ -32,8 +32,7 @@ class PythonRelionPseudoSubtomoJob(PipelinerJob):
         self.add_output_node("optimisation_set.star", NODE_TOMOOPTIMISATIONSET, ["relion", "tomo", "extract", "python"])
 
     def get_commands(self):
-        # TODO: remove --debug
-        command = ["zarr-particle-extract", "local", "--overwrite", "--debug"]
+        command = ["zarr-particle-extract", "local", "--overwrite"]
 
         optimisation_starfile = self.joboptions["in_optimisation"].get_string()
         if optimisation_starfile:

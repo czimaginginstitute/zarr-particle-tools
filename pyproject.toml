@@ -4,12 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "zarr-particle-tools"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 classifiers = [
     "Development Status :: 4 - Beta",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -18,28 +17,31 @@ classifiers = [
 ]
 dynamic = ["version"]
 dependencies = [
-  "click",
-  "copick",
-  "cryoet_alignment>=0.1.1",
-  "cryoet_data_portal",
-  "dask",
-  "mrcfile",
-  "numpy",
-  "pandas",
-  "pytest",
-  "s3fs",
-  "scipy",
-  "starfile",
-  "tqdm",
+    "click",
+    "copick",
+    "cryoet_alignment>=0.1.1",
+    "cryoet_data_portal",
+    "dask",
+    "mrcfile",
+    "numpy",
+    "pandas",
+    "s3fs",
+    "scipy",
+    "starfile",
+    "tqdm",
 ]
-authors = [
-    { name = "Daniel Ji" },
-    { name = "Utz Heinrich Ermel" },
-]
+authors = [{ name = "Daniel Ji" }, { name = "Utz Heinrich Ermel" }]
 description = "Subtomogram extraction from local files and the CryoET Data Portal."
 readme = "README.md"
 license = { file = "LICENSE" }
-keywords = ["cryoet", "cryo-et", "tomography", "subtomogram", "particle", "zarr"]
+keywords = [
+    "cryoet",
+    "cryo-et",
+    "tomography",
+    "subtomogram",
+    "particle",
+    "zarr",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -50,6 +52,8 @@ dev = [
     "ruff>=0.12.0",
     "matplotlib",
     "seaborn",
+    "pytest",
+    "pytest-xdist",
 ]
 pipeliner = ["pipeliner @ git+https://gitlab.com/ccpem/ccpem-pipeliner.git"]
 
