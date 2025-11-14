@@ -17,10 +17,10 @@ jobs:
 
     strategy:
       matrix:
-        python-version: ['3.10', '3.11', '3.12', '3.13']
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
         include:
-          - python-version: '3.10'
-            upload-artifact: true
+          - python-version: "3.10"
+            cache: true
 
     steps:
       - name: Maximize build space (#1)
@@ -55,17 +55,18 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install .[dev]
+          pip install uv
+          uv pip install --system -e .[dev]
 
       - name: Restore test data from cache
         id: cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: tests/data
           key: zenodo-17529862
 
-      - name: Download and extract test data from Zenodo (cache miss)
-        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+      - name: Download test data from Zenodo (cache miss)
+        if: steps.cache.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euxo pipefail
@@ -81,18 +82,21 @@ jobs:
             -o zarr_particle_tools_test_data_small.tar.gz \
             "https://zenodo.org/records/17529862/files/zarr_particle_tools_test_data_small.tar.gz?download=1"
 
+      - name: Save test data to cache
+        if: ${{ (matrix.cache) && (steps.cache.outputs.cache-hit != 'true') }}
+        uses: actions/cache/save@v4
+        with:
+          path: tests/data
+          key: zenodo-17529862
+
+      - name: Extract test data from tar.gz files
+        run: |
           # Extract
+          cd tests/data
           for f in *.tar.gz; do tar -xzf "$f"; done
 
       - name: List contents
         run: ls -lah tests/data
-
-      - name: Upload artifact
-        if: ${{ matrix.upload-artifact }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: zenodo-17529862
-          path: tests/data
 
       - name: Run tests
         run: |
