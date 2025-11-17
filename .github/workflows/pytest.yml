@@ -11,7 +11,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -87,7 +87,7 @@ jobs:
             "https://zenodo.org/records/17529862/files/zarr_particle_tools_test_data_small.tar.gz?download=1"
 
       - name: Save test data to cache
-        if:  ${{ matrix.cache && steps.cache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main' }}
+        if:  ${{ matrix.cache && steps.cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: tests/data
