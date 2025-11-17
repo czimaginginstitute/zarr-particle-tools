@@ -1,16 +1,12 @@
-name: Run Pytest
+name: Run Pytest - All Tests
 permissions:
   contents: read
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 concurrency:
-  group: pytest
+  group: pytest-full
   cancel-in-progress: true
 
 jobs:
@@ -20,9 +16,6 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
-        include:
-          - python-version: "3.10"
-            cache: true
 
     steps:
       - name: Maximize build space (#1)
@@ -60,15 +53,7 @@ jobs:
           pip install uv
           uv pip install --system -e .[dev]
 
-      - name: Restore test data from cache
-        id: cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: tests/data
-          key: zenodo-17529862
-
-      - name: Download test data from Zenodo (cache miss)
-        if: steps.cache.outputs.cache-hit != 'true'
+      - name: Download test data from Zenodo
         shell: bash
         run: |
           set -euxo pipefail
@@ -76,20 +61,14 @@ jobs:
           cd tests/data
 
           # Download both files with retries and resume
-          # curl -L --fail --retry 5 --retry-delay 5 --continue-at - \
-          #   -o zarr_particle_tools_test_data_large.tar.gz \
-          #   "https://zenodo.org/records/17529862/files/zarr_particle_tools_test_data_large.tar.gz?download=1"
+          curl -L --fail --retry 5 --retry-delay 5 --continue-at - \
+            -o zarr_particle_tools_test_data_large.tar.gz \
+            "https://zenodo.org/records/17529862/files/zarr_particle_tools_test_data_large.tar.gz?download=1"
 
           curl -L --fail --retry 5 --retry-delay 5 --continue-at - \
             -o zarr_particle_tools_test_data_small.tar.gz \
             "https://zenodo.org/records/17529862/files/zarr_particle_tools_test_data_small.tar.gz?download=1"
 
-      - name: Save test data to cache
-        if:  ${{ matrix.cache && steps.cache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main' }}
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: tests/data
-          key: zenodo-17529862-small
 
       - name: Extract test data from tar.gz files
         run: |
@@ -102,4 +81,4 @@ jobs:
 
       - name: Run tests
         run: |
-          pytest -n auto -vvv -k "not (local and unroofing)"
+          pytest -n auto -vvv
