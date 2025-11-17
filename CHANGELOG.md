@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/czimaginginstitute/zarr-particle-tools/compare/zarr-particle-tools-v0.3.1...zarr-particle-tools-v0.3.2) (2025-11-17)
+
+
+### 🧹 Miscellaneous Chores
+
+* Address medium security vulnerabilities. ([#11](https://github.com/czimaginginstitute/zarr-particle-tools/issues/11)) ([bdd500b](https://github.com/czimaginginstitute/zarr-particle-tools/commit/bdd500b5a0ac668169544d8d3dad7fa125af8147))
+
 ## [0.3.1](https://github.com/czimaginginstitute/zarr-particle-tools/compare/zarr-particle-tools-v0.3.0...zarr-particle-tools-v0.3.1) (2025-11-17)
 
 
