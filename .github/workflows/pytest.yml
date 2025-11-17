@@ -83,7 +83,7 @@ jobs:
             "https://zenodo.org/records/17529862/files/zarr_particle_tools_test_data_small.tar.gz?download=1"
 
       - name: Save test data to cache
-        if: ${{ (matrix.cache) && (steps.cache.outputs.cache-hit != 'true') }}
+        if:  ${{ matrix.cache && steps.cache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v4
         with:
           path: tests/data
