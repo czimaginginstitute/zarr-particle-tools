@@ -1,5 +1,8 @@
 name: Python Linting
 
+permissions:
+  contents: read
+
 on:
   pull_request:
   push:
@@ -10,14 +13,14 @@ jobs:
     name: pre-commit checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
         with:
           python-version: "3.12.6"
       - name: Install action-validator with asdf
-        uses: asdf-vm/actions/install@v4
+        uses: asdf-vm/actions/install@b7bcd026f18772e44fe1026d729e1611cc435d47
         with:
           tool_versions: |
             action-validator 0.6.0
       - name: check linting
-        uses: pre-commit/action@v3.0.1
+        uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd

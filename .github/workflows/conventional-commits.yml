@@ -1,5 +1,8 @@
 # Validates PR title follows conventional commits
 name: conventional-commits
+permissions:
+  contents: read
+
 on:
   pull_request:
     branches: [main]
@@ -16,4 +19,4 @@ jobs:
   conventional_commit_title:
     runs-on: ubuntu-latest
     steps:
-      - uses: chanzuckerberg/github-actions/.github/actions/conventional-commits@v6.10.0
+      - uses: chanzuckerberg/github-actions/.github/actions/conventional-commits@9a7a0d55060523befd055d301c29d9190cd0244f

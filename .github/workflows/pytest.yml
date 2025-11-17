@@ -1,4 +1,6 @@
 name: Run Pytest
+permissions:
+  contents: read
 
 on:
   push:
@@ -24,7 +26,7 @@ jobs:
 
     steps:
       - name: Maximize build space (#1)
-        uses: mathio/gha-cleanup@v1
+        uses: mathio/gha-cleanup@aca3d43a05bf564f5fc69acb929a65b01797f22b
         with:
           remove-browsers: true
           verbose: true
@@ -45,10 +47,10 @@ jobs:
           docker rmi -f $(docker images -aq)
           docker system df
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -60,7 +62,7 @@ jobs:
 
       - name: Restore test data from cache
         id: cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: tests/data
           key: zenodo-17529862
@@ -84,7 +86,7 @@ jobs:
 
       - name: Save test data to cache
         if:  ${{ matrix.cache && steps.cache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: tests/data
           key: zenodo-17529862
