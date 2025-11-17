@@ -16,6 +16,7 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     strategy:
       matrix:
@@ -103,3 +104,4 @@ jobs:
       - name: Run tests
         run: |
           pytest -n auto -vvv -k "not (local and unroofing)"
+        timeout-minutes: 60
