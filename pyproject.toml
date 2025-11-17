@@ -55,7 +55,7 @@ dev = [
     "pytest",
     "pytest-xdist",
 ]
-pipeliner = ["pipeliner @ git+https://gitlab.com/ccpem/ccpem-pipeliner.git"]
+# pipeliner = ["pipeliner @ git+https://gitlab.com/ccpem/ccpem-pipeliner.git"]
 
 [project.scripts]
 zarr-particle-extract = "zarr_particle_tools.subtomo_extract:cli"
