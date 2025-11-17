@@ -1,6 +1,6 @@
 # zarr-particle-tools
 Subtomogram extraction and reconstruction in Python from local [OME-Zarr files](https://ngff.openmicroscopy.org/0.4/index.html) 
-and the [CryoET Data Portal](https://cryoetdataportal.czscience.com/). A reimplementation of the RELION subtomogram 
+and the [CryoET Data Portal](https://cryoetdataportal.czscience.com/). A reimplementation of the [RELION](https://github.com/3dem/relion) subtomogram 
 extraction and particle reconstruction jobs, but designed to work on ZARR-based tiltseries with the CryoET Data Portal
 API and remove the need for downloading the entire tiltseries.
 
