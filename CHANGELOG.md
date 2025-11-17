@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.4](https://github.com/czimaginginstitute/zarr-particle-tools/compare/zarr-particle-tools-v0.3.3...zarr-particle-tools-v0.3.4) (2025-11-17)
+
+
+### 🐞 Bug Fixes
+
+* Remove CCPEM-pipeliner extra dependency. ([#16](https://github.com/czimaginginstitute/zarr-particle-tools/issues/16)) ([1ca9f32](https://github.com/czimaginginstitute/zarr-particle-tools/commit/1ca9f3260bc47613caba2f90efb4d64433bccba2))
+
 ## [0.3.3](https://github.com/czimaginginstitute/zarr-particle-tools/compare/zarr-particle-tools-v0.3.2...zarr-particle-tools-v0.3.3) (2025-11-17)
 
 
