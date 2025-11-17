@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.1](https://github.com/czimaginginstitute/zarr-particle-tools/compare/zarr-particle-tools-v0.3.0...zarr-particle-tools-v0.3.1) (2025-11-17)
+
+
+### 🐞 Bug Fixes
+
+* add CONTRIBUTING.md ([#8](https://github.com/czimaginginstitute/zarr-particle-tools/issues/8)) ([d1a6a07](https://github.com/czimaginginstitute/zarr-particle-tools/commit/d1a6a071c10ba2a48c973dda187155d6220957f2))
+* use caching for pytest only on main ([#7](https://github.com/czimaginginstitute/zarr-particle-tools/issues/7)) ([c2f7f99](https://github.com/czimaginginstitute/zarr-particle-tools/commit/c2f7f99218f145fac2f5ca2e6e3671cf431de506))
+
 ## [0.3.0](https://github.com/czimaginginstitute/zarr-particle-tools/compare/zarr-particle-tools-v0.2.0...zarr-particle-tools-v0.3.0) (2025-11-14)
 
 
