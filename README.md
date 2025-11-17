@@ -1,7 +1,11 @@
 # zarr-particle-tools
-Subtomogram extraction and reconstruction in Python from local files and the CryoET Data Portal. A reimplementation of the RELION subtomogram extraction and particle reconstruction jobs, but designed to work on ZARR-based tiltseries with the CryoET Data Portal API and remove the need for downloading the entire tiltseries.
+Subtomogram extraction and reconstruction in Python from local [OME-Zarr files](https://ngff.openmicroscopy.org/0.4/index.html) 
+and the [CryoET Data Portal](https://cryoetdataportal.czscience.com/). A reimplementation of the RELION subtomogram 
+extraction and particle reconstruction jobs, but designed to work on ZARR-based tiltseries with the CryoET Data Portal
+API and remove the need for downloading the entire tiltseries.
 
-In addition to particle extraction and reconstruction, this package is built in a modular way to allow for use of individual functions (see `core/`), such as:
+In addition to particle extraction and reconstruction, this package is built in a modular way to allow for use of
+individual functions (see `core/`), such as:
 - Projection matrix generation & point projection
 - CTF premultiplication
 - Dose weighting
@@ -43,6 +47,9 @@ And then install:
 ```bash
 uv pip install zarr-particle-tools
 ```
+> [!NOTE]  
+> [CCPEM pipeliner](https://ccpem-pipeliner.readthedocs.io/en/latest/) is not yet released on PyPI. In order to use this
+> package with pipeliner, please install pipeliner manually from the [pipeliner repository](https://gitlab.com/ccpem/ccpem-pipeliner).
 
 ## Example runs
 ### See full options with `zarr-particle-extract --help` and `zarr-particle-reconstruct --help`.
