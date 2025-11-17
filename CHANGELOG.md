@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.3](https://github.com/czimaginginstitute/zarr-particle-tools/compare/zarr-particle-tools-v0.3.2...zarr-particle-tools-v0.3.3) (2025-11-17)
+
+
+### 🧹 Miscellaneous Chores
+
+* Enable publishing workflow for PyPI ([#14](https://github.com/czimaginginstitute/zarr-particle-tools/issues/14)) ([3b1fa32](https://github.com/czimaginginstitute/zarr-particle-tools/commit/3b1fa32e61150e758adc92bd79e6d2966c4546b5))
+
 ## [0.3.2](https://github.com/czimaginginstitute/zarr-particle-tools/compare/zarr-particle-tools-v0.3.1...zarr-particle-tools-v0.3.2) (2025-11-17)
 
 
