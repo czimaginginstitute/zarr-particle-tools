@@ -104,5 +104,5 @@ jobs:
 
       - name: Run tests
         run: |
-          pytest -n auto -vvv -k "not (local and unroofing) and local and extract"
+          pytest -n 1 -vvv -k "not (local and unroofing)"
         timeout-minutes: 60
