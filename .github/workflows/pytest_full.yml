@@ -12,7 +12,6 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
 
     strategy:
       matrix:
@@ -24,22 +23,6 @@ jobs:
         with:
           remove-browsers: true
           verbose: true
-
-      - name: Maximize build space (#2)
-        run: |
-          set +e
-          sudo apt-get purge temurin-*-jdk adoptopenjdk-* adoptium-ca-certificates openjdk-* session-manager-plugin azure-cli google-cloud-cli heroku
-          sudo apt-get purge postgresql-* libpq-dev libmysqlclient* msodbcsql* mssql-tools unixodbc-dev mysql-client* mysql-common mysql-server* php*-*sql sphinxsearch mongodb*
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /usr/local/lib/terraform
-          sudo rm -rf /usr/lib/jvm/ /usr/local/graalvm /usr/share/java/selenium-server*.jar
-          sudo rm -rf /usr/share/mysql* /opt/mssql-tools /usr/local/sqlpackage
-          sudo rm -rf /usr/local/bin/aliyun /usr/local/bin/aws /usr/local/bin/aws_completer /usr/local/aws-cli /usr/local/aws /usr/local/aws-sam-cli /usr/local/bin/azcopy* /usr/share/az_* /opt/az /usr/bin/az /usr/share/google-cloud-sdk /usr/lib/google-cloud-sdk /usr/local/bin/bicep /usr/local/bin/oc /usr/local/bin/oras /usr/local/lib/heroku
-          docker rm -vf $(docker ps -aq)
-          docker rmi -f $(docker images -aq)
-          docker system df
 
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
@@ -82,5 +65,4 @@ jobs:
 
       - name: Run tests
         run: |
-          pytest -n auto -vvv
-        timeout-minutes: 360
+          pytest -n 1 -vvv
