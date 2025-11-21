@@ -84,6 +84,11 @@ def compare_mrcs_dirs():
         dir1 = Path(dir1)
         dir2 = Path(dir2)
 
+        if not dir1.exists():
+            raise FileNotFoundError(f"Directory {dir1} does not exist")
+        if not dir2.exists():
+            raise FileNotFoundError(f"Directory {dir2} does not exist")
+
         for file1 in dir1.rglob("*.mrcs"):
             relative_path = file1.relative_to(dir1)
             file2 = dir2 / relative_path

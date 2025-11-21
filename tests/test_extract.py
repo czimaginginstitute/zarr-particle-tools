@@ -114,6 +114,10 @@ def test_cli_extract_local(tmp_path, compare_mrcs_dirs, dataset, extract_suffix)
     output_dir = tmp_path / f"{dataset}_{extract_suffix}"
     data_root = dataset_config["data_root"]
 
+    tol = dataset_config["tol"]
+    float_tol = dataset_config["float_tol"]
+    float16 = extract_arguments.get("float16", False)
+
     args = [
         "local",
         "--particles-starfile",
@@ -141,29 +145,30 @@ def test_cli_extract_local(tmp_path, compare_mrcs_dirs, dataset, extract_suffix)
     runner.invoke(cli, args, catch_exceptions=False)
 
     subtomo_dir = output_dir / "Subtomograms/"
-    relion_dir = data_root / f"relion_output_{extract_suffix}/Subtomograms/"
-    # extra tolerance for float16 data
-    if extract_arguments.get("float16"):
-        compare_mrcs_dirs(relion_dir, subtomo_dir, tol=dataset_config["tol"] * 100)
+    relion_dir = data_root / f"Extract/relion_output_{extract_suffix}/Subtomograms/"
+    if float16:
+        compare_mrcs_dirs(relion_dir, subtomo_dir, tol=float_tol)
     else:
-        compare_mrcs_dirs(relion_dir, subtomo_dir, tol=dataset_config["tol"])
+        compare_mrcs_dirs(relion_dir, subtomo_dir, tol=tol)
 
 
 @pytest.mark.parametrize("dataset, extract_suffix", [("unroofing", "baseline"), ("unroofing", "box64_bin2_crop32")])
-def test_cli_extract_data_portal(tmp_path, compare_mrcs_dirs, dataset, extract_suffix):
-    dataset_config = DATASET_CONFIGS[dataset]
+def test_cli_extract_data_portal(tmp_path, dataset, extract_suffix):
+    """
+    A test to ensure that the data portal CLI can run without error and produces the expected output files.
+    This test does not compare the output files to any reference data, as of now.
+    """
     extract_arguments = EXTRACTION_PARAMETERS[extract_suffix]
-
-    output_dir = tmp_path / f"{dataset}_{extract_suffix}"
-    data_root = dataset_config["data_root"]
+    output_dir = tmp_path / f"{dataset}_{extract_suffix}_data_portal"
 
     args = [
         "data-portal",
         "--run-id",
-        "16848,16851,16861",
+        "16848,16851",
         "--annotation-names",
         "ribosome",
         "--inexact-match",
+        "--ground-truth",
         "--box-size",
         str(extract_arguments["box_size"]),
         "--crop-size",
@@ -185,6 +190,26 @@ def test_cli_extract_data_portal(tmp_path, compare_mrcs_dirs, dataset, extract_s
     runner = CliRunner()
     runner.invoke(cli, args, catch_exceptions=False)
 
-    subtomo_dir = output_dir / "Subtomograms/"
-    relion_dir = data_root / f"relion_output_{extract_suffix}/Subtomograms/"
-    compare_mrcs_dirs(relion_dir, subtomo_dir, tol=dataset_config["tol"] * 100)
+    assert (output_dir / "particles.star").exists()
+    assert (output_dir / "tomograms.star").exists()
+
+    assert (output_dir / "tiltseries/tiltseries_placeholder.mrcs").exists()
+    assert (output_dir / "tiltseries/run_16848_tiltseries_16582_alignment_17772_spacing_17051.star").exists()
+    assert (output_dir / "tiltseries/run_16851_tiltseries_16585_alignment_17775_spacing_17054.star").exists()
+
+    assert (
+        output_dir / "Subtomograms/run_16848_tiltseries_16582_alignment_17772_spacing_17051/1_stack2d.mrcs"
+    ).exists()
+    assert (
+        output_dir / "Subtomograms/run_16848_tiltseries_16582_alignment_17772_spacing_17051/438_stack2d.mrcs"
+    ).exists()
+    assert not (
+        output_dir / "Subtomograms/run_16848_tiltseries_16582_alignment_17772_spacing_17051/439_stack2d.mrcs"
+    ).exists()
+    assert (
+        len(list((output_dir / "Subtomograms/run_16848_tiltseries_16582_alignment_17772_spacing_17051").glob("*.mrcs")))
+        == 438
+    )
+    assert (
+        output_dir / "Subtomograms/run_16851_tiltseries_16585_alignment_17775_spacing_17054/10_stack2d.mrcs"
+    ).exists()

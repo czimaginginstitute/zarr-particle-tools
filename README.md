@@ -96,8 +96,9 @@ zarr-particle-extract data-portal \
 
 ```
 zarr-particle-extract data-portal \
-  --run-id "16848, 16851, 16861" \
+  --run-id "16848, 16851" \
   --annotation-names "ribosome" \
+  --ground-truth \
   --inexact-match \
   --output-dir tests/output/sample_data_portal_test/ \
   --box-size 128 --bin 2
