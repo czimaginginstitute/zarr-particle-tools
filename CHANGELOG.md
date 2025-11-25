@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.5](https://github.com/czimaginginstitute/zarr-particle-tools/compare/zarr-particle-tools-v0.3.4...zarr-particle-tools-v0.3.5) (2025-11-25)
+
+
+### 🐞 Bug Fixes
+
+* improve pytests ([#13](https://github.com/czimaginginstitute/zarr-particle-tools/issues/13)) ([7e1c7ad](https://github.com/czimaginginstitute/zarr-particle-tools/commit/7e1c7ad07cf888e8490dc5f7d9ac8aa95fdc5fe2))
+
 ## [0.3.4](https://github.com/czimaginginstitute/zarr-particle-tools/compare/zarr-particle-tools-v0.3.3...zarr-particle-tools-v0.3.4) (2025-11-17)
 
 
