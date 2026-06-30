@@ -30,9 +30,9 @@ def _old_buggy_idx(dose_weights: np.ndarray, cutoff_fraction: float) -> np.ndarr
 
 
 def _dose_weight_stack(doses, box_size=64, pixel_size=4.0):
-    return np.stack(
-        [calculate_dose_weight_image(d, pixel_size, box_size, 0.0, 0.0) for d in doses]
-    ).astype(np.complex128)
+    return np.stack([calculate_dose_weight_image(d, pixel_size, box_size, 0.0, 0.0) for d in doses]).astype(
+        np.complex128
+    )
 
 
 def test_matches_relion_find_dose_xranges():

@@ -36,9 +36,9 @@ def _relion_find_dose_xranges(dose_weights: np.ndarray, cutoff: float) -> np.nda
 
 
 def _dose_weight_stack(doses, box_size=64, pixel_size=4.0):
-    return np.stack(
-        [calculate_dose_weight_image(d, pixel_size, box_size, 0.0, 0.0) for d in doses]
-    ).astype(np.complex128)
+    return np.stack([calculate_dose_weight_image(d, pixel_size, box_size, 0.0, 0.0) for d in doses]).astype(
+        np.complex128
+    )
 
 
 def test_matches_relion_find_dose_xranges_per_row():
@@ -53,9 +53,7 @@ def test_row0_equals_scalar_frequency_cutoff():
     box_size = 64
     cutoff = 0.01
     dw = _dose_weight_stack([10.0, 100.0, 1000.0], box_size=box_size)
-    np.testing.assert_array_equal(
-        compute_dose_xranges(dw, cutoff)[:, 0], compute_dose_frequency_cutoff(dw, cutoff)
-    )
+    np.testing.assert_array_equal(compute_dose_xranges(dw, cutoff)[:, 0], compute_dose_frequency_cutoff(dw, cutoff))
 
 
 def test_cutoff_is_anisotropic_and_within_nyquist():

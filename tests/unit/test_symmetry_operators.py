@@ -14,12 +14,25 @@ from zarr_particle_tools.core.symmetry import get_transforms_from_symmetry
 
 # group -> expected order
 ORDERS = {
-    "C1": 1, "C2": 2, "C7": 7,
-    "D2": 4, "D7": 14,
-    "T": 12, "TD": 24, "TH": 24,
-    "O": 24, "OH": 48,
-    "I": 60, "I1": 60, "I2": 60, "I3": 60, "I4": 60,
-    "IH": 120, "I1H": 120, "I3H": 120, "I4H": 120,
+    "C1": 1,
+    "C2": 2,
+    "C7": 7,
+    "D2": 4,
+    "D7": 14,
+    "T": 12,
+    "TD": 24,
+    "TH": 24,
+    "O": 24,
+    "OH": 48,
+    "I": 60,
+    "I1": 60,
+    "I2": 60,
+    "I3": 60,
+    "I4": 60,
+    "IH": 120,
+    "I1H": 120,
+    "I3H": 120,
+    "I4H": 120,
 }
 
 PROPER = {"C1", "C2", "C7", "D2", "D7", "T", "O", "I", "I1", "I2", "I3", "I4"}

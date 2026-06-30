@@ -35,7 +35,6 @@ from zarr_particle_tools.core.backprojection import (
 from zarr_particle_tools.core.ctf import calculate_ctf
 from zarr_particle_tools.core.dose import (
     calculate_dose_weight_image,
-    compute_dose_frequency_cutoff,
     compute_dose_xranges,
 )
 from zarr_particle_tools.core.forwardprojection import (
