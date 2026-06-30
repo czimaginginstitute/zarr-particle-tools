@@ -33,7 +33,11 @@ from zarr_particle_tools.core.backprojection import (
     gridding_correct_3d_sinc2,
 )
 from zarr_particle_tools.core.ctf import calculate_ctf
-from zarr_particle_tools.core.dose import calculate_dose_weight_image
+from zarr_particle_tools.core.dose import (
+    calculate_dose_weight_image,
+    compute_dose_frequency_cutoff,
+    compute_dose_xranges,
+)
 from zarr_particle_tools.core.forwardprojection import (
     apply_offsets_to_coordinates,
     calculate_projection_matrix_from_starfile_df,
@@ -80,10 +84,11 @@ def process_particle(
     defocus_angle: list[float],
     doses: list[float],
     ctf_scalefactor: list[float],
-    bfactor_per_electron_dose: list[float],
+    ctf_bfactor: list[float],
     bin: int,
     dose_weights: np.ndarray,
     freq_cutoff_idx: list[int],
+    dose_xranges: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, int]:
     """
     Read an extracted particle and backproject it into a Fourier volume.
@@ -138,7 +143,7 @@ def process_particle(
                     defocus_angle=defocus_angle[section_index],
                     dose=doses[section_index],
                     ctf_scalefactor=ctf_scalefactor[section_index],
-                    bfactor=bfactor_per_electron_dose[section_index],
+                    bfactor=ctf_bfactor[section_index],
                     box_size=box_size,
                     bin=bin,
                 )
@@ -146,6 +151,14 @@ def process_particle(
             )
             particle_data[particle_section_index] *= weight_data[section_index]
             weight_data[section_index] **= 2
+
+            # RELION zeroes source-slice columns x >= xRanges(y, f) per row, in both data and
+            # weight, before backprojection (reconstruct_particle.cpp:388-393). This removes the
+            # anisotropic high-frequency wedge that the single spherical cutoff (row 0) would keep.
+            xranges = dose_xranges[section_index]  # (box_size,) per-row cutoff index
+            zero_cols = np.arange(box_size // 2 + 1)[None, :] >= xranges[:, None]
+            particle_data[particle_section_index][zero_cols] = 0
+            weight_data[section_index][zero_cols] = 0
 
         backproject_slice_backward(
             particle_data_slice=particle_data[particle_section_index],
@@ -224,8 +237,8 @@ def reconstruct_single_tiltseries(
     amplitude_contrast = tiltseries_row_entry["rlnAmplitudeContrast"]
     handedness = tiltseries_row_entry["rlnTomoHand"]
     phase_shift = (
-        tiltseries_row_entry["rlnPhaseShift"]
-        if "rlnPhaseShift" in optics_row.columns
+        individual_tiltseries_df["rlnPhaseShift"].values
+        if "rlnPhaseShift" in individual_tiltseries_df.columns
         else [0.0] * len(individual_tiltseries_df)
     )
     defocus_u = individual_tiltseries_df["rlnDefocusU"].values
@@ -242,6 +255,13 @@ def reconstruct_single_tiltseries(
         if "rlnCtfBfactorPerElectronDose" in individual_tiltseries_df.columns
         else [0.0] * len(individual_tiltseries_df)
     )
+    # rlnCtfBfactor (per-CTF B-factor) drives the CTF damping envelope (calculate_ctf), distinct from
+    # rlnCtfBfactorPerElectronDose above (dose weighting). Default 0 (no damping).
+    ctf_bfactor = (
+        individual_tiltseries_df["rlnCtfBfactor"].values
+        if "rlnCtfBfactor" in individual_tiltseries_df.columns
+        else [0.0] * len(individual_tiltseries_df)
+    )
     dose_weights = np.stack(
         [
             calculate_dose_weight_image(dose, tiltseries_pixel_size * bin, box_size, bfactor, cutoff_fraction)
@@ -249,8 +269,8 @@ def reconstruct_single_tiltseries(
         ],
         dtype=np.complex128,
     )
-    freq_cutoff = dose_weights[:, 0, :] < cutoff_fraction
-    freq_cutoff_idx = freq_cutoff.shape[1] - np.argmax(freq_cutoff[:, ::-1], axis=1)
+    dose_xranges = compute_dose_xranges(dose_weights, cutoff_fraction)
+    freq_cutoff_idx = dose_xranges[:, 0]
 
     args_list = [
         {
@@ -277,10 +297,11 @@ def reconstruct_single_tiltseries(
         "defocus_angle": defocus_angle,
         "doses": doses,
         "ctf_scalefactor": ctf_scalefactor,
-        "bfactor_per_electron_dose": bfactor_per_electron_dose,
+        "ctf_bfactor": ctf_bfactor,
         "bin": bin,
         "dose_weights": dose_weights,
         "freq_cutoff_idx": freq_cutoff_idx,
+        "dose_xranges": dose_xranges,
     }
     args_list = [{**args, **constant_args} for args in args_list]
 

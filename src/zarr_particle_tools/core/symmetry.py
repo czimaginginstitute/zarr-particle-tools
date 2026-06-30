@@ -9,8 +9,6 @@ from functools import cache
 
 import numpy as np
 
-from zarr_particle_tools.core.symmetry_constants import i_transforms
-
 
 def _embed(R) -> np.ndarray:
     T = np.eye(4)
@@ -41,6 +39,61 @@ def _mirror_from_normal(n) -> np.ndarray:
     n = np.asarray(n, dtype=float)
     n = n / np.linalg.norm(n)
     return np.eye(3) - 2.0 * np.outer(n, n)
+
+
+# Exact algebraic axis constants for the cubic and icosahedral point groups. RELION's 6-figure
+# literals reduce to these; using them lets the regenerated operators close to < 1e-12 (RELION's
+# own literals only close to ~1e-6 for T and ~1e-7 for I3/I4). See
+# docs/audit/relion_symmetry_source.md.
+_SQRT2 = np.sqrt(2.0)
+_SQRT3 = np.sqrt(3.0)
+_SQRT6 = np.sqrt(6.0)
+_PHI = (1.0 + np.sqrt(5.0)) / 2.0
+# icosahedral 5-fold tilt: ICO_A = sin = sqrt((5 - sqrt5)/10), ICO_B = cos = sqrt((5 + sqrt5)/10)
+_ICO_A = 1.0 / np.sqrt(1.0 + _PHI**2)
+_ICO_B = _PHI / np.sqrt(1.0 + _PHI**2)
+
+
+def _roty(theta) -> np.ndarray:
+    c, s = np.cos(theta), np.sin(theta)
+    return np.array([[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]])
+
+
+def _orthonormalize(R) -> np.ndarray:
+    """Nearest orthogonal matrix (wipes accumulated floating-point drift from products)."""
+    U, _, Vt = np.linalg.svd(R)
+    return U @ Vt
+
+
+def _close_group(generators: list[np.ndarray]) -> list[np.ndarray]:
+    """
+    Close a set of 3x3 rotation generators into the full finite group (identity included),
+    multiplying members to a fixed point and re-orthonormalizing each product so the operators
+    close to < 1e-12 (mirrors RELION's compute_subgroup, symmetries.cpp:273).
+    """
+    group = [np.eye(3)]
+
+    def _index(M: np.ndarray) -> int:
+        for idx, G in enumerate(group):
+            if np.allclose(M, G, atol=1e-8):
+                return idx
+        return -1
+
+    for g in generators:
+        g = _orthonormalize(np.asarray(g, dtype=float))
+        if _index(g) < 0:
+            group.append(g)
+
+    changed = True
+    while changed:
+        changed = False
+        for A in list(group):
+            for B in list(group):
+                P = _orthonormalize(A @ B)
+                if _index(P) < 0:
+                    group.append(P)
+                    changed = True
+    return group
 
 
 @cache
@@ -159,8 +212,8 @@ def t_transforms() -> list[np.ndarray]:
     Rz120 = c3[1][:3, :3]  # 3×3
     z = np.array([0.0, 0.0, 1.0])
 
-    # RELION C2 axis and its two C3-rotated images
-    v0 = np.array([0.0, 0.816496, 0.577350])
+    # RELION C2 axis and its two C3-rotated images (exact: 0.816496 = sqrt(2/3), 0.577350 = 1/sqrt3)
+    v0 = np.array([0.0, np.sqrt(2.0 / 3.0), 1.0 / _SQRT3])
     C2_axes = [v0, Rz120 @ v0, Rz120 @ (Rz120 @ v0)]
     C2s = [_embed(_rot_axis(a, np.pi)) for a in C2_axes]  # 3 elements
 
@@ -195,7 +248,7 @@ def td_transforms() -> list[np.ndarray]:
     Returns list of 24 4x4 matrices.
     """
     T = t_transforms()
-    M = _mirror_from_normal([1.4142136, 2.4494897, 0.0])  # RELION's plane
+    M = _mirror_from_normal([_SQRT2, _SQRT6, 0.0])  # RELION's dihedral mirror normal (sqrt2, sqrt6, 0)
     MT = [_embed(M @ A[:3, :3]) for A in T]
     return T + MT
 
@@ -247,6 +300,46 @@ def oh_transforms() -> list[np.ndarray]:
 
 
 @cache
+def _i2_proper() -> tuple[np.ndarray, ...]:
+    """
+    The 60 proper rotations of the icosahedral group in RELION's I2 frame (2-fold on +Z), built
+    from exact generators (RELION I/I2: rot_axis 2 (0,0,1); rot_axis 5 (a,0,b);
+    rot_axis 3 (0,1,phi^2)) and closed to < 1e-12.
+    """
+    two_fold = _rot_axis([0.0, 0.0, 1.0], np.pi)
+    five_fold = _rot_axis([_ICO_A, 0.0, _ICO_B], 2 * np.pi / 5)
+    three_fold = _rot_axis([0.0, 1.0, _PHI**2], 2 * np.pi / 3)
+    return tuple(_close_group([two_fold, five_fold, three_fold]))
+
+
+@cache
+def i_transforms(n: int) -> list[np.ndarray]:
+    """
+    RELION icosahedral symmetry, variants I1..I4 (bare I == I2, 2-fold on +Z).
+
+    The four RELION variants differ only by a rigid rotation of the axis frame, so we build the
+    group once in the I2 frame and conjugate every operator by Q (R -> Q R Q^T):
+        I1 = Ry(90 deg), I2 = identity, I3 = Ry(-theta), I4 = Ry(+theta), theta = atan2(a, b).
+    These map I2's 5-fold (a,0,b) onto each variant's RELION 5-fold axis exactly. Returns 60 4x4
+    matrices that close to < 1e-12.
+    """
+    theta = np.arctan2(_ICO_A, _ICO_B)
+    if n == 1:
+        Q = _roty(np.pi / 2)
+    elif n == 2:
+        Q = np.eye(3)
+    elif n == 3:
+        Q = _roty(-theta)
+    elif n == 4:
+        Q = _roty(theta)
+    elif n == 5:
+        raise NotImplementedError("I5/I5H symmetry is not supported by RELION, so not implemented.")
+    else:
+        raise ValueError("Invalid n for icosahedral symmetry. Must be 1, 2, 3, or 4.")
+    return [_embed(Q @ R @ Q.T) for R in _i2_proper()]
+
+
+@cache
 def ih_transforms(n: int) -> list[np.ndarray]:
     I_matrices = i_transforms(n)
     if n == 1:
@@ -254,9 +347,9 @@ def ih_transforms(n: int) -> list[np.ndarray]:
     elif n == 2:
         M = _mirror_from_normal([1.0, 0.0, 0.0])
     elif n == 3:
-        M = _mirror_from_normal([0.850650807, 0.0, 0.525731114])
+        M = _mirror_from_normal([_ICO_B, 0.0, _ICO_A])
     elif n == 4:
-        M = _mirror_from_normal([0.850650807, 0.0, -0.525731114])
+        M = _mirror_from_normal([_ICO_B, 0.0, -_ICO_A])
     elif n == 5:
         raise NotImplementedError("I5/I5H symmetry is not supported by RELION, so not implemented.")
     else:
@@ -320,7 +413,7 @@ def get_transforms_from_symmetry(symmetry: str) -> list[np.ndarray]:
         transforms = o_transforms()
     elif symmetry == "OH":
         transforms = oh_transforms()
-    elif symmetry.startswith("I") and symmetry.endswith("H") and symmetry[1:-1].isdigit():
+    elif symmetry.startswith("I") and symmetry.endswith("H") and (symmetry[1:-1].isdigit() or symmetry == "IH"):
         n = int(symmetry[1:-1]) if symmetry != "IH" else 2
         transforms = ih_transforms(n)
     elif symmetry.startswith("I"):

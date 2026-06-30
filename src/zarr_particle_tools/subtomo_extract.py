@@ -140,8 +140,8 @@ def process_tiltseries(
     amplitude_contrast = tiltseries_row_entry["rlnAmplitudeContrast"]
     handedness = tiltseries_row_entry["rlnTomoHand"]
     phase_shift = (
-        tiltseries_row_entry["rlnPhaseShift"]
-        if "rlnPhaseShift" in optics_row.columns
+        individual_tiltseries_df["rlnPhaseShift"].values
+        if "rlnPhaseShift" in individual_tiltseries_df.columns
         else [0.0] * len(individual_tiltseries_df)
     )
     defocus_u = individual_tiltseries_df["rlnDefocusU"].values
@@ -156,6 +156,13 @@ def process_tiltseries(
     bfactor_per_electron_dose = (
         individual_tiltseries_df["rlnCtfBfactorPerElectronDose"]
         if "rlnCtfBfactorPerElectronDose" in individual_tiltseries_df.columns
+        else [0.0] * len(individual_tiltseries_df)
+    )
+    # rlnCtfBfactor (per-CTF B-factor) is distinct from rlnCtfBfactorPerElectronDose above:
+    # it drives the CTF damping envelope (calculate_ctf), not dose weighting. Default 0 (no damping).
+    ctf_bfactor = (
+        individual_tiltseries_df["rlnCtfBfactor"].values
+        if "rlnCtfBfactor" in individual_tiltseries_df.columns
         else [0.0] * len(individual_tiltseries_df)
     )
     dose_weights = np.stack(
@@ -252,7 +259,7 @@ def process_tiltseries(
                     defocus_angle=defocus_angle[section_index],
                     dose=doses[section_index],
                     ctf_scalefactor=ctf_scalefactor[section_index],
-                    bfactor=bfactor_per_electron_dose[section_index],
+                    bfactor=ctf_bfactor[section_index],
                     box_size=box_size,
                     bin=bin,
                 )
