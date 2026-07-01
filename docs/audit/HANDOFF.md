@@ -5,6 +5,15 @@
 **Date:** 2026-06-30. **Branch:** `fix/sta-relion-numerical-correctness` (see §5 "Getting the changes").
 **RELION reference version for all comparisons:** commit `b1fe45f6` (`git describe` = `5.1.0-15-gb1fe45f6`).
 
+> **✅ HPC VERIFICATION COMPLETE (2026-07-01).** Run on `gpu-sm01-08` (A40) against a locally
+> rebuilt RELION `b1fe45f6`. Full results in **`docs/audit/phase_hpc_verification.md`**. Summary:
+> **Fix A + D verified** (unmasked reconstruct error dropped ~5× vs RELION, no regression);
+> **Fix F and Fix G verified** (all 40 reconstruct cases + header parity pass);
+> **baseline suites verified** (unit/extract/reconstruct/strict-extract, no regressions);
+> **Fix E REVERTED** (exact operators deviate ~2.2e-3 from RELION on I/I2 while RELION's own
+> truncated operators match to 2.8e-5 — see §2 Fix E and §4). Fixes B/C left unit-tested only
+> (no phase-plate / nonzero-`rlnCtfBfactor` data available).
+
 ---
 
 ## 1. What this is
@@ -31,7 +40,7 @@ documented formula **without** running a RELION binary. Both were locally verifi
 synthetic extract/reconstruct cases still pass). **Your job is the end-to-end confirmation against
 real RELION output.**
 
-### Fix A — Phase 1 D1: dose frequency cutoff (HIGH severity; triggers in currently-passing tests)
+### Fix A — Phase 1 D1: dose frequency cutoff (HIGH severity; triggers in currently-passing tests) — ✅ VERIFIED ON HPC
 - **Files:** `src/zarr_particle_tools/core/dose.py` (new `compute_dose_frequency_cutoff`),
   `src/zarr_particle_tools/subtomo_reconstruct.py` (replaced the broken `argmax` at the old
   lines ~252-253; added the import).
@@ -66,7 +75,7 @@ real RELION output.**
 - **Expected effect:** **no change** on current datasets (neither has `rlnCtfBfactor` → `E=1`).
   Correct behavior appears only with nonzero `rlnCtfBfactor`. Spec: `docs/audit/d4_bfactor_spec.md`.
 
-### Fix D — Phase 1 D2: per-row dose frequency cutoff (`xRanges` zeroing)
+### Fix D — Phase 1 D2: per-row dose frequency cutoff (`xRanges` zeroing) — ✅ VERIFIED ON HPC
 - **Files:** `core/dose.py` (new `compute_dose_xranges` = RELION `findDoseXRanges`;
   `compute_dose_frequency_cutoff` now delegates to its row 0), `subtomo_reconstruct.py` (zeroes source
   data + weight columns `x >= xRanges(y,f)` per row before backprojection, per `reconstruct_particle.cpp:379-394`).
@@ -75,7 +84,17 @@ real RELION output.**
 - **Expected effect:** reconstruct moves closer to RELION at high radius; should not regress (removes
   data RELION also removes). **HPC:** confirm via unmasked comparison that the high-frequency tail drops.
 
-### Fix E — Phase 1 D3: exact point-group symmetry operators
+### Fix E — Phase 1 D3: exact point-group symmetry operators — ❌ REVERTED ON HPC (net regression vs RELION)
+> **HPC finding (2026-07-01):** the follow-up below does not hold. RELION uses its own truncated
+> (Euler-derived) operators internally, so regenerating the I2 reference with `b1fe45f6` produces a
+> **bit-identical** file — there is no exact-operator reference to compare against. Measured vs that
+> reference, the exact operators deviate **2.23e-3** (masked-99.5 1.52e-3, ~12k voxels > 1e-3), while
+> RELION's truncated operators match to **2.76e-5** (~80× closer). Fix E is equal-or-worse vs RELION
+> everywhere, so it was **reverted**: `core/symmetry.py` restored to the hardcoded operators
+> (keeping only the `get_transforms_from_symmetry("IH")` `int("H")` bugfix),
+> `tests/unit/test_symmetry_operators.py` removed, and `baseline_I`/`baseline_I2` tol returned to
+> 1e-3. See `docs/audit/phase_hpc_verification.md` §4. The original (now-superseded) plan follows.
+
 - **Files:** `core/symmetry.py` only (the Euler-table `symmetry_constants.py` is now unused). T/Td/Th
   axes use exact `√(2/3)`, `1/√3`, `√2`, `√6`; I1–I4 are built from exact generators (I2 from
   `rot_axis 2 (0,0,1)`, `5 (a,0,b)`, `3 (0,1,φ²)` + group closure, then rigid frame-rotation
@@ -97,17 +116,17 @@ real RELION output.**
   `ctf(0)² + ctf(90)² == 1` (RELION K5 term); also guards against phase shift being ignored.
 - `tests/unit/test_ctf_bfactor.py` — `ctf(bfactor) == ctf(0)·exp(-bfactor/4·u2)` away from clamped
   zeros (RELION K4 envelope); exact no-op at `bfactor=0`.
-- `tests/unit/test_symmetry_operators.py` — every supported point group: correct order, orthonormal
-  operators, **closure < 1e-12**, and det signs (proper groups +1; mirror/inversion groups mixed).
+- ~~`tests/unit/test_symmetry_operators.py`~~ — **removed on HPC** with the Fix E revert (it only
+  asserted the exact operators' closure < 1e-12, which RELION's truncated operators don't satisfy).
 
 ```
-python -m pytest tests/unit/ -v     # expect 87 passed
+python -m pytest tests/unit/ -v     # expect 11 passed (was 87 before the Fix E test was removed)
 ```
 
 ### Pre-HPC Phase 1 items (done this session)
-- **Fix F — no-CTF frequency cap:** `subtomo_reconstruct.py` now passes the dose-based `xRanges(0,f)`
+- **Fix F — no-CTF frequency cap (✅ VERIFIED ON HPC):** `subtomo_reconstruct.py` now passes the dose-based `xRanges(0,f)`
   to backprojection in the `no_ctf` path too (was full Nyquist), matching `reconstruct_particle.cpp:416`.
-- **Fix G — MRC header parity:** reconstructed maps now write `ispg=0` (RELION's value for these maps;
+- **Fix G — MRC header parity (✅ VERIFIED ON HPC):** reconstructed maps now write `ispg=0` (RELION's value for these maps;
   mrcfile defaults a 3D volume to 1). `mrc_headers_match` (in `tests/helpers/compare.py`) verifies
   all structural header fields (mode, dims, mx/my/mz, mapc/mapr/maps, starts, cella, origin, ispg)
   and is asserted in `test_reconstruct.py`. (Confirmed `ispg=0` across all RELION reconstruct refs.)
@@ -159,8 +178,9 @@ regressions, and confirmation that Fix A reduced the high-frequency error.
 ## 4. What was NOT changed (deliberately deferred — do not assume done)
 
 - **Phase 1 D2** (per-row dose `xRanges` zeroing): **DONE this session** — see §2 Fix D.
-- **Phase 1 D3** (exact symmetry operators): **DONE this session** — see §2 Fix E. (One follow-up:
-  regenerate the I2 reconstruct reference with exact operators on HPC, then revert the baseline_I tol.)
+- **Phase 1 D3** (exact symmetry operators): **REVERTED on HPC** — see §2 Fix E. RELION uses its own
+  truncated operators, so the exact operators are a net regression vs RELION (2.2e-3 on I/I2 vs
+  2.8e-5 for the truncated ones). Restored the hardcoded operators; kept the `IH` bugfix.
 - **Phase 1 D5** (`scaleRatio` / mixed-pixel-size reconstruction): **DEFERRED to roadmap (large lift).**
   Same-bin reconstruction already works; the real gap is reconstructing tomograms with *different*
   pixel sizes/binnings in one job (multi-optics-group), which needs relaxed asserts, per-tomogram

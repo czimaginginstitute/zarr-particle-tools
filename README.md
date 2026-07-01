@@ -186,7 +186,6 @@ If you would like to see a feature added (on or off this limitation list), pleas
 
 ### Reconstruction limitations
 - Does not (yet) support a SNR value (`--snr`) flag
-- Does not (yet) support no_ctf
 - Does not support weight_*.mrc output files
 - Does not support helical symmetry
 - Does not support backup / only do unfinished features 
