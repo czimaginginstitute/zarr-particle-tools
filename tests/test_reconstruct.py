@@ -34,12 +34,9 @@ SYNTHETIC_RECONSTRUCT_PARAMETERS = {
     "baseline_T": {"box_size": 64, "symmetry": "T"},
     "baseline_O": {"box_size": 64, "symmetry": "O"},
     "baseline_OH": {"box_size": 64, "symmetry": "OH", "tol": 2e-3, "error_median_tol": 1e-4},  # TODO: debug & fix
-    # D3 exact operators differ from RELION's truncated reference by ~2.5e-8; the CTF-correction
-    # division amplifies that at one low-weight voxel to ~1.5e-3. Bumped from the 1e-3 default
-    # (cf. baseline_OH=2e-3) pending regeneration of the I2 reference with exact operators on HPC.
-    "baseline_I": {"box_size": 64, "symmetry": "I", "tol": 2e-3},
+    "baseline_I": {"box_size": 64, "symmetry": "I"},
     "baseline_I1": {"box_size": 64, "symmetry": "I1"},
-    "baseline_I2": {"box_size": 64, "symmetry": "I2", "tol": 2e-3},  # same symmetry as baseline_I (I == I2)
+    "baseline_I2": {"box_size": 64, "symmetry": "I2"},  # same symmetry as baseline_I (I == I2)
     "baseline_I3": {"box_size": 64, "symmetry": "I3"},
     "baseline_I4": {"box_size": 64, "symmetry": "I4"},
     "box256": {"box_size": 256, "corr_tol": 1e-2, "tol": 7e-2},  # TODO: debug & fix
