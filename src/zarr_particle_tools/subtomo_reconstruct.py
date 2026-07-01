@@ -165,7 +165,10 @@ def process_particle(
             particle_data_fourier_volume=particle_data_fourier_volume,
             particle_weight_fourier_volume=particle_weight_fourier_volume,
             particle_projection_matrix=particle_projection_matrices[section_index],
-            freq_cutoff=freq_cutoff_idx[section_index] if not no_ctf else box_size // 2 + 1,
+            # RELION passes the dose-based xRanges(0,f) as maxFreq regardless of CTF
+            # (reconstruct_particle.cpp:416); the dose weights (and thus the cutoff) are computed
+            # whether or not CTF premultiplication is applied.
+            freq_cutoff=freq_cutoff_idx[section_index],
         )
         particle_section_index += 1
 
@@ -364,11 +367,13 @@ def finalise_volume(
     with mrcfile.new(data_path, overwrite=True) as mrc:
         mrc.set_data(gridding_corrected_volume.astype(np.float32))
         mrc.voxel_size = voxel_size
+        mrc.header.ispg = 0  # RELION writes ispg=0 on reconstructed maps (mrcfile defaults 3D to 1)
 
     full_path = Path(output_dir) / f"{tag}_full.mrc"
     with mrcfile.new(full_path, overwrite=True) as mrc:
         mrc.set_data(ctf_corrected_real_volume.astype(np.float32))
         mrc.voxel_size = voxel_size
+        mrc.header.ispg = 0  # RELION writes ispg=0 on reconstructed maps (mrcfile defaults 3D to 1)
 
     final_volume = ctf_corrected_real_volume
 
@@ -387,6 +392,7 @@ def finalise_volume(
     with mrcfile.new(final_path, overwrite=True) as mrc:
         mrc.set_data(final_volume.astype(np.float32))
         mrc.voxel_size = voxel_size
+        mrc.header.ispg = 0  # RELION writes ispg=0 on reconstructed maps (mrcfile defaults 3D to 1)
 
     logger.info(f"Wrote out {data_path}, {full_path}, and {final_path}.")
     return data_path, full_path, final_path

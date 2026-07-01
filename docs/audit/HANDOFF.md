@@ -2,7 +2,7 @@
 
 **Audience:** an agent running on an HPC node with a GPU, able to run **both** RELION 5 and
 `zarr-particle-tools` and compare their outputs.
-**Date:** 2026-06-30. **Branch:** `main` (changes currently uncommitted — see "Getting the changes").
+**Date:** 2026-06-30. **Branch:** `fix/sta-relion-numerical-correctness` (see §5 "Getting the changes").
 **RELION reference version for all comparisons:** commit `b1fe45f6` (`git describe` = `5.1.0-15-gb1fe45f6`).
 
 ---
@@ -104,6 +104,20 @@ real RELION output.**
 python -m pytest tests/unit/ -v     # expect 87 passed
 ```
 
+### Pre-HPC Phase 1 items (done this session)
+- **Fix F — no-CTF frequency cap:** `subtomo_reconstruct.py` now passes the dose-based `xRanges(0,f)`
+  to backprojection in the `no_ctf` path too (was full Nyquist), matching `reconstruct_particle.cpp:416`.
+- **Fix G — MRC header parity:** reconstructed maps now write `ispg=0` (RELION's value for these maps;
+  mrcfile defaults a 3D volume to 1). `mrc_headers_match` (in `tests/helpers/compare.py`) verifies
+  all structural header fields (mode, dims, mx/my/mz, mapc/mapr/maps, starts, cella, origin, ispg)
+  and is asserted in `test_reconstruct.py`. (Confirmed `ispg=0` across all RELION reconstruct refs.)
+- **Strict unmasked comparator (the measurement instrument):** `tests/helpers/compare.py` gains
+  `np_arrays_close_unmasked` / `mrc_close_unmasked` (float64-as-oracle, magnitude-aware, NO masking,
+  default 16× the float32 ULP — per-file worst voxels run ~8–10× ULP) and `mrc_unmasked_report`
+  (measurement-only, for HPC). `tests/test_extract_strict.py` runs extract unmasked (no-CTF gets a
+  documented cropCircle-ordering DC allowance). **HPC: use `mrc_unmasked_report` to quantify the
+  reconstruct error before/after D1/D2/D3 and drive the float32 path < 1e-5.**
+
 ## 3. What you need to do on the HPC
 
 ### 3a. Environment
@@ -170,8 +184,14 @@ regressions, and confirmation that Fix A reduced the high-frequency error.
 
 ## 5. Getting the changes
 
-Changes are uncommitted on `main`. Files touched this session:
-`src/zarr_particle_tools/core/dose.py`, `subtomo_reconstruct.py`, `subtomo_extract.py`,
-`tests/unit/*`, plus docs (`PLAN.md`, `docs/audit/*`). (`.pre-commit-config.yaml` was already
-modified before this session — unrelated.) Recommend committing the source+test changes to a
-feature branch (e.g. `fix/sta-dose-cutoff-phaseshift`) and pushing so the HPC node can pull.
+All work is on branch **`fix/sta-relion-numerical-correctness`**. Pull that branch on the HPC node.
+
+- **Round 1 (committed):** D1–D4, Phase-0 D2/D4, exact symmetry operators, golden tests
+  (`tests/unit/*`), and the audit docs (now under `docs/audit/`).
+- **Round 2 (pre-HPC items — commit + push before switching):** `subtomo_reconstruct.py`
+  (no-CTF `xRanges` cap + `ispg=0`), `tests/helpers/compare.py` (unmasked magnitude-aware comparator
+  + `mrc_headers_match` + `mrc_unmasked_report`), `tests/test_reconstruct.py` (header-parity assert),
+  `tests/test_extract_strict.py` (new), and this `HANDOFF.md`.
+
+Suggested round-2 commit:
+`fix: no-CTF dose freq cap, RELION ispg/header parity, and strict unmasked comparator`

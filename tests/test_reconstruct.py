@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from tests.helpers.compare import mrc_equal
+from tests.helpers.compare import mrc_equal, mrc_headers_match
 from zarr_particle_tools.subtomo_reconstruct import cli, reconstruct_local
 
 # TODO: need to add real datasets
@@ -175,6 +175,7 @@ def test_reconstruct_local_parametrized(
         error_median_tol=error_median_tol,
         plot_dir=output_dir,
     )
+    assert mrc_headers_match(relion_dir / "merged.mrc", reconstruct_dir / "merged.mrc")
 
 
 @pytest.mark.parametrize(
