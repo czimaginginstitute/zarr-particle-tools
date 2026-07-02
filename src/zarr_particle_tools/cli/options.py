@@ -332,20 +332,72 @@ def polish_options():
             required=True,
             help="Reference half-map 2 (.mrc) (RELION --ref2).",
         ),
-        click.option("--mask", type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None, help="Reference mask (.mrc), optional."),
-        click.option("--fsc", type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None, help="PostProcess FSC star, optional."),
-        click.option("--do-motion/--no-motion", default=True, show_default=True, help="Estimate per-particle motion trajectories (Bayesian polish)."),
-        click.option("--s-vel", type=float, default=0.2, show_default=True, help="Motion velocity sigma [A/dose] (--s_vel)."),
-        click.option("--s-div", type=float, default=5000.0, show_default=True, help="Motion divergence sigma [A] (--s_div)."),
+        click.option(
+            "--mask",
+            type=click.Path(exists=True, dir_okay=False, path_type=Path),
+            default=None,
+            help="Reference mask (.mrc), optional.",
+        ),
+        click.option(
+            "--fsc",
+            type=click.Path(exists=True, dir_okay=False, path_type=Path),
+            default=None,
+            help="PostProcess FSC star, optional.",
+        ),
+        click.option(
+            "--do-motion/--no-motion",
+            default=True,
+            show_default=True,
+            help="Estimate per-particle motion trajectories (Bayesian polish).",
+        ),
+        click.option(
+            "--s-vel", type=float, default=0.2, show_default=True, help="Motion velocity sigma [A/dose] (--s_vel)."
+        ),
+        click.option(
+            "--s-div", type=float, default=5000.0, show_default=True, help="Motion divergence sigma [A] (--s_div)."
+        ),
         click.option("--do-deformation", is_flag=True, help="Estimate 2D deformations (--deformation)."),
-        click.option("--def-model", type=click.Choice(["linear", "spline", "Fourier"]), default="spline", show_default=True, help="Deformation model."),
-        click.option("--shift-only", is_flag=True, help="Only apply a rigid shift per frame (no iterative optimisation)."),
-        click.option("--align-range", type=int, default=20, show_default=True, help="Max particle shift [px] (RELION --r)."),
+        click.option(
+            "--def-model",
+            type=click.Choice(["linear", "spline", "Fourier"]),
+            default="spline",
+            show_default=True,
+            help="Deformation model.",
+        ),
+        click.option(
+            "--shift-only", is_flag=True, help="Only apply a rigid shift per frame (no iterative optimisation)."
+        ),
+        click.option(
+            "--align-range", type=int, default=20, show_default=True, help="Max particle shift [px] (RELION --r)."
+        ),
         click.option("--threads", "-j", type=int, default=6, show_default=True, help="OMP threads (RELION --j)."),
-        click.option("--relion-bin", type=str, default="relion_tomo_align", show_default=True, help="Path/name of relion_tomo_align."),
-        click.option("--shm-dir", type=click.Path(file_okay=False, path_type=Path), default=Path("/dev/shm"), show_default=True, help="RAM-backed dir for materialized tilt series."),
-        click.option("--per-tomogram/--all-at-once", default=True, show_default=True, help="Two-phase per-tomogram (bounded RAM); all-at-once keeps all in RAM."),
-        click.option("--n-workers", type=int, default=0, show_default=True, help="Parallel tomograms in phase 1 (0=auto: ~1/4 cores, capped 16)."),
+        click.option(
+            "--relion-bin",
+            type=str,
+            default="relion_tomo_align",
+            show_default=True,
+            help="Path/name of relion_tomo_align.",
+        ),
+        click.option(
+            "--shm-dir",
+            type=click.Path(file_okay=False, path_type=Path),
+            default=Path("/dev/shm"),
+            show_default=True,
+            help="RAM-backed dir for materialized tilt series.",
+        ),
+        click.option(
+            "--per-tomogram/--all-at-once",
+            default=True,
+            show_default=True,
+            help="Two-phase per-tomogram (bounded RAM); all-at-once keeps all in RAM.",
+        ),
+        click.option(
+            "--n-workers",
+            type=int,
+            default=0,
+            show_default=True,
+            help="Parallel tomograms in phase 1 (0=auto: ~1/4 cores, capped 16).",
+        ),
         click.option("--keep-shm", is_flag=True, help="Keep the materialized /dev/shm MRCs (debug)."),
         click.option("--debug", is_flag=True, help="Enable debug logging."),
     ]

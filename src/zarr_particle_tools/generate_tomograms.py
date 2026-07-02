@@ -36,8 +36,13 @@ def generate_data_portal_tomograms(output_dir, **data_portal_args) -> Path:
 
 
 def generate_copick_data_portal_tomograms(
-    output_dir, copick_config, copick_name, copick_session_id, copick_user_id,
-    copick_run_names=None, copick_dataset_ids=None,
+    output_dir,
+    copick_config,
+    copick_name,
+    copick_session_id,
+    copick_user_id,
+    copick_run_names=None,
+    copick_dataset_ids=None,
 ) -> Path:
     """Emit tomograms.star for the runs referenced by a copick project (Data Portal-backed)."""
     output_dir = Path(output_dir)

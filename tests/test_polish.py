@@ -55,19 +55,29 @@ def _build_multi_tomo_zarr_case(dest: Path, n: int):
         indiv = indiv0.copy()
         indiv["tomoTiltSeriesURI"] = str(zpath.resolve())
         starfile.write({name: indiv}, str(dest / "tiltseries" / f"{name}.star"))
-        rows.append({
-            "rlnTomoName": name, "rlnVoltage": 300.0, "rlnSphericalAberration": 2.7,
-            "rlnAmplitudeContrast": 0.07, "rlnMicrographOriginalPixelSize": 10.0, "rlnTomoHand": -1,
-            "rlnOpticsGroupName": "polnet", "rlnTomoTiltSeriesPixelSize": 10.0,
-            "rlnTomoTiltSeriesStarFile": f"tiltseries/{name}.star",
-            "rlnTomoSizeX": 630, "rlnTomoSizeY": 630, "rlnTomoSizeZ": 200,
-        })
+        rows.append(
+            {
+                "rlnTomoName": name,
+                "rlnVoltage": 300.0,
+                "rlnSphericalAberration": 2.7,
+                "rlnAmplitudeContrast": 0.07,
+                "rlnMicrographOriginalPixelSize": 10.0,
+                "rlnTomoHand": -1,
+                "rlnOpticsGroupName": "polnet",
+                "rlnTomoTiltSeriesPixelSize": 10.0,
+                "rlnTomoTiltSeriesStarFile": f"tiltseries/{name}.star",
+                "rlnTomoSizeX": 630,
+                "rlnTomoSizeY": 630,
+                "rlnTomoSizeZ": 200,
+            }
+        )
         p = parts["particles"].copy()
         p["rlnTomoName"] = name
         all_p.append(p)
     starfile.write({"global": pd.DataFrame(rows)}, str(dest / "tomograms.star"))
-    starfile.write({"optics": parts["optics"], "particles": pd.concat(all_p, ignore_index=True)},
-                   str(dest / "particles.star"))
+    starfile.write(
+        {"optics": parts["optics"], "particles": pd.concat(all_p, ignore_index=True)}, str(dest / "particles.star")
+    )
     return dest / "particles.star", dest / "tomograms.star"
 
 
@@ -79,10 +89,17 @@ def test_polish_zarr_matches_stock_relion(tmp_path):
     with mrcfile.open(str(DATA / "tiltseries" / "TS_1.mrcs"), permissive=True) as m:
         nz, stack = int(m.data.shape[0]), np.asarray(m.data, dtype=np.float32)
     grow = {
-        "rlnTomoName": "session1_TS_1", "rlnVoltage": 300.0, "rlnSphericalAberration": 2.7,
-        "rlnAmplitudeContrast": 0.07, "rlnMicrographOriginalPixelSize": 10.0, "rlnTomoHand": -1,
-        "rlnOpticsGroupName": "polnet", "rlnTomoTiltSeriesPixelSize": 10.0,
-        "rlnTomoSizeX": 630, "rlnTomoSizeY": 630, "rlnTomoSizeZ": 200,
+        "rlnTomoName": "session1_TS_1",
+        "rlnVoltage": 300.0,
+        "rlnSphericalAberration": 2.7,
+        "rlnAmplitudeContrast": 0.07,
+        "rlnMicrographOriginalPixelSize": 10.0,
+        "rlnTomoHand": -1,
+        "rlnOpticsGroupName": "polnet",
+        "rlnTomoTiltSeriesPixelSize": 10.0,
+        "rlnTomoSizeX": 630,
+        "rlnTomoSizeY": 630,
+        "rlnTomoSizeZ": 200,
     }
 
     # baseline: stock relion_tomo_align reading the real MRC (option A)
@@ -91,15 +108,50 @@ def test_polish_zarr_matches_stock_relion(tmp_path):
     shutil.copy(DATA / "tiltseries" / "TS_1.mrcs", base / "tiltseries" / "TS_1.mrcs")
     shutil.copy(DATA / "tiltseries" / "TS_1.star", base / "tiltseries" / "TS_1.star")
     starfile.write({"optics": parts["optics"], "particles": parts["particles"]}, str(base / "particles.star"))
-    starfile.write({"global": pd.DataFrame([{**grow, "rlnTomoTiltSeriesName": "tiltseries/TS_1.mrcs",
-                                             "rlnTomoFrameCount": nz, "rlnTomoTiltSeriesStarFile": "tiltseries/TS_1.star"}])},
-                   str(base / "tomograms.star"))
-    starfile.write({"optimisation_set": pd.DataFrame([{"rlnTomoParticlesFile": "particles.star",
-                                                       "rlnTomoTomogramsFile": "tomograms.star"}])},
-                   str(base / "optimisation_set.star"))
-    subprocess.run([RELION_BIN, "--i", "optimisation_set.star", "--ref1", str(ref.resolve()),
-                    "--ref2", str(ref.resolve()), "--b", str(box), "--r", "8", "--o", "out/", "--j", "4"],
-                   check=True, cwd=str(base))
+    starfile.write(
+        {
+            "global": pd.DataFrame(
+                [
+                    {
+                        **grow,
+                        "rlnTomoTiltSeriesName": "tiltseries/TS_1.mrcs",
+                        "rlnTomoFrameCount": nz,
+                        "rlnTomoTiltSeriesStarFile": "tiltseries/TS_1.star",
+                    }
+                ]
+            )
+        },
+        str(base / "tomograms.star"),
+    )
+    starfile.write(
+        {
+            "optimisation_set": pd.DataFrame(
+                [{"rlnTomoParticlesFile": "particles.star", "rlnTomoTomogramsFile": "tomograms.star"}]
+            )
+        },
+        str(base / "optimisation_set.star"),
+    )
+    subprocess.run(
+        [
+            RELION_BIN,
+            "--i",
+            "optimisation_set.star",
+            "--ref1",
+            str(ref.resolve()),
+            "--ref2",
+            str(ref.resolve()),
+            "--b",
+            str(box),
+            "--r",
+            "8",
+            "--o",
+            "out/",
+            "--j",
+            "4",
+        ],
+        check=True,
+        cwd=str(base),
+    )
 
     # ours: zarr -> /dev/shm
     ours = tmp_path / "ours"
@@ -111,11 +163,21 @@ def test_polish_zarr_matches_stock_relion(tmp_path):
     indiv["tomoTiltSeriesURI"] = str(zpath.resolve())
     starfile.write({"session1_TS_1": indiv}, str(ours / "tiltseries" / "TS_1.star"))
     starfile.write({"optics": parts["optics"], "particles": parts["particles"]}, str(ours / "particles.star"))
-    starfile.write({"global": pd.DataFrame([{**grow, "rlnTomoTiltSeriesStarFile": "tiltseries/TS_1.star"}])},
-                   str(ours / "tomograms.star"))
-    run_polish(output_dir=ours / "out", box_size=box, ref1=ref, ref2=ref,
-               particles_starfile=ours / "particles.star", tomograms_starfile=ours / "tomograms.star",
-               do_motion=False, align_range=8, threads=4)
+    starfile.write(
+        {"global": pd.DataFrame([{**grow, "rlnTomoTiltSeriesStarFile": "tiltseries/TS_1.star"}])},
+        str(ours / "tomograms.star"),
+    )
+    run_polish(
+        output_dir=ours / "out",
+        box_size=box,
+        ref1=ref,
+        ref2=ref,
+        particles_starfile=ours / "particles.star",
+        tomograms_starfile=ours / "tomograms.star",
+        do_motion=False,
+        align_range=8,
+        threads=4,
+    )
 
     b = _proj(base / "out" / "tiltseries" / "TS_1.star")
     o = _proj(ours / "out" / "tiltseries" / "session1_TS_1.star")
@@ -126,8 +188,16 @@ def test_polish_zarr_matches_stock_relion(tmp_path):
 def test_polish_two_phase_matches_all_at_once(tmp_path):
     ref = DATA / "Reconstruct" / "relion_output_baseline" / "merged.mrc"
     parts, tomos = _build_multi_tomo_zarr_case(tmp_path / "proj", n=2)
-    common = dict(box_size=64, ref1=ref, ref2=ref, particles_starfile=parts,
-                  tomograms_starfile=tomos, do_motion=False, align_range=8, threads=4)
+    common = dict(
+        box_size=64,
+        ref1=ref,
+        ref2=ref,
+        particles_starfile=parts,
+        tomograms_starfile=tomos,
+        do_motion=False,
+        align_range=8,
+        threads=4,
+    )
     run_polish(output_dir=tmp_path / "pt", per_tomogram=True, **common)
     run_polish(output_dir=tmp_path / "aa", per_tomogram=False, **common)
     for name in ("session1_TS_0", "session1_TS_1"):
@@ -141,8 +211,18 @@ def test_polish_two_phase_motion_matches_all_at_once(tmp_path):
     """Two-phase == all-at-once with --motion (the Bayesian-polish path); motion.star is produced."""
     ref = DATA / "Reconstruct" / "relion_output_baseline" / "merged.mrc"
     parts, tomos = _build_multi_tomo_zarr_case(tmp_path / "proj", n=2)
-    common = dict(box_size=64, ref1=ref, ref2=ref, particles_starfile=parts,
-                  tomograms_starfile=tomos, do_motion=True, s_vel=0.2, s_div=5000.0, align_range=8, threads=4)
+    common = dict(
+        box_size=64,
+        ref1=ref,
+        ref2=ref,
+        particles_starfile=parts,
+        tomograms_starfile=tomos,
+        do_motion=True,
+        s_vel=0.2,
+        s_div=5000.0,
+        align_range=8,
+        threads=4,
+    )
     run_polish(output_dir=tmp_path / "pt", per_tomogram=True, **common)
     run_polish(output_dir=tmp_path / "aa", per_tomogram=False, **common)
     assert (tmp_path / "pt" / "motion.star").exists() and (tmp_path / "aa" / "motion.star").exists()
@@ -158,11 +238,27 @@ def test_polish_output_chains_into_ctfrefine_on_zarr(tmp_path):
     re-materializes from zarr (rather than the deleted shm / dropped tomoTiltSeriesURI)."""
     ref = DATA / "Reconstruct" / "relion_output_baseline" / "merged.mrc"
     parts, tomos = _build_multi_tomo_zarr_case(tmp_path / "proj", n=2)
-    run_polish(output_dir=tmp_path / "polish", box_size=64, ref1=ref, ref2=ref,
-               particles_starfile=parts, tomograms_starfile=tomos, do_motion=False, align_range=8, threads=4)
+    run_polish(
+        output_dir=tmp_path / "polish",
+        box_size=64,
+        ref1=ref,
+        ref2=ref,
+        particles_starfile=parts,
+        tomograms_starfile=tomos,
+        do_motion=False,
+        align_range=8,
+        threads=4,
+    )
     # chain: CTF-refine consuming the polish output (its tomograms.star carries tomoTiltSeriesURI)
-    run_ctf_refine(output_dir=tmp_path / "ctf", box_size=64, ref1=ref, ref2=ref,
-                   particles_starfile=tmp_path / "polish" / "particles.star",
-                   tomograms_starfile=tmp_path / "polish" / "tomograms.star", do_defocus=True, threads=4)
+    run_ctf_refine(
+        output_dir=tmp_path / "ctf",
+        box_size=64,
+        ref1=ref,
+        ref2=ref,
+        particles_starfile=tmp_path / "polish" / "particles.star",
+        tomograms_starfile=tmp_path / "polish" / "tomograms.star",
+        do_defocus=True,
+        threads=4,
+    )
     for name in ("session1_TS_0", "session1_TS_1"):
         assert (tmp_path / "ctf" / "tiltseries" / f"{name}.star").exists(), f"chaining lost {name}"

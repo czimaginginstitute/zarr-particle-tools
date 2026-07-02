@@ -51,6 +51,7 @@ def _indiv_reader(row, src_base, tiltseries_relative_dir):
         indiv[TILTSERIES_URI_RELION_COLUMN] = row[TILTSERIES_URI_RELION_COLUMN]
     return indiv, get_tiltseries_datareader(indiv, tiltseries_relative_dir or Path("./"))
 
+
 # Track materialized shm MRCs so a graceful exit/SIGTERM cleans them (SIGKILL is uncatchable).
 _ACTIVE_SHM: set = set()
 
@@ -116,7 +117,9 @@ def _preflight_budget(shm_dir: Path, stack_bytes: list, concurrency: int, all_at
     if fs not in ("tmpfs", "ramfs"):
         logger.warning(
             "shm-dir %s is on '%s', not tmpfs/ramfs: the tilt series will hit PHYSICAL DISK "
-            "(slow, and violates the RAM-only guarantee). Use /dev/shm or another tmpfs.", shm_dir, fs
+            "(slow, and violates the RAM-only guarantee). Use /dev/shm or another tmpfs.",
+            shm_dir,
+            fs,
         )
     if not stack_bytes:
         return
@@ -131,7 +134,10 @@ def _preflight_budget(shm_dir: Path, stack_bytes: list, concurrency: int, all_at
     if peak > 0.5 * free:
         logger.warning(
             "Estimated peak shm usage (%.1f GB, %s) exceeds 50%% of free space on %s (%.1f GB free).",
-            peak / 1e9, mode, shm_dir, free / 1e9
+            peak / 1e9,
+            mode,
+            shm_dir,
+            free / 1e9,
         )
 
 
@@ -252,9 +258,26 @@ def _write_header_stub(path, nx, ny, nz, pixel=1.0):
     Path(path).write_bytes(h.tobytes())
 
 
-def _run_relion_job(build_cmd, relion_bin, global_df, src_base, particles_star, trajectories,
-                    output_dir, shm_dir, tiltseries_relative_dir, box_size, ref1, ref2, mask, fsc,
-                    threads, keep_shm, opts, extra_args=()) -> Path:
+def _run_relion_job(
+    build_cmd,
+    relion_bin,
+    global_df,
+    src_base,
+    particles_star,
+    trajectories,
+    output_dir,
+    shm_dir,
+    tiltseries_relative_dir,
+    box_size,
+    ref1,
+    ref2,
+    mask,
+    fsc,
+    threads,
+    keep_shm,
+    opts,
+    extra_args=(),
+) -> Path:
     """One RELION invocation over the given tomograms into output_dir (materialize + stage + run)."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -277,13 +300,36 @@ def _run_relion_job(build_cmd, relion_bin, global_df, src_base, particles_star, 
 def _phase1_worker(task) -> str:
     """Run one-tomogram processing (writes RELION temp evidence). Module-level for mp.Pool."""
     build_cmd, relion_bin, row_df, particles_star, trajectories, output_dir, common = task
-    _run_relion_job(build_cmd, relion_bin, row_df, particles_star=particles_star, trajectories=trajectories,
-                    output_dir=output_dir, **common)
+    _run_relion_job(
+        build_cmd,
+        relion_bin,
+        row_df,
+        particles_star=particles_star,
+        trajectories=trajectories,
+        output_dir=output_dir,
+        **common,
+    )
     return str(output_dir)
 
 
-def _two_phase(build_cmd, relion_bin, global_df, src_base, particles_star, trajectories,
-               output_dir, n_workers, box_size, ref1, ref2, mask, fsc, threads, opts, common) -> Path:
+def _two_phase(
+    build_cmd,
+    relion_bin,
+    global_df,
+    src_base,
+    particles_star,
+    trajectories,
+    output_dir,
+    n_workers,
+    box_size,
+    ref1,
+    ref2,
+    mask,
+    fsc,
+    threads,
+    opts,
+    common,
+) -> Path:
     """
     Memory-bounded per-tomogram run (<= n_workers tilt series in RAM): phase 1 processes each
     tomogram alone (parallel pool, writes temp); phase 2 gathers temp and runs one --only_do_unfinished
@@ -307,7 +353,9 @@ def _two_phase(build_cmd, relion_bin, global_df, src_base, particles_star, traje
         ps = d / "particles.star"
         sub = {k: (sub_particles if k == "particles" else v) for k, v in parts.items()}
         starfile.write(sub, str(ps), overwrite=True)
-        tasks.append((build_cmd, relion_bin, global_df[global_df["rlnTomoName"] == name].copy(), ps, trajectories, d, common))
+        tasks.append(
+            (build_cmd, relion_bin, global_df[global_df["rlnTomoName"] == name].copy(), ps, trajectories, d, common)
+        )
         processed.append(name)
     if n_workers and n_workers > 1:
         with mp.get_context("spawn").Pool(min(n_workers, len(tasks))) as pool:
@@ -338,7 +386,9 @@ def _two_phase(build_cmd, relion_bin, global_df, src_base, particles_star, traje
         starfile.write({name: indiv}, str(stage / "tiltseries" / f"{name}.star"), overwrite=True)
         nz, ny, nx = (int(x) for x in reader.data.shape)  # lazy: zarr metadata only
         stub = stage / f"{name}_stub.mrc"
-        _write_header_stub(stub, nx, ny, nz, float(row["rlnTomoTiltSeriesPixelSize"]) if "rlnTomoTiltSeriesPixelSize" in row else 1.0)
+        _write_header_stub(
+            stub, nx, ny, nz, float(row["rlnTomoTiltSeriesPixelSize"]) if "rlnTomoTiltSeriesPixelSize" in row else 1.0
+        )
         r = row.to_dict()
         r["rlnTomoTiltSeriesName"] = str(stub.resolve())
         r["rlnTomoFrameCount"] = nz
@@ -347,7 +397,9 @@ def _two_phase(build_cmd, relion_bin, global_df, src_base, particles_star, traje
     starfile.write({"global": pd.DataFrame(rows)}, str(stage / "tomograms.star"), overwrite=True)
     opt_set = _write_optimisation_set(stage, particles_star, stage / "tomograms.star", trajectories)
 
-    cmd = build_cmd(relion_bin, opt_set, output_dir, box_size, ref1, ref2, mask, fsc, threads, opts) + ["--only_do_unfinished"]
+    cmd = build_cmd(relion_bin, opt_set, output_dir, box_size, ref1, ref2, mask, fsc, threads, opts) + [
+        "--only_do_unfinished"
+    ]
     logger.info("Phase 2 (collect): %s", " ".join(cmd))
     subprocess.run(cmd, check=True, cwd=str(stage))
     return output_dir
@@ -438,21 +490,63 @@ def run_relion_tomo_job(
     two_phase = per_tomogram and len(global_df) > 1
     if two_phase and (n_workers is None or n_workers <= 0):  # auto: ~1/4 cores (each worker also uses --j)
         n_workers = min(len(global_df), max(1, min(16, (os.cpu_count() or 4) // 4)))
-    _preflight_budget(shm_dir, _peek_stack_bytes(global_df, src_base, tiltseries_relative_dir),
-                      n_workers or 1, all_at_once=not two_phase)
+    _preflight_budget(
+        shm_dir,
+        _peek_stack_bytes(global_df, src_base, tiltseries_relative_dir),
+        n_workers or 1,
+        all_at_once=not two_phase,
+    )
 
-    common = dict(src_base=src_base, shm_dir=shm_dir, tiltseries_relative_dir=tiltseries_relative_dir,
-                  box_size=box_size, ref1=ref1, ref2=ref2, mask=mask, fsc=fsc, threads=threads,
-                  keep_shm=keep_shm, opts=opts)
+    common = dict(
+        src_base=src_base,
+        shm_dir=shm_dir,
+        tiltseries_relative_dir=tiltseries_relative_dir,
+        box_size=box_size,
+        ref1=ref1,
+        ref2=ref2,
+        mask=mask,
+        fsc=fsc,
+        threads=threads,
+        keep_shm=keep_shm,
+        opts=opts,
+    )
 
     if two_phase:
-        _two_phase(build_cmd, relion_bin, global_df, src_base, particles_starfile, trajectories_starfile,
-                   output_dir, n_workers, box_size, ref1, ref2, mask, fsc, threads, opts, common)
-        logger.info("Two-phase %s (%d tomograms, %d worker(s)) -> %s",
-                    Path(relion_bin).name, len(global_df), n_workers, output_dir)
+        _two_phase(
+            build_cmd,
+            relion_bin,
+            global_df,
+            src_base,
+            particles_starfile,
+            trajectories_starfile,
+            output_dir,
+            n_workers,
+            box_size,
+            ref1,
+            ref2,
+            mask,
+            fsc,
+            threads,
+            opts,
+            common,
+        )
+        logger.info(
+            "Two-phase %s (%d tomograms, %d worker(s)) -> %s",
+            Path(relion_bin).name,
+            len(global_df),
+            n_workers,
+            output_dir,
+        )
     else:
-        _run_relion_job(build_cmd, relion_bin, global_df, particles_star=particles_starfile,
-                        trajectories=trajectories_starfile, output_dir=output_dir, **common)
+        _run_relion_job(
+            build_cmd,
+            relion_bin,
+            global_df,
+            particles_star=particles_starfile,
+            trajectories=trajectories_starfile,
+            output_dir=output_dir,
+            **common,
+        )
 
     # make the output re-consumable by our tools (restore zarr locator, drop stale shm refs)
     _restore_zarr_source(output_dir, global_df, src_base, tiltseries_relative_dir)

@@ -71,10 +71,17 @@ def test_ctfrefine_zarr_matches_stock_relion(tmp_path):
         stack = np.asarray(m.data, dtype=np.float32)
 
     global_row = {
-        "rlnTomoName": "session1_TS_1", "rlnVoltage": 300.0, "rlnSphericalAberration": 2.7,
-        "rlnAmplitudeContrast": 0.07, "rlnMicrographOriginalPixelSize": 10.0, "rlnTomoHand": -1,
-        "rlnOpticsGroupName": "polnet", "rlnTomoTiltSeriesPixelSize": 10.0,
-        "rlnTomoSizeX": 630, "rlnTomoSizeY": 630, "rlnTomoSizeZ": 200,
+        "rlnTomoName": "session1_TS_1",
+        "rlnVoltage": 300.0,
+        "rlnSphericalAberration": 2.7,
+        "rlnAmplitudeContrast": 0.07,
+        "rlnMicrographOriginalPixelSize": 10.0,
+        "rlnTomoHand": -1,
+        "rlnOpticsGroupName": "polnet",
+        "rlnTomoTiltSeriesPixelSize": 10.0,
+        "rlnTomoSizeX": 630,
+        "rlnTomoSizeY": 630,
+        "rlnTomoSizeZ": 200,
     }
 
     # --- baseline: stock RELION reading the real MRC (option A) ---
@@ -84,20 +91,49 @@ def test_ctfrefine_zarr_matches_stock_relion(tmp_path):
     shutil.copy(DATA / "tiltseries" / "TS_1.star", base / "tiltseries" / "TS_1.star")
     starfile.write({"optics": parts["optics"], "particles": parts["particles"]}, str(base / "particles.star"))
     starfile.write(
-        {"global": pd.DataFrame([{**global_row, "rlnTomoTiltSeriesName": "tiltseries/TS_1.mrcs",
-                                   "rlnTomoFrameCount": nz, "rlnTomoTiltSeriesStarFile": "tiltseries/TS_1.star"}])},
+        {
+            "global": pd.DataFrame(
+                [
+                    {
+                        **global_row,
+                        "rlnTomoTiltSeriesName": "tiltseries/TS_1.mrcs",
+                        "rlnTomoFrameCount": nz,
+                        "rlnTomoTiltSeriesStarFile": "tiltseries/TS_1.star",
+                    }
+                ]
+            )
+        },
         str(base / "tomograms.star"),
     )
     starfile.write(
-        {"optimisation_set": pd.DataFrame([{"rlnTomoParticlesFile": "particles.star",
-                                            "rlnTomoTomogramsFile": "tomograms.star"}])},
+        {
+            "optimisation_set": pd.DataFrame(
+                [{"rlnTomoParticlesFile": "particles.star", "rlnTomoTomogramsFile": "tomograms.star"}]
+            )
+        },
         str(base / "optimisation_set.star"),
     )
     import subprocess
+
     subprocess.run(
-        [RELION_BIN, "--i", "optimisation_set.star", "--ref1", str(ref.resolve()), "--ref2", str(ref.resolve()),
-         "--b", str(box), "--do_defocus", "--o", "ctfout/", "--j", "4"],
-        check=True, cwd=str(base),
+        [
+            RELION_BIN,
+            "--i",
+            "optimisation_set.star",
+            "--ref1",
+            str(ref.resolve()),
+            "--ref2",
+            str(ref.resolve()),
+            "--b",
+            str(box),
+            "--do_defocus",
+            "--o",
+            "ctfout/",
+            "--j",
+            "4",
+        ],
+        check=True,
+        cwd=str(base),
     )
 
     # --- ours: zarr -> /dev/shm via run_ctf_refine ---
@@ -116,9 +152,14 @@ def test_ctfrefine_zarr_matches_stock_relion(tmp_path):
         str(ours / "tomograms.star"),
     )
     run_ctf_refine(
-        output_dir=ours / "ctfout", box_size=box, ref1=ref, ref2=ref,
-        particles_starfile=ours / "particles.star", tomograms_starfile=ours / "tomograms.star",
-        do_defocus=True, threads=4,
+        output_dir=ours / "ctfout",
+        box_size=box,
+        ref1=ref,
+        ref2=ref,
+        particles_starfile=ours / "particles.star",
+        tomograms_starfile=ours / "tomograms.star",
+        do_defocus=True,
+        threads=4,
     )
 
     b = _refined_defocus(base / "ctfout" / "tiltseries" / "TS_1.star")
@@ -135,8 +176,16 @@ def test_ctfrefine_errors_on_tomo_name_mismatch(tmp_path):
     p["particles"]["rlnTomoName"] = "OTHER_" + p["particles"]["rlnTomoName"].astype(str)  # no overlap
     starfile.write(p, str(parts))
     with pytest.raises(ValueError, match="No rlnTomoName overlap"):
-        run_ctf_refine(output_dir=tmp_path / "o", box_size=64, ref1=ref, ref2=ref,
-                       particles_starfile=parts, tomograms_starfile=tomos, do_defocus=True, threads=4)
+        run_ctf_refine(
+            output_dir=tmp_path / "o",
+            box_size=64,
+            ref1=ref,
+            ref2=ref,
+            particles_starfile=parts,
+            tomograms_starfile=tomos,
+            do_defocus=True,
+            threads=4,
+        )
 
 
 def _build_multi_tomo_zarr_case(dest: Path, n: int):
@@ -158,19 +207,29 @@ def _build_multi_tomo_zarr_case(dest: Path, n: int):
         indiv = indiv0.copy()
         indiv["tomoTiltSeriesURI"] = str(zpath.resolve())
         starfile.write({name: indiv}, str(dest / "tiltseries" / f"{name}.star"))
-        rows.append({
-            "rlnTomoName": name, "rlnVoltage": 300.0, "rlnSphericalAberration": 2.7,
-            "rlnAmplitudeContrast": 0.07, "rlnMicrographOriginalPixelSize": 10.0, "rlnTomoHand": -1,
-            "rlnOpticsGroupName": "polnet", "rlnTomoTiltSeriesPixelSize": 10.0,
-            "rlnTomoTiltSeriesStarFile": f"tiltseries/{name}.star",
-            "rlnTomoSizeX": 630, "rlnTomoSizeY": 630, "rlnTomoSizeZ": 200,
-        })
+        rows.append(
+            {
+                "rlnTomoName": name,
+                "rlnVoltage": 300.0,
+                "rlnSphericalAberration": 2.7,
+                "rlnAmplitudeContrast": 0.07,
+                "rlnMicrographOriginalPixelSize": 10.0,
+                "rlnTomoHand": -1,
+                "rlnOpticsGroupName": "polnet",
+                "rlnTomoTiltSeriesPixelSize": 10.0,
+                "rlnTomoTiltSeriesStarFile": f"tiltseries/{name}.star",
+                "rlnTomoSizeX": 630,
+                "rlnTomoSizeY": 630,
+                "rlnTomoSizeZ": 200,
+            }
+        )
         p = base_p.copy()
         p["rlnTomoName"] = name
         all_p.append(p)
     starfile.write({"global": pd.DataFrame(rows)}, str(dest / "tomograms.star"))
-    starfile.write({"optics": parts["optics"], "particles": pd.concat(all_p, ignore_index=True)},
-                   str(dest / "particles.star"))
+    starfile.write(
+        {"optics": parts["optics"], "particles": pd.concat(all_p, ignore_index=True)}, str(dest / "particles.star")
+    )
     return dest / "particles.star", dest / "tomograms.star"
 
 
@@ -179,8 +238,9 @@ def test_ctfrefine_per_tomogram_matches_all_at_once(tmp_path):
     """Per-tomogram mode (1 tilt series in RAM + merge) == all-at-once, for defocus (exact split)."""
     ref = DATA / "Reconstruct" / "relion_output_baseline" / "merged.mrc"
     parts, tomos = _build_multi_tomo_zarr_case(tmp_path / "proj", n=2)
-    common = dict(box_size=64, ref1=ref, ref2=ref, particles_starfile=parts,
-                  tomograms_starfile=tomos, do_defocus=True, threads=4)
+    common = dict(
+        box_size=64, ref1=ref, ref2=ref, particles_starfile=parts, tomograms_starfile=tomos, do_defocus=True, threads=4
+    )
 
     # n_workers=2 exercises the spawn multiprocessing.Pool path deterministically (2 tomograms)
     run_ctf_refine(output_dir=tmp_path / "pt", per_tomogram=True, n_workers=2, **common)
@@ -193,16 +253,21 @@ def test_ctfrefine_per_tomogram_matches_all_at_once(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which(RELION_BIN) is None, reason="relion_tomo_refine_ctf not on PATH")
-@pytest.mark.parametrize("flags", [
-    {"do_defocus": True, "do_scale": True, "per_frame_scale": True},          # per-frame scale (independent)
-    {"do_defocus": True, "do_even_aberrations": True, "do_odd_aberrations": True},  # joint aberrations
-], ids=["per_frame_scale", "aberrations"])
+@pytest.mark.parametrize(
+    "flags",
+    [
+        {"do_defocus": True, "do_scale": True, "per_frame_scale": True},  # per-frame scale (independent)
+        {"do_defocus": True, "do_even_aberrations": True, "do_odd_aberrations": True},  # joint aberrations
+    ],
+    ids=["per_frame_scale", "aberrations"],
+)
 def test_ctfrefine_two_phase_flag_variants(tmp_path, flags):
     """Two-phase == all-at-once for per-frame scale and for joint even/odd aberrations."""
     ref = DATA / "Reconstruct" / "relion_output_baseline" / "merged.mrc"
     parts, tomos = _build_multi_tomo_zarr_case(tmp_path / "proj", n=2)
-    common = dict(box_size=64, ref1=ref, ref2=ref, particles_starfile=parts,
-                  tomograms_starfile=tomos, threads=4, **flags)
+    common = dict(
+        box_size=64, ref1=ref, ref2=ref, particles_starfile=parts, tomograms_starfile=tomos, threads=4, **flags
+    )
     run_ctf_refine(output_dir=tmp_path / "pt", per_tomogram=True, **common)
     run_ctf_refine(output_dir=tmp_path / "aa", per_tomogram=False, **common)
 
@@ -229,8 +294,17 @@ def test_ctfrefine_zero_particle_tomogram(tmp_path):
     p = starfile.read(str(parts))
     p["particles"] = p["particles"][p["particles"]["rlnTomoName"] == "session1_TS_0"]
     starfile.write(p, str(parts))
-    run_ctf_refine(output_dir=tmp_path / "pt", per_tomogram=True, box_size=64, ref1=ref, ref2=ref,
-                   particles_starfile=parts, tomograms_starfile=tomos, do_defocus=True, threads=4)
+    run_ctf_refine(
+        output_dir=tmp_path / "pt",
+        per_tomogram=True,
+        box_size=64,
+        ref1=ref,
+        ref2=ref,
+        particles_starfile=parts,
+        tomograms_starfile=tomos,
+        do_defocus=True,
+        threads=4,
+    )
     assert (tmp_path / "pt" / "tiltseries" / "session1_TS_0.star").exists()  # the populated one refined
 
 
@@ -240,8 +314,16 @@ def test_ctfrefine_two_phase_joint_scale_matches_all_at_once(tmp_path):
     (joint) fit -- exercises RELION's fitGlobalScale finalise without any stack in the collect pass."""
     ref = DATA / "Reconstruct" / "relion_output_baseline" / "merged.mrc"
     parts, tomos = _build_multi_tomo_zarr_case(tmp_path / "proj", n=2)
-    common = dict(box_size=64, ref1=ref, ref2=ref, particles_starfile=parts,
-                  tomograms_starfile=tomos, do_defocus=True, do_scale=True, threads=4)  # global Lambert
+    common = dict(
+        box_size=64,
+        ref1=ref,
+        ref2=ref,
+        particles_starfile=parts,
+        tomograms_starfile=tomos,
+        do_defocus=True,
+        do_scale=True,
+        threads=4,
+    )  # global Lambert
 
     run_ctf_refine(output_dir=tmp_path / "pt", per_tomogram=True, **common)
     run_ctf_refine(output_dir=tmp_path / "aa", per_tomogram=False, **common)

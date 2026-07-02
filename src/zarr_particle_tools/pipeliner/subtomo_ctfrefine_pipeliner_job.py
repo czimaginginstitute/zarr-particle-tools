@@ -24,7 +24,9 @@ class PythonRelionSubtomoCtfRefineJob(PipelinerJob):
         super().__init__()
         self.jobinfo.programs = [ExternalProgram(command="zarr-particle-ctfrefine")]
         self.jobinfo.display_name = "Refine CTF parameters (Python)."
-        self.jobinfo.short_desc = "CTF-refine tilt series stored as OME-Zarr using zarr-particle-ctfrefine (stock RELION on /dev/shm)."
+        self.jobinfo.short_desc = (
+            "CTF-refine tilt series stored as OME-Zarr using zarr-particle-ctfrefine (stock RELION on /dev/shm)."
+        )
         self.joboptions = copy.deepcopy(TomoRelionCtfRefine().joboptions)
 
         # remove options unsupported by this wrapper (parallelism is n_workers, not MPI)
@@ -32,9 +34,13 @@ class PythonRelionSubtomoCtfRefineJob(PipelinerJob):
             del self.joboptions["nr_mpi"]
 
     def create_output_nodes(self):
-        self.add_output_node("particles_ctf_refine.star", NODE_PARTICLEGROUPMETADATA, ["relion", "tomo", "ctfrefine", "python"])
+        self.add_output_node(
+            "particles_ctf_refine.star", NODE_PARTICLEGROUPMETADATA, ["relion", "tomo", "ctfrefine", "python"]
+        )
         self.add_output_node("tomograms.star", NODE_TOMOGRAMGROUPMETADATA, ["relion", "tomo", "ctfrefine", "python"])
-        self.add_output_node("optimisation_set.star", NODE_TOMOOPTIMISATIONSET, ["relion", "tomo", "ctfrefine", "python"])
+        self.add_output_node(
+            "optimisation_set.star", NODE_TOMOOPTIMISATIONSET, ["relion", "tomo", "ctfrefine", "python"]
+        )
 
     def get_commands(self):
         cmd = ["zarr-particle-ctfrefine", "local"]
@@ -87,7 +93,11 @@ class PythonRelionSubtomoCtfRefineJob(PipelinerJob):
         return [PipelinerCommand(cmd)]
 
     def create_results_display(self) -> Sequence[ResultsDisplayObject]:
-        return [n.default_results_display(self.output_dir) for n in self.output_nodes if "particles_ctf_refine.star" in n.name]
+        return [
+            n.default_results_display(self.output_dir)
+            for n in self.output_nodes
+            if "particles_ctf_refine.star" in n.name
+        ]
 
 
 if __name__ == "__main__":

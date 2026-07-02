@@ -25,12 +25,18 @@ def build_ctf_cmd(relion_bin, opt_set, output_dir, box_size, ref1, ref2, mask, f
     """Assemble the relion_tomo_refine_ctf command line from the CTF-refine options dict."""
     cmd = [
         relion_bin,
-        "--i", str(Path(opt_set).resolve()),
-        "--ref1", str(Path(ref1).resolve()),
-        "--ref2", str(Path(ref2).resolve()),
-        "--b", str(box_size),
-        "--o", str(Path(output_dir).resolve()) + "/",
-        "--j", str(threads),
+        "--i",
+        str(Path(opt_set).resolve()),
+        "--ref1",
+        str(Path(ref1).resolve()),
+        "--ref2",
+        str(Path(ref2).resolve()),
+        "--b",
+        str(box_size),
+        "--o",
+        str(Path(output_dir).resolve()) + "/",
+        "--j",
+        str(threads),
     ]
     if mask is not None:
         cmd += ["--mask", str(Path(mask).resolve())]
@@ -92,17 +98,36 @@ def run_ctf_refine(
     (defocus / scale / aberrations). per_tomogram=False = single all-at-once run.
     """
     opts = {
-        "do_defocus": do_defocus, "do_reg_defocus": do_reg_defocus, "lambda_reg": lambda_reg,
-        "do_scale": do_scale, "per_frame_scale": per_frame_scale, "per_tomogram_scale": per_tomogram_scale,
-        "do_even_aberrations": do_even_aberrations, "do_odd_aberrations": do_odd_aberrations,
+        "do_defocus": do_defocus,
+        "do_reg_defocus": do_reg_defocus,
+        "lambda_reg": lambda_reg,
+        "do_scale": do_scale,
+        "per_frame_scale": per_frame_scale,
+        "per_tomogram_scale": per_tomogram_scale,
+        "do_even_aberrations": do_even_aberrations,
+        "do_odd_aberrations": do_odd_aberrations,
         "focus_range": focus_range,
     }
     return run_relion_tomo_job(
-        build_ctf_cmd, relion_bin, output_dir, box_size, ref1, ref2, opts,
-        particles_starfile=particles_starfile, tomograms_starfile=tomograms_starfile,
-        trajectories_starfile=trajectories_starfile, optimisation_set_starfile=optimisation_set_starfile,
-        tiltseries_relative_dir=tiltseries_relative_dir, mask=mask, fsc=fsc, threads=threads,
-        shm_dir=shm_dir, keep_shm=keep_shm, per_tomogram=per_tomogram, n_workers=n_workers,
+        build_ctf_cmd,
+        relion_bin,
+        output_dir,
+        box_size,
+        ref1,
+        ref2,
+        opts,
+        particles_starfile=particles_starfile,
+        tomograms_starfile=tomograms_starfile,
+        trajectories_starfile=trajectories_starfile,
+        optimisation_set_starfile=optimisation_set_starfile,
+        tiltseries_relative_dir=tiltseries_relative_dir,
+        mask=mask,
+        fsc=fsc,
+        threads=threads,
+        shm_dir=shm_dir,
+        keep_shm=keep_shm,
+        per_tomogram=per_tomogram,
+        n_workers=n_workers,
     )
 
 

@@ -24,7 +24,9 @@ class PythonRelionSubtomoPolishJob(PipelinerJob):
         super().__init__()
         self.jobinfo.programs = [ExternalProgram(command="zarr-particle-polish")]
         self.jobinfo.display_name = "Bayesian polishing / frame alignment (Python)."
-        self.jobinfo.short_desc = "Polish tilt series stored as OME-Zarr using zarr-particle-polish (stock RELION on /dev/shm)."
+        self.jobinfo.short_desc = (
+            "Polish tilt series stored as OME-Zarr using zarr-particle-polish (stock RELION on /dev/shm)."
+        )
         self.joboptions = copy.deepcopy(TomoRelionBayesPolishJob().joboptions)
 
         # remove options unsupported by this wrapper (parallelism is n_workers, not MPI)
@@ -68,7 +70,10 @@ class PythonRelionSubtomoPolishJob(PipelinerJob):
 
         cmd += ["--output-dir", self.output_dir]
         cmd += ["--box-size", self.joboptions["box_size"].get_string()]
-        cmd += ["--align-range", str(int(float(self.joboptions["max_error"].get_string())))]  # RELION --r is float; our CLI is int
+        cmd += [
+            "--align-range",
+            str(int(float(self.joboptions["max_error"].get_string()))),
+        ]  # RELION --r is float; our CLI is int
 
         # RELION requires exactly one of shift-only / motion
         do_shift = self.joboptions["do_shift_align"].get_boolean()
@@ -76,7 +81,13 @@ class PythonRelionSubtomoPolishJob(PipelinerJob):
         if do_shift and not do_motion:
             cmd += ["--shift-only", "--no-motion"]
         elif do_motion and not do_shift:
-            cmd += ["--do-motion", "--s-vel", self.joboptions["sigma_vel"].get_string(), "--s-div", self.joboptions["sigma_div"].get_string()]
+            cmd += [
+                "--do-motion",
+                "--s-vel",
+                self.joboptions["sigma_vel"].get_string(),
+                "--s-div",
+                self.joboptions["sigma_div"].get_string(),
+            ]
         else:
             raise AssertionError("Per-particle motion and shift-only corrections cannot be applied simultaneously")
 
@@ -85,7 +96,9 @@ class PythonRelionSubtomoPolishJob(PipelinerJob):
         return [PipelinerCommand(cmd)]
 
     def create_results_display(self) -> Sequence[ResultsDisplayObject]:
-        return [n.default_results_display(self.output_dir) for n in self.output_nodes if "optimisation_set.star" in n.name]
+        return [
+            n.default_results_display(self.output_dir) for n in self.output_nodes if "optimisation_set.star" in n.name
+        ]
 
 
 if __name__ == "__main__":

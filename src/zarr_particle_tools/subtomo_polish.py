@@ -26,13 +26,20 @@ def build_align_cmd(relion_bin, opt_set, output_dir, box_size, ref1, ref2, mask,
     """Assemble the relion_tomo_align command line from the polish options dict."""
     cmd = [
         relion_bin,
-        "--i", str(Path(opt_set).resolve()),
-        "--ref1", str(Path(ref1).resolve()),
-        "--ref2", str(Path(ref2).resolve()),
-        "--b", str(box_size),
-        "--o", str(Path(output_dir).resolve()) + "/",
-        "--r", str(opts["range"]),
-        "--j", str(threads),
+        "--i",
+        str(Path(opt_set).resolve()),
+        "--ref1",
+        str(Path(ref1).resolve()),
+        "--ref2",
+        str(Path(ref2).resolve()),
+        "--b",
+        str(box_size),
+        "--o",
+        str(Path(output_dir).resolve()) + "/",
+        "--r",
+        str(opts["range"]),
+        "--j",
+        str(threads),
     ]
     if mask is not None:
         cmd += ["--mask", str(Path(mask).resolve())]
@@ -81,16 +88,34 @@ def run_polish(
     tomograms.star / particles.star (RELION-native, so they feed a following CTF-refine).
     """
     opts = {
-        "do_motion": do_motion, "s_vel": s_vel, "s_div": s_div,
-        "do_deformation": do_deformation, "def_model": def_model,
-        "shift_only": shift_only, "range": align_range,
+        "do_motion": do_motion,
+        "s_vel": s_vel,
+        "s_div": s_div,
+        "do_deformation": do_deformation,
+        "def_model": def_model,
+        "shift_only": shift_only,
+        "range": align_range,
     }
     return run_relion_tomo_job(
-        build_align_cmd, relion_bin, output_dir, box_size, ref1, ref2, opts,
-        particles_starfile=particles_starfile, tomograms_starfile=tomograms_starfile,
-        trajectories_starfile=trajectories_starfile, optimisation_set_starfile=optimisation_set_starfile,
-        tiltseries_relative_dir=tiltseries_relative_dir, mask=mask, fsc=fsc, threads=threads,
-        shm_dir=shm_dir, keep_shm=keep_shm, per_tomogram=per_tomogram, n_workers=n_workers,
+        build_align_cmd,
+        relion_bin,
+        output_dir,
+        box_size,
+        ref1,
+        ref2,
+        opts,
+        particles_starfile=particles_starfile,
+        tomograms_starfile=tomograms_starfile,
+        trajectories_starfile=trajectories_starfile,
+        optimisation_set_starfile=optimisation_set_starfile,
+        tiltseries_relative_dir=tiltseries_relative_dir,
+        mask=mask,
+        fsc=fsc,
+        threads=threads,
+        shm_dir=shm_dir,
+        keep_shm=keep_shm,
+        per_tomogram=per_tomogram,
+        n_workers=n_workers,
     )
 
 

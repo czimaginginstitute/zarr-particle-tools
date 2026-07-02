@@ -8,6 +8,7 @@ Usage:
 <case> is a key in SYNTHETIC_RECONSTRUCT_PARAMETERS (e.g. baseline, baseline_I2).
 Prints a JSON line with max/median/RMS abs-diff, ULP multiple, and argmax radius.
 """
+
 import json
 import sys
 from pathlib import Path
