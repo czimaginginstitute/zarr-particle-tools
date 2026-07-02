@@ -117,6 +117,29 @@ class DataReader:
         self.slice_data(key)
         return self.zarr_data_crops[key]
 
+    def read_full_stack(self) -> np.ndarray:
+        """
+        Return the entire tilt-series stack as a C-contiguous float32 array of shape
+        (section, y, x).
+
+        Unlike the crop machinery (``slice_data``/``compute_crops``), this materializes the whole
+        stack in one shot. It is used to hand a complete tilt series to RELION (e.g. via a
+        RAM-backed MRC for the CTF-refine / polish jobs, which whiten against the whole frame and
+        extract at absolute coordinates, so they need every pixel).
+
+        A warning is emitted if the stored dtype is not float32, since the cast can change values.
+        """
+        if self.is_zarr and isinstance(self.data, da.Array):
+            arr = self.data.compute()
+        else:
+            arr = np.asarray(self.data)
+        if arr.dtype != np.float32:
+            logger.warning(
+                f"Tilt series {self.locator} is stored as {arr.dtype}; casting to float32 "
+                "(this may change pixel values)."
+            )
+        return np.ascontiguousarray(arr, dtype=np.float32)
+
     def __repr__(self):
         return f"DataReader(locator='{self.locator}', shape={self.data.shape}, dtype={self.data.dtype})"
 
@@ -157,6 +180,59 @@ def get_data(s3_uri: str, as_bytes: bool = False) -> bytes | str:
     mode = "rb" if as_bytes else "r"
     with global_fs.open(s3_uri, mode) as f:
         return f.read()
+
+
+def write_tiltseries_to_mrc(
+    reader: "DataReader",
+    out_path: str | Path,
+    voxel_size: float | None = None,
+    overwrite: bool = True,
+) -> Path:
+    """
+    Stream a tilt-series ``DataReader`` into an MRC image stack (float32, MRC mode 2) written to
+    ``out_path``, without holding the full stack as a single numpy array.
+
+    Intended for materializing a tilt series into a RAM-backed filesystem (``/dev/shm``) so the
+    stock RELION tomography binaries can read it as a normal MRC while nothing large touches
+    physical disk. For zarr sources the data is streamed chunk-by-chunk via ``dask.array.store``
+    (producer peak ~ one chunk); for MRC sources it is copied through directly.
+
+    Args:
+        reader: a ``DataReader`` for the tilt series (zarr or MRC), shape (section, y, x).
+        out_path: destination MRC path (e.g. under ``/dev/shm``).
+        voxel_size: optional pixel size (Angstrom) to stamp into the MRC header.
+        overwrite: overwrite an existing file at ``out_path``.
+
+    Returns:
+        The output path as a ``Path``.
+    """
+    out_path = Path(out_path)
+    nz, ny, nx = (int(d) for d in reader.data.shape)
+    with mrcfile.new_mmap(str(out_path), shape=(nz, ny, nx), mrc_mode=2, overwrite=overwrite) as mrc:
+        # Mark as an image stack (ispg=0, mz=1), matching how a tilt series is stored.
+        mrc.set_image_stack()
+        if reader.is_zarr and isinstance(reader.data, da.Array):
+            source = reader.data
+            if source.dtype != np.float32:
+                logger.warning(
+                    f"Tilt series {reader.locator} is stored as {source.dtype}; casting to float32 "
+                    "(this may change pixel values)."
+                )
+                source = source.astype(np.float32)
+            # Streams chunk-by-chunk from zarr straight into the memory-mapped MRC.
+            da.store(source, mrc.data)
+        else:
+            arr = np.asarray(reader.data)
+            if arr.dtype != np.float32:
+                logger.warning(
+                    f"Tilt series {reader.locator} is stored as {arr.dtype}; casting to float32 "
+                    "(this may change pixel values)."
+                )
+            mrc.data[...] = arr.astype(np.float32, copy=False)
+        if voxel_size is not None:
+            mrc.voxel_size = float(voxel_size)
+    logger.debug(f"Wrote tilt series {reader.locator} -> {out_path} ({nz}x{ny}x{nx} float32).")
+    return out_path
 
 
 def get_tiltseries_datareader(individual_tiltseries_df: pd.DataFrame, tiltseries_relative_dir: Path) -> DataReader:

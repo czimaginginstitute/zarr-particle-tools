@@ -233,6 +233,125 @@ def flatten_data_portal_args(kwargs: dict) -> dict:
     return kwargs
 
 
+def ctfrefine_options():
+    opts = [
+        click.option(
+            "--output-dir",
+            type=click.Path(file_okay=False, path_type=Path),
+            required=True,
+            help="Output directory for RELION CTF-refinement results.",
+        ),
+        click.option("--box-size", type=int, required=True, help="Box size in pixels (RELION --b, compulsory)."),
+        click.option(
+            "--ref1",
+            type=click.Path(exists=True, dir_okay=False, path_type=Path),
+            required=True,
+            help="Reference half-map 1 (.mrc) from a prior Refine3D (RELION --ref1).",
+        ),
+        click.option(
+            "--ref2",
+            type=click.Path(exists=True, dir_okay=False, path_type=Path),
+            required=True,
+            help="Reference half-map 2 (.mrc) (RELION --ref2).",
+        ),
+        click.option(
+            "--mask",
+            type=click.Path(exists=True, dir_okay=False, path_type=Path),
+            default=None,
+            help="Reference mask (.mrc), optional (RELION --mask).",
+        ),
+        click.option(
+            "--fsc",
+            type=click.Path(exists=True, dir_okay=False, path_type=Path),
+            default=None,
+            help="PostProcess FSC star, optional (RELION --fsc).",
+        ),
+        click.option("--do-defocus", is_flag=True, help="Refine per-tilt astigmatic defocus."),
+        click.option("--do-reg-defocus", is_flag=True, help="Regularise defocus across tilts (needs --do-defocus)."),
+        click.option("--lambda-reg", type=float, default=0.1, show_default=True, help="Defocus regularisation weight."),
+        click.option("--do-scale", is_flag=True, help="Refine contrast scale."),
+        click.option("--per-frame-scale", is_flag=True, help="Scale per frame (no Lambert model)."),
+        click.option("--per-tomogram-scale", is_flag=True, help="Scale per tomogram."),
+        click.option("--do-even-aberrations", is_flag=True, help="Refine even higher-order aberrations."),
+        click.option("--do-odd-aberrations", is_flag=True, help="Refine odd higher-order aberrations."),
+        click.option(
+            "--focus-range", type=float, default=3000.0, show_default=True, help="Defocus search range [A] (--d0/--d1)."
+        ),
+        click.option("--threads", "-j", type=int, default=6, show_default=True, help="OMP threads (RELION --j)."),
+        click.option(
+            "--relion-bin",
+            type=str,
+            default="relion_tomo_refine_ctf",
+            show_default=True,
+            help="Path/name of the relion_tomo_refine_ctf binary.",
+        ),
+        click.option(
+            "--shm-dir",
+            type=click.Path(file_okay=False, path_type=Path),
+            default=Path("/dev/shm"),
+            show_default=True,
+            help="RAM-backed dir for the materialized tilt-series MRCs.",
+        ),
+        click.option(
+            "--per-tomogram/--all-at-once",
+            default=True,
+            show_default=True,
+            help="Two-phase per-tomogram (bounded RAM); all-at-once keeps all tilt series in RAM.",
+        ),
+        click.option(
+            "--n-workers",
+            type=int,
+            default=0,
+            show_default=True,
+            help="Parallel tomograms in phase 1 (0=auto: ~1/4 cores, capped 16; peak RAM ~ n-workers x tilt series).",
+        ),
+        click.option("--keep-shm", is_flag=True, help="Keep the materialized /dev/shm MRCs (debug)."),
+        click.option("--debug", is_flag=True, help="Enable debug logging."),
+    ]
+    return compose_options(opts)
+
+
+def polish_options():
+    opts = [
+        click.option(
+            "--output-dir",
+            type=click.Path(file_okay=False, path_type=Path),
+            required=True,
+            help="Output directory for RELION polish results.",
+        ),
+        click.option("--box-size", type=int, required=True, help="Box size in pixels (RELION --b, compulsory)."),
+        click.option(
+            "--ref1",
+            type=click.Path(exists=True, dir_okay=False, path_type=Path),
+            required=True,
+            help="Reference half-map 1 (.mrc) from a prior Refine3D (RELION --ref1).",
+        ),
+        click.option(
+            "--ref2",
+            type=click.Path(exists=True, dir_okay=False, path_type=Path),
+            required=True,
+            help="Reference half-map 2 (.mrc) (RELION --ref2).",
+        ),
+        click.option("--mask", type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None, help="Reference mask (.mrc), optional."),
+        click.option("--fsc", type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None, help="PostProcess FSC star, optional."),
+        click.option("--do-motion/--no-motion", default=True, show_default=True, help="Estimate per-particle motion trajectories (Bayesian polish)."),
+        click.option("--s-vel", type=float, default=0.2, show_default=True, help="Motion velocity sigma [A/dose] (--s_vel)."),
+        click.option("--s-div", type=float, default=5000.0, show_default=True, help="Motion divergence sigma [A] (--s_div)."),
+        click.option("--do-deformation", is_flag=True, help="Estimate 2D deformations (--deformation)."),
+        click.option("--def-model", type=click.Choice(["linear", "spline", "Fourier"]), default="spline", show_default=True, help="Deformation model."),
+        click.option("--shift-only", is_flag=True, help="Only apply a rigid shift per frame (no iterative optimisation)."),
+        click.option("--align-range", type=int, default=20, show_default=True, help="Max particle shift [px] (RELION --r)."),
+        click.option("--threads", "-j", type=int, default=6, show_default=True, help="OMP threads (RELION --j)."),
+        click.option("--relion-bin", type=str, default="relion_tomo_align", show_default=True, help="Path/name of relion_tomo_align."),
+        click.option("--shm-dir", type=click.Path(file_okay=False, path_type=Path), default=Path("/dev/shm"), show_default=True, help="RAM-backed dir for materialized tilt series."),
+        click.option("--per-tomogram/--all-at-once", default=True, show_default=True, help="Two-phase per-tomogram (bounded RAM); all-at-once keeps all in RAM."),
+        click.option("--n-workers", type=int, default=0, show_default=True, help="Parallel tomograms in phase 1 (0=auto: ~1/4 cores, capped 16)."),
+        click.option("--keep-shm", is_flag=True, help="Keep the materialized /dev/shm MRCs (debug)."),
+        click.option("--debug", is_flag=True, help="Enable debug logging."),
+    ]
+    return compose_options(opts)
+
+
 def reconstruct_options():
     opts = [
         click.option(

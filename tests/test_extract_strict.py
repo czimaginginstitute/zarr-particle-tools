@@ -3,11 +3,10 @@ Strict, unmasked extraction comparison vs RELION (the float64-as-oracle policy).
 
 Unlike `test_extract.py` (which masks the worst 0.5% of voxels and uses fixed absolute tolerances),
 this tier compares EVERY voxel against a magnitude-aware tolerance pinned to the float32 *storage*
-floor (`ulp_factor * float32_ulp(max|values|)`). The diagnosis in
-`docs/audit/phase0_5_extract_diagnosis.md` established that extraction is algorithmically correct and
-the residual vs RELION is exactly that float32 storage floor — except the no-CTF path, where RELION
-rounds the IFFT to float32 before the cropCircle mean-subtraction (we keep float64), leaving a small
-documented DC residual covered by `extra_atol`.
+floor (`ulp_factor * float32_ulp(max|values|)`). Extraction is algorithmically correct (see PLAN.md
+Phase 0) and the residual vs RELION is exactly that float32 storage floor — except the no-CTF path,
+where RELION rounds the IFFT to float32 before the cropCircle mean-subtraction (we keep float64),
+leaving a small documented DC residual covered by `extra_atol`.
 """
 
 import shutil
