@@ -67,6 +67,8 @@ zarr-particle-tomograms = "zarr_particle_tools.generate_tomograms:cli"
 [project.entry-points."ccpem_pipeliner.jobs"]
 "zarrparticletools.pseudosubtomo" = "zarr_particle_tools.pipeliner.subtomo_extract_pipeliner_job:PythonRelionPseudoSubtomoJob"
 "zarrparticletools.reconstruct" = "zarr_particle_tools.pipeliner.subtomo_reconstruct_pipeliner_job:PythonRelionSubtomoReconstructJob"
+"zarrparticletools.ctfrefine" = "zarr_particle_tools.pipeliner.subtomo_ctfrefine_pipeliner_job:PythonRelionSubtomoCtfRefineJob"
+"zarrparticletools.polish" = "zarr_particle_tools.pipeliner.subtomo_polish_pipeliner_job:PythonRelionSubtomoPolishJob"
 
 [tool.hatch.version]
 path = "src/zarr_particle_tools/__init__.py"
