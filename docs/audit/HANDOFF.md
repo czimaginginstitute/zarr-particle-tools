@@ -14,6 +14,64 @@
 > truncated operators match to 2.8e-5 — see §2 Fix E and §4). Fixes B/C left unit-tested only
 > (no phase-plate / nonzero-`rlnCtfBfactor` data available).
 
+> **✅ SESSION 2 COMPLETE (2026-07-01).** Reconstruct now matches RELION at the float32 **storage
+> floor** for every case except `baseline_OH` (RELION's own improper-symmetry bug — won't-fix,
+> achiral). Landed on `fix/sta-relion-numerical-correctness`:
+> - **Nyquist-phase fix** (`c9e2b2f`): extraction stopped round-tripping the Fourier slice through
+>   `irfft2/rfft2` (which zeroed the even-size Nyquist bin, dropping the sub-pixel-shift phase).
+>   Reconstruct baseline 9996× ULP → **1.1× ULP**.
+> - **D8/C8 45°-operator sanitize + polished motion-trajectory/CTF fix** (`3ed7b25`): (a)
+>   `symmetry.py sanitize_transform` snaps `±1/√2` (etc.) to one bit pattern so 45° `cos/sin` cancel
+>   exactly on the X=−Y diagonal — fixed D8 2.8e-3 → 4.8e-7; (b) `forwardprojection.py` applies the
+>   motion trajectory only to the projection/extraction position, keeping the **static** position for
+>   the CTF depth offset (RELION convention) — fixed `unroofing_baseline_polished` 5.9e-2 → 4.8e-6.
+> - **Reconstruct tolerances tightened** to ~storage floor (synthetic default `1e-3→5e-7`, unroofing
+>   `4e1→2e-5`; loose `# TODO` per-case overrides removed except magnitude-scaled box256 + C8/D8).
+> - **`*.html` gitignored** (`8c8e496`). **OH** = RELION bug, documented, loose tol kept.
+> - **Half-maps verified**: `half1`/`half2` match RELION at 3× ULP (deterministic `rlnRandomSubset`).
+>
+> Full record: `docs/audit/phase_hpc_verification.md` §5b–§8. **Remaining = test-quality cleanup only,
+> see "NEXT SESSION" below.**
+
+---
+
+## NEXT SESSION — tasks 11 / 13 / 12 (reconstruct test-quality cleanup; NOT correctness)
+
+Reconstruct is numerically verified to the storage floor; this is polish. Do in order.
+
+### Task 11 — switch the reconstruct test to the magnitude-aware ULP comparator
+`tests/test_reconstruct.py` uses `mrc_equal` with per-case **absolute** `tol` (defaults synthetic
+`5e-7` / unroofing `2e-5`, plus overrides box256 `5e-6`, box256_bin2 `2e-4`, box256_bin2_noctf `1e-5`,
+C8/D8 `2e-6`). Those overrides exist only because absolute error scales with voxel magnitude. Replace
+with the magnitude-aware unmasked comparator used by `tests/test_extract_strict.py`
+(`mrc_close_unmasked` / `float32_ulp` in `tests/helpers/compare.py`) — it auto-scales, so one
+`ulp_factor` covers box64→box256 and C8/D8. Measured floors: most cases 1–17× ULP; C8/D8 ~36×
+(45° interpolation); box256 ~14–17×. Use `ulp_factor ≈ 64` (margin over 36×); keep `baseline_OH` on a
+separate loose path (RELION bug, ~31000× ULP). Verify all cases pass.
+
+### Task 13 — add half-map (`half1`/`half2`) test coverage (fold into Task 11)
+Half-map split/output is **already implemented and correct** (deterministic — `rlnRandomSubset` is
+read from the star, not re-randomized; verified on `unroofing_baseline`: half1/half2 = 3× ULP,
+half1_full 4×, data_half1 72×, merged 3×). The test asserts only `merged.mrc`. Add half1/half2
+(± half1_full/data_half) assertions vs the RELION refs for `unroofing_baseline` and
+`unroofing_baseline_polished`, using the same ULP comparator. Synthetic has no `rlnRandomSubset`
+(full-map only). Also run a subagent **code-check** of the split logic in
+`reconstruct_single_tiltseries` / `reconstruct_local` as insurance. **FSC is DELEGATED** to
+`relion_postprocess` — RELION's `reconstruct_particle` writes half-maps but does not compute FSC (none
+in source, no FSC file in refs), so **no FSC code is needed**; matching half-maps is the whole target.
+
+### Task 12 — regenerate `tolerance_report.html`
+After 11/13, re-run the reconstruct + extract sweeps and regenerate the per-case HTML report. The
+session-2 helpers lived in the run scratchpad (`sweep_reconstruct.py`, `sweep_extract.py`,
+`build_html.py`) and are gone now — recreate them (each ~50–100 lines: run every case, record
+masked-99.5 / unmasked / `float32_ulp` multiple / pass-at-16×ULP / pre-vs-post, emit an HTML table).
+Output to repo root (gitignored via `*.html`); the user scp's it then asks you to delete.
+
+**Env:** `source /home/daniel.ji/miniforge3/etc/profile.d/conda.sh && conda activate zarr-particle-tools`;
+RELION at `/home/daniel.ji/work/relion/build/bin` (`module load gcc/13.3 cuda/12.8.0_570.86.10
+openmpi/5.0.7-cuda12.8`); env-guarded RELION dumps `RELION_DUMP_BP` / `RELION_DUMP_SYM` /
+`RELION_DUMP_SLICE`. **Do NOT edit `PLAN.md`** if a concurrent Phase 3/4 design agent is running.
+
 ---
 
 ## 1. What this is

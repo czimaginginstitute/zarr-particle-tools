@@ -248,3 +248,50 @@ scripts/regenerate_relion_refs.sh C1 <out> 64 1     # or I2, etc. (loads modules
 # Unmasked before/after for a reconstruct case:
 PYTHONPATH=. python scripts/hpc_reconstruct_case.py baseline <out> <ref>/merged.mrc
 ```
+
+## 8. Session 2 (2026-07-01, cont.) — reconstruct driven to the storage floor
+
+After the Nyquist-phase fix (§5b, committed `c9e2b2f`), the remaining reconstruct gaps were closed and
+tolerances tightened. All results vs committed RELION `b1fe45f6` refs, masked-99.5 / unmasked.
+
+### D8/C8 — 45° operator ULP-cancellation bug (Python side) — FIXED (`3ed7b25`)
+`baseline_D8` sat at 2.8e-3 (~2e5× ULP) while D2–D7 matched at the floor. Cause: the C8 (45°)
+operators have `cos(π/4)` and `sin(π/4)` differing by 1 ULP depending on evaluation order; on the
+`X=−Y` Fourier diagonal `px = cos·X + sin·Y` failed to cancel to exactly 0 (residual ±1e-16, undefined
+sign), flipping the FFTW-half `x≤0` conjugation branch at ~7800 voxels → ~1e-2 corruption. RELION is
+correct (its `setSmallValuesToZero` makes cancellation consistent). Fix: `symmetry.py`
+`sanitize_transform` snaps `0/±1/±½/±1/√2` entries to identical bit values, applied in
+`get_transforms_from_symmetry`. **D8: 2.8e-3 → 4.76e-7** (36× ULP). Also protects C8/C8v/C8h/S16/D8v/D8h;
+C8 moved 7.4e-9 → 4.76e-7 (both 45° groups now at their interpolation floor; residual = RELION's own
+un-snapped 45° `cos/sin` noise — Python is the cleaner side, as with OH).
+
+### `unroofing_baseline_polished` — trajectory fed into the CTF depth offset (Python side) — FIXED (`3ed7b25`)
+Polished sat at 5.9e-2 (~3e4× ULP) while `unroofing_baseline` matched at the floor. Cause: the
+per-tilt motion trajectory (`motion.star`) was added to the coordinate used for BOTH projection AND
+the CTF depth offset. RELION uses the trajectory only for extraction; the CTF depth offset uses the
+**static** particle position (`getCtf(f, pos)` with `pos=getPosition`) — a ~13 Å per-tilt defocus
+error. Fix: `forwardprojection.py get_particles_to_tiltseries_coordinates` projects the
+trajectory-shifted coordinate for the extraction position but stores the static coordinate (used for
+the CTF depth offset). Trajectory-gated → non-trajectory cases (all synthetic, unroofing baseline, all
+extract) unaffected. **Polished: 0.1195 → 4.77e-6** (3× ULP). High-value: real polishing produces
+trajectories.
+
+### Half-maps — verified (implementation already present)
+Deterministic (`rlnRandomSubset` read from the star). `unroofing_baseline` half-maps vs RELION:
+`half1` 3× ULP, `half2` 3× ULP, `half1_full` 4× ULP, `data_half1` 72× ULP (pre-division numerator),
+`merged` 3× ULP. FSC is delegated to `relion_postprocess` (RELION `reconstruct_particle` computes no
+FSC). Remaining work is test coverage only (asserts `merged` but not `half1`/`half2`) — see HANDOFF
+"NEXT SESSION" tasks 11/13.
+
+### Tolerances tightened (`3ed7b25`)
+`tests/test_reconstruct.py`: synthetic default `tol 1e-3→5e-7`, `corr_tol 1e-4→1e-6`,
+`error_median_tol 1e-5→1e-6`; unroofing default `tol 1e-4→2e-5`. Removed the loose `# TODO: debug & fix`
+per-case overrides (box128/32/16/64 families) — now ride defaults. Kept: box256 family (`5e-6`/`2e-4`/
+`1e-5`, magnitude-scaled), C8/D8 (`2e-6`, 45° interpolation floor), `baseline_OH` (`2e-3`, RELION bug).
+Full suites green: reconstruct 40, extract+strict 39, unit 11.
+
+### Remaining reconstruct anomaly (won't-fix)
+`baseline_OH` only (~6e-4, ~31000× ULP): RELION's improper-group FS symmetrization is non-Hermitian on
+the kx=0 plane (verified: a faithful transcription of RELION's source reproduces its binary; the pure
+inversion operator should force `Oh = Re(O)` real, and Python obeys it while RELION does not). Python
+is analytically correct; OH is achiral (never used for real biology), so not fixed. Loose tol kept.
