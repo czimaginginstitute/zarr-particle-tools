@@ -289,8 +289,16 @@ def process_tiltseries(
             mrc.voxel_size = (tiltseries_pixel_size * bin, tiltseries_pixel_size * bin, 1.0)
 
         if write_fourier:
-            # fourier stacks
-            final_fourier_tilt_stack = np.fft.rfft2(cropped_tilt_stack, norm="ortho", axes=(-2, -1))
+            # Save the shifted complex slice directly. An irfft2 -> rfft2 round trip would realify the
+            # even-size Nyquist bin, dropping the sub-pixel-shift phase there that RELION keeps.
+            if no_circle_crop and crop_size == box_size:
+                final_fourier_tilt_stack = new_fourier_tilt_stack
+            else:
+                # Real-space masking/cropping here would require that Nyquist-lossy round trip.
+                raise NotImplementedError(
+                    "write_fourier requires no_circle_crop and crop_size == box_size "
+                    "(real-space masking/cropping would lose Nyquist-frequency phase)."
+                )
             np.save(output_folder / f"{particle_id}_stack2d.npy", final_fourier_tilt_stack)
 
     start_time = time.time()
