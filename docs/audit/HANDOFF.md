@@ -35,6 +35,22 @@
 
 ---
 
+## ✅ SESSION 3 COMPLETE (2026-07-01) — tasks 11 / 13 / 12 done
+
+Landed on `fix/sta-relion-numerical-correctness` (`d0ee6a3`, test-quality only, no correctness change):
+- **Task 11:** `tests/test_reconstruct.py` now uses the magnitude-aware unmasked comparator
+  (`mrc_close_unmasked`, `DEFAULT_ULP_FACTOR=64`); all per-case absolute tols removed. All 40 cases
+  pass; `baseline_OH` kept on a loose ULP path (RELION kx=0 bug, ~31083× ULP).
+- **Task 13:** unroofing half-map parity (`data_half*`/`half*_full`/`half*` at `HALF_ULP_FACTOR=128`)
+  folded into the parametrized test (worst = `data_half1` 72× ULP); plus a synthetic self-consistency
+  test for the split code path. Split logic code-checked clean (only a stale docstring fixed: subset
+  default is 1, not 0).
+- **Task 12:** `tolerance_report.html` regenerated at repo root (gitignored) — 51 reconstruct + 5
+  extract rows, 0 failures. Sweep helper in the run scratchpad (`build_report.py`).
+
+Reconstruct + extract are numerically verified to the float32 storage floor. Remaining below is the
+original (now-superseded) task description, kept for reference.
+
 ## NEXT SESSION — tasks 11 / 13 / 12 (reconstruct test-quality cleanup; NOT correctness)
 
 Reconstruct is numerically verified to the storage floor; this is polish. Do in order.
