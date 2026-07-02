@@ -217,3 +217,5 @@ tests/data/
 
 # demo scripts and whatnot 
 demo/
+# generated reports / primers (never track)
+*.html
