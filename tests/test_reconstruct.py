@@ -1,14 +1,24 @@
 import shutil
 from pathlib import Path
 
+import mrcfile
+import numpy as np
 import pytest
+import starfile
 from click.testing import CliRunner
 
-from tests.helpers.compare import mrc_equal, mrc_headers_match
+from tests.helpers.compare import mrc_close_unmasked, mrc_headers_match
 from zarr_particle_tools.subtomo_reconstruct import cli, reconstruct_local
 
+# All cases pass at the float32 storage floor via the magnitude-aware unmasked comparator; measured
+# worst voxels run ~1-36x ULP (C8/D8 highest from 45deg interpolation), so ulp_factor=64 gives margin.
+# baseline_OH is the sole exception: RELION's improper-group symmetrization is non-Hermitian on kx=0
+# (a RELION bug; Python is correct), so it keeps a loose ulp_factor.
+DEFAULT_ULP_FACTOR = 64.0
+# data_half* (pre-gridding-correction) runs highest (~72x ULP); final/full halves ~3-4x.
+HALF_ULP_FACTOR = 128.0
+
 # TODO: need to add real datasets
-# TODO: need to resolve bugs in reconstruction (tolerances should not be customized this much)
 SYNTHETIC_RECONSTRUCT_PARAMETERS = {
     "baseline": {"box_size": 64},
     "baseline_C2": {"box_size": 64, "symmetry": "C2"},
@@ -17,27 +27,26 @@ SYNTHETIC_RECONSTRUCT_PARAMETERS = {
     "baseline_C5": {"box_size": 64, "symmetry": "C5"},
     "baseline_C6": {"box_size": 64, "symmetry": "C6"},
     "baseline_C7": {"box_size": 64, "symmetry": "C7"},
-    "baseline_C8": {"box_size": 64, "symmetry": "C8", "tol": 2e-6},  # 45deg ops need interp -> ~5e-7 floor (cf D8)
+    "baseline_C8": {"box_size": 64, "symmetry": "C8"},
     "baseline_D2": {"box_size": 64, "symmetry": "D2"},
     "baseline_D3": {"box_size": 64, "symmetry": "D3"},
     "baseline_D4": {"box_size": 64, "symmetry": "D4"},
     "baseline_D5": {"box_size": 64, "symmetry": "D5"},
     "baseline_D6": {"box_size": 64, "symmetry": "D6"},
     "baseline_D7": {"box_size": 64, "symmetry": "D7"},
-    "baseline_D8": {"box_size": 64, "symmetry": "D8", "tol": 2e-6},  # 45deg ops need interp -> ~5e-7 floor
+    "baseline_D8": {"box_size": 64, "symmetry": "D8"},
     "baseline_T": {"box_size": 64, "symmetry": "T"},
     "baseline_O": {"box_size": 64, "symmetry": "O"},
-    # RELION bug (not ours): its improper-group symmetrization is non-Hermitian on kx=0; Python is correct. Keep loose.
-    "baseline_OH": {"box_size": 64, "symmetry": "OH", "tol": 2e-3, "corr_tol": 1e-5},
+    "baseline_OH": {"box_size": 64, "symmetry": "OH", "ulp_factor": 40000.0},  # RELION kx=0 non-Hermitian bug
     "baseline_I": {"box_size": 64, "symmetry": "I"},
     "baseline_I1": {"box_size": 64, "symmetry": "I1"},
     "baseline_I2": {"box_size": 64, "symmetry": "I2"},  # same symmetry as baseline_I (I == I2)
     "baseline_I3": {"box_size": 64, "symmetry": "I3"},
     "baseline_I4": {"box_size": 64, "symmetry": "I4"},
-    "box256": {"box_size": 256, "tol": 5e-6},
+    "box256": {"box_size": 256},
     "box256_noctf": {"box_size": 256, "no_ctf": True},
-    "box256_bin2": {"box_size": 256, "bin": 2, "tol": 2e-4},
-    "box256_bin2_noctf": {"box_size": 256, "bin": 2, "no_ctf": True, "tol": 1e-5},
+    "box256_bin2": {"box_size": 256, "bin": 2},
+    "box256_bin2_noctf": {"box_size": 256, "bin": 2, "no_ctf": True},
     "box128": {"box_size": 128},
     "box128_bin2": {"box_size": 128, "bin": 2},
     "box128_bin2_noctf": {"box_size": 128, "bin": 2, "no_ctf": True},
@@ -64,17 +73,11 @@ UNROOFING_RECONSTRUCT_PARAMETERS = {
 DATASET_CONFIGS = {
     "synthetic": {
         "data_root": Path("tests/data/relion_project_synthetic"),
-        "tol": 5e-7,
-        "corr_tol": 1e-6,
-        "error_median_tol": 1e-6,
         "reconstruct_parameters": SYNTHETIC_RECONSTRUCT_PARAMETERS,
     },
     "unroofing": {
         "data_root": Path("tests/data/relion_project_unroofing"),
         "particles_starfile": Path("tests/data/relion_project_unroofing/reconstruct_particles.star"),
-        "tol": 2e-5,
-        "corr_tol": 1e-5,
-        "error_median_tol": 1e-6,
         "reconstruct_parameters": UNROOFING_RECONSTRUCT_PARAMETERS,
     },
 }
@@ -98,16 +101,12 @@ def test_reconstruct_local_parametrized(
     reconstruct_arguments,
 ):
     data_root = dataset_config["data_root"]
-    tol = reconstruct_arguments.get("tol", dataset_config["tol"])
-    corr_tol = reconstruct_arguments.get("corr_tol", dataset_config["corr_tol"])
-    error_median_tol = reconstruct_arguments.get("error_median_tol", dataset_config["error_median_tol"])
+    ulp_factor = reconstruct_arguments.get("ulp_factor", DEFAULT_ULP_FACTOR)
     no_ctf = reconstruct_arguments.get("no_ctf", False)
 
     output_dir = Path(f"tests/output/reconstruct_{dataset}_{reconstruct_suffix}/")
     if output_dir.exists():
         shutil.rmtree(output_dir)
-
-    print(reconstruct_arguments.get("box_size"))
 
     reconstruct_local(
         box_size=reconstruct_arguments.get("box_size"),
@@ -126,15 +125,17 @@ def test_reconstruct_local_parametrized(
 
     reconstruct_dir = output_dir
     relion_dir = data_root / "Reconstruct" / f"relion_output_{reconstruct_suffix}"
-    assert mrc_equal(
-        relion_dir / "merged.mrc",
-        reconstruct_dir / "merged.mrc",
-        tol=tol,
-        corr_tol=corr_tol,
-        error_median_tol=error_median_tol,
-        plot_dir=output_dir,
-    )
+    assert mrc_close_unmasked(relion_dir / "merged.mrc", reconstruct_dir / "merged.mrc", ulp_factor=ulp_factor)
     assert mrc_headers_match(relion_dir / "merged.mrc", reconstruct_dir / "merged.mrc")
+
+    # Half-map parity vs RELION when the particles carry random subsets (unroofing).
+    if (relion_dir / "half1.mrc").exists():
+        half_files = [f"data_{t}.mrc" for t in ("half1", "half2")]
+        half_files += [f"{t}_full.mrc" for t in ("half1", "half2")]
+        half_files += [f"{t}.mrc" for t in ("half1", "half2")]
+        for name in half_files:
+            assert mrc_close_unmasked(relion_dir / name, reconstruct_dir / name, ulp_factor=HALF_ULP_FACTOR)
+            assert mrc_headers_match(relion_dir / name, reconstruct_dir / name)
 
 
 @pytest.mark.parametrize(
@@ -172,7 +173,42 @@ def test_cli_reconstruct_local(tmp_path, dataset, reconstruct_suffix):
 
     reconstruct_dir = output_dir
     relion_dir = data_root / "Reconstruct" / f"relion_output_{reconstruct_suffix}"
-    # TODO: add onto this
-    assert mrc_equal(
-        relion_dir / "merged.mrc", reconstruct_dir / "merged.mrc", tol=dataset_config["tol"], plot_dir=output_dir
+    assert mrc_close_unmasked(relion_dir / "merged.mrc", reconstruct_dir / "merged.mrc", ulp_factor=DEFAULT_ULP_FACTOR)
+
+
+def _read_mrc(path):
+    with mrcfile.open(path, mode="r") as mrc:
+        return np.asarray(mrc.data, dtype=np.float64)
+
+
+def test_reconstruct_half_maps_selfconsistency(tmp_path):
+    """Sanity-check the half-set code path (synthetic has no RELION half refs): inject random subsets,
+    reconstruct, and assert the half artifacts are written, well-formed, finite, and distinct."""
+    data_root = DATASET_CONFIGS["synthetic"]["data_root"]
+    box_size = 64
+
+    metadata = starfile.read(data_root / "particles.star")
+    particles = metadata["particles"].copy()
+    particles["rlnRandomSubset"] = [1 if i % 2 == 0 else 2 for i in range(len(particles))]
+    subset_starfile = tmp_path / "particles_subsets.star"
+    starfile.write({"optics": metadata["optics"], "particles": particles}, subset_starfile)
+
+    output_dir = tmp_path / "reconstruct_half"
+    reconstruct_local(
+        box_size=box_size,
+        output_dir=output_dir,
+        particles_starfile=subset_starfile,
+        tiltseries_relative_dir=data_root,
+        tomograms_starfile=data_root / "tomograms.star",
     )
+
+    merged = _read_mrc(output_dir / "merged.mrc")
+    for name in ["data_half1.mrc", "data_half2.mrc", "half1_full.mrc", "half2_full.mrc", "half1.mrc", "half2.mrc"]:
+        path = output_dir / name
+        assert path.exists(), f"missing half-map artifact: {name}"
+        data = _read_mrc(path)
+        assert data.shape == merged.shape
+        assert np.isfinite(data).all()
+        assert mrc_headers_match(output_dir / "merged.mrc", path)
+
+    assert not np.allclose(_read_mrc(output_dir / "half1.mrc"), _read_mrc(output_dir / "half2.mrc"))

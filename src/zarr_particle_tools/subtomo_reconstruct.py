@@ -95,7 +95,7 @@ def process_particle(
     Returns:
         particle_data_fourier_volume (np.ndarray): The Fourier volume of the particle data.
         particle_weight_fourier_volume (np.ndarray): The Fourier volume of the particle weights.
-        random_subset (int): The assigned random subset of the particle (for half-set reconstructions). If not present, returns 0.
+        random_subset (int): The assigned random subset of the particle (for half-set reconstructions). If not present, returns 1.
     """
     visible_sections = ast.literal_eval(particle["rlnTomoVisibleFrames"])
     assert (
