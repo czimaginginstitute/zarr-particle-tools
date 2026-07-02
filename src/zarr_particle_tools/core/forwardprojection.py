@@ -200,18 +200,24 @@ def get_particles_to_tiltseries_coordinates(
                 if "rlnTomoParticleName" in filtered_particles_df.columns and use_tomo_particle_name_for_id
                 else default_particle_id
             )
-            # add motion correction if available
+            # Trajectory shifts only the extraction/projection position; the static coordinate is
+            # stored and used for the CTF depth offset (matches RELION: traj in extraction, static pos in getCtf).
+            projection_coordinate = coordinate
             if filtered_trajectories_dict is not None:
                 if particle.rlnTomoParticleName not in filtered_trajectories_dict:
                     raise ValueError(f"Particle {particle.rlnTomoParticleName} not found in trajectories.")
                 else:
                     trajectory = filtered_trajectories_dict[particle.rlnTomoParticleName]
                     tilt_trajectory = trajectory.iloc[i]
-                    coordinate[0] += tilt_trajectory["rlnOriginXAngst"]
-                    coordinate[1] += tilt_trajectory["rlnOriginYAngst"]
-                    coordinate[2] += tilt_trajectory["rlnOriginZAngst"]
+                    projection_coordinate = coordinate + np.array(
+                        [
+                            tilt_trajectory["rlnOriginXAngst"],
+                            tilt_trajectory["rlnOriginYAngst"],
+                            tilt_trajectory["rlnOriginZAngst"],
+                        ]
+                    )
 
-            projected_point = project_3d_point_to_2d(coordinate, projection_matrix)[:2]
+            projected_point = project_3d_point_to_2d(projection_coordinate, projection_matrix)[:2]
 
             if particle_id not in particles_to_tiltseries_coordinates:
                 particles_to_tiltseries_coordinates[particle_id] = {}

@@ -17,100 +17,62 @@ SYNTHETIC_RECONSTRUCT_PARAMETERS = {
     "baseline_C5": {"box_size": 64, "symmetry": "C5"},
     "baseline_C6": {"box_size": 64, "symmetry": "C6"},
     "baseline_C7": {"box_size": 64, "symmetry": "C7"},
-    "baseline_C8": {"box_size": 64, "symmetry": "C8"},
+    "baseline_C8": {"box_size": 64, "symmetry": "C8", "tol": 2e-6},  # 45deg ops need interp -> ~5e-7 floor (cf D8)
     "baseline_D2": {"box_size": 64, "symmetry": "D2"},
     "baseline_D3": {"box_size": 64, "symmetry": "D3"},
     "baseline_D4": {"box_size": 64, "symmetry": "D4"},
     "baseline_D5": {"box_size": 64, "symmetry": "D5"},
     "baseline_D6": {"box_size": 64, "symmetry": "D6"},
     "baseline_D7": {"box_size": 64, "symmetry": "D7"},
-    "baseline_D8": {
-        "box_size": 64,
-        "symmetry": "D8",
-        "tol": 2e-2,
-        "corr_tol": 3e-3,
-        "error_median_tol": 5e-5,
-    },  # TODO: debug & fix
+    "baseline_D8": {"box_size": 64, "symmetry": "D8", "tol": 2e-6},  # 45deg ops need interp -> ~5e-7 floor
     "baseline_T": {"box_size": 64, "symmetry": "T"},
     "baseline_O": {"box_size": 64, "symmetry": "O"},
-    "baseline_OH": {"box_size": 64, "symmetry": "OH", "tol": 2e-3, "error_median_tol": 1e-4},  # TODO: debug & fix
+    # RELION bug (not ours): its improper-group symmetrization is non-Hermitian on kx=0; Python is correct. Keep loose.
+    "baseline_OH": {"box_size": 64, "symmetry": "OH", "tol": 2e-3, "corr_tol": 1e-5},
     "baseline_I": {"box_size": 64, "symmetry": "I"},
     "baseline_I1": {"box_size": 64, "symmetry": "I1"},
     "baseline_I2": {"box_size": 64, "symmetry": "I2"},  # same symmetry as baseline_I (I == I2)
     "baseline_I3": {"box_size": 64, "symmetry": "I3"},
     "baseline_I4": {"box_size": 64, "symmetry": "I4"},
-    "box256": {"box_size": 256, "corr_tol": 1e-2, "tol": 7e-2},  # TODO: debug & fix
-    "box256_noctf": {"box_size": 256, "no_ctf": True, "corr_tol": 6e-4},  # TODO: debug & fix
-    "box256_bin2": {"box_size": 256, "bin": 2, "corr_tol": 7e-3, "tol": 4e1},  # TODO: debug & fix
-    "box256_bin2_noctf": {
-        "box_size": 256,
-        "bin": 2,
-        "no_ctf": True,
-        "corr_tol": 2e-4,
-        "tol": 5e-2,
-    },  # TODO: debug & fix
-    "box128": {"box_size": 128, "tol": 2e-3},  # TODO: debug & fix
-    "box128_bin2": {"box_size": 128, "bin": 2, "corr_tol": 1e-2, "tol": 5e-2},  # TODO: debug & fix
-    "box128_bin2_noctf": {"box_size": 128, "bin": 2, "no_ctf": True, "corr_tol": 5e-4},  # TODO: debug & fix
-    "box128_crop64": {"box_size": 128, "bin": 1, "crop_size": 64, "tol": 2e-3},  # TODO: debug & fix
-    "box128_bin2_crop64": {
-        "box_size": 128,
-        "bin": 2,
-        "crop_size": 64,
-        "corr_tol": 3e-3,
-        "tol": 2e-2,
-    },  # TODO: debug & fix
-    "box32_bin2": {"box_size": 32, "bin": 2, "tol": 2e-2},  # TODO: debug & fix
-    "box16_bin4": {
-        "box_size": 16,
-        "bin": 4,
-        "corr_tol": 1e-3,
-        "error_median_tol": 1e-4,
-        "tol": 2e-2,
-    },  # TODO: debug & fix
-    "box16_bin6": {
-        "box_size": 16,
-        "bin": 6,
-        "corr_tol": 2e-3,
-        "error_median_tol": 1e-4,
-        "tol": 2e-2,
-    },  # TODO: debug & fix
-    "box64_bin2_crop32": {"box_size": 64, "bin": 2, "crop_size": 32, "tol": 5e-3},  # TODO: debug & fix
-    "box32_bin4_crop16": {
-        "box_size": 32,
-        "bin": 4,
-        "crop_size": 16,
-        "corr_tol": 1e-3,
-        "tol": 1e-2,
-    },  # TODO: debug & fix
+    "box256": {"box_size": 256, "tol": 5e-6},
+    "box256_noctf": {"box_size": 256, "no_ctf": True},
+    "box256_bin2": {"box_size": 256, "bin": 2, "tol": 2e-4},
+    "box256_bin2_noctf": {"box_size": 256, "bin": 2, "no_ctf": True, "tol": 1e-5},
+    "box128": {"box_size": 128},
+    "box128_bin2": {"box_size": 128, "bin": 2},
+    "box128_bin2_noctf": {"box_size": 128, "bin": 2, "no_ctf": True},
+    "box128_crop64": {"box_size": 128, "bin": 1, "crop_size": 64},
+    "box128_bin2_crop64": {"box_size": 128, "bin": 2, "crop_size": 64},
+    "box32_bin2": {"box_size": 32, "bin": 2},
+    "box16_bin4": {"box_size": 16, "bin": 4},
+    "box16_bin6": {"box_size": 16, "bin": 6},
+    "box64_bin2_crop32": {"box_size": 64, "bin": 2, "crop_size": 32},
+    "box32_bin4_crop16": {"box_size": 32, "bin": 4, "crop_size": 16},
 }
 
-# TODO: debug & fix, temporary loose tolerances
 UNROOFING_RECONSTRUCT_PARAMETERS = {
-    "baseline": {"box_size": 384, "crop_size": 256, "corr_tol": 2e-2, "tol": 4e1},
+    "baseline": {"box_size": 384, "crop_size": 256},
     "baseline_polished": {
         "box_size": 384,
         "crop_size": 256,
         "particles_starfile": Path("tests/data/relion_project_unroofing/reconstruct_particles_polished.star"),
         "tomograms_starfile": Path("tests/data/relion_project_unroofing/tomograms_polished.star"),
         "trajectories_starfile": Path("tests/data/relion_project_unroofing/motion.star"),
-        "corr_tol": 2e-2,
-        "tol": 4e1,
     },
 }
 
 DATASET_CONFIGS = {
     "synthetic": {
         "data_root": Path("tests/data/relion_project_synthetic"),
-        "tol": 1e-3,
-        "corr_tol": 1e-4,
-        "error_median_tol": 1e-5,
+        "tol": 5e-7,
+        "corr_tol": 1e-6,
+        "error_median_tol": 1e-6,
         "reconstruct_parameters": SYNTHETIC_RECONSTRUCT_PARAMETERS,
     },
     "unroofing": {
         "data_root": Path("tests/data/relion_project_unroofing"),
         "particles_starfile": Path("tests/data/relion_project_unroofing/reconstruct_particles.star"),
-        "tol": 1e-4,
+        "tol": 2e-5,
         "corr_tol": 1e-5,
         "error_median_tol": 1e-6,
         "reconstruct_parameters": UNROOFING_RECONSTRUCT_PARAMETERS,
