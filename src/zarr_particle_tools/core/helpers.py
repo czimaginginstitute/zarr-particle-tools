@@ -1,4 +1,5 @@
 import logging
+import os
 import shutil
 from pathlib import Path
 from typing import Union
@@ -12,6 +13,55 @@ from zarr_particle_tools.core.constants import NOISY_LOGGERS
 logger = logging.getLogger(__name__)
 
 # ====================== global helpers ======================
+
+
+def _mem_budget_bytes() -> int | None:
+    """This process's memory budget: SLURM allocation, then cgroup limit, else None."""
+    mpn = os.environ.get("SLURM_MEM_PER_NODE")  # MB
+    if mpn and mpn.isdigit():
+        return int(mpn) * 1024**2
+    mpc = os.environ.get("SLURM_MEM_PER_CPU")  # MB
+    ncpu = os.environ.get("SLURM_CPUS_PER_TASK") or os.environ.get("SLURM_JOB_CPUS_PER_NODE", "")
+    if mpc and mpc.isdigit():
+        try:
+            return int(mpc) * int(str(ncpu).split("(")[0]) * 1024**2
+        except (ValueError, IndexError):
+            pass
+    try:
+        rel = ""
+        for line in Path("/proc/self/cgroup").read_text().splitlines():
+            fields = line.split(":")
+            if len(fields) == 3 and ("memory" in fields[1] or fields[1] == ""):
+                rel = fields[2]
+                if "memory" in fields[1]:
+                    break
+        for p in (
+            Path("/sys/fs/cgroup/memory") / rel.lstrip("/") / "memory.limit_in_bytes",
+            Path("/sys/fs/cgroup") / rel.lstrip("/") / "memory.max",
+        ):
+            if p.exists():
+                v = p.read_text().strip()
+                if v.isdigit() and int(v) < (1 << 62):
+                    return int(v)
+    except OSError:
+        pass
+    return None
+
+
+def auto_worker_count(cpu_cap: int, per_worker_gb: float = 10.0) -> int:
+    """Worker count bounded by memory (each worker loads a full tilt series ~per_worker_gb).
+
+    Prevents cgroup OOM from spawning too many workers. Override with env ZARR_N_WORKERS;
+    falls back to cpu_cap when the memory budget can't be determined.
+    """
+    env = os.environ.get("ZARR_N_WORKERS")
+    if env and env.isdigit():
+        return max(1, min(cpu_cap, int(env)))
+    budget = _mem_budget_bytes()
+    if not budget:
+        return cpu_cap
+    mem_cap = int((budget * 0.75) / (per_worker_gb * 1024**3))
+    return max(1, min(cpu_cap, mem_cap))
 
 
 def suppress_noisy_loggers(loggers, level=logging.ERROR):

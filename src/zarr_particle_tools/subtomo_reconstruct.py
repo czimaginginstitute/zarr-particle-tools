@@ -42,7 +42,7 @@ from zarr_particle_tools.core.forwardprojection import (
     calculate_projection_matrix_from_starfile_df,
     get_particles_to_tiltseries_coordinates,
 )
-from zarr_particle_tools.core.helpers import get_tiltseries_data, setup_logging
+from zarr_particle_tools.core.helpers import auto_worker_count, get_tiltseries_data, setup_logging
 from zarr_particle_tools.core.mask import spherical_soft_mask
 from zarr_particle_tools.core.symmetry import (
     get_transforms_from_symmetry,
@@ -312,7 +312,7 @@ def reconstruct_single_tiltseries(
     weight_fourier_volume_half1 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
     weight_fourier_volume_half2 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
 
-    cpu_count = min(32, mp.cpu_count(), len(filtered_particles_df))
+    cpu_count = auto_worker_count(min(32, mp.cpu_count(), len(filtered_particles_df)))
     with mp.get_context("spawn").Pool(processes=cpu_count) as pool:
         for particle_data_fourier_volume, particle_weight_fourier_volume, random_subset in pool.imap_unordered(
             process_particle_wrapper, args_list
