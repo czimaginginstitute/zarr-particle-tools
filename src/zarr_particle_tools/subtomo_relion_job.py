@@ -40,11 +40,19 @@ from zarr_particle_tools.core.data import get_tiltseries_datareader, write_tilts
 logger = logging.getLogger(__name__)
 
 
+def _resolve_tiltstar(rel_or_abs, src_base):
+    """Resolve rlnTomoTiltSeriesStarFile: absolute as-is; else cwd-relative (our data-portal format
+    already includes the output subdir) or tomograms-dir-relative (RELION native) — whichever exists."""
+    ip = Path(str(rel_or_abs))
+    if ip.is_absolute():
+        return ip
+    return ip if ip.exists() else src_base / ip
+
+
 def _indiv_reader(row, src_base, tiltseries_relative_dir):
     """Load a tomogram's individual tilt star + a DataReader, propagating a global tomoTiltSeriesURI
     (present on our chained outputs) into the individual df so the zarr locator resolves."""
-    ip = Path(str(row["rlnTomoTiltSeriesStarFile"]))
-    ip = ip if ip.is_absolute() else src_base / ip
+    ip = _resolve_tiltstar(row["rlnTomoTiltSeriesStarFile"], src_base)
     indiv = read_single_table(ip)
     if TILTSERIES_URI_RELION_COLUMN in row and TILTSERIES_URI_RELION_COLUMN not in indiv.columns:
         indiv = indiv.copy()
@@ -423,8 +431,7 @@ def _restore_zarr_source(output_dir: Path, global_df, src_base, tiltseries_relat
     # original zarr locator per tomogram name (URI column, else the rlnMicrographName path)
     locator = {}
     for _, row in global_df.iterrows():
-        ip = Path(str(row["rlnTomoTiltSeriesStarFile"]))
-        ip = ip if ip.is_absolute() else src_base / ip
+        ip = _resolve_tiltstar(row["rlnTomoTiltSeriesStarFile"], src_base)
         indiv = read_single_table(ip)
         if TILTSERIES_URI_RELION_COLUMN in indiv.columns:
             locator[str(row["rlnTomoName"])] = str(indiv[TILTSERIES_URI_RELION_COLUMN].iloc[0])
