@@ -29,10 +29,6 @@ class PythonRelionSubtomoPolishJob(PipelinerJob):
         )
         self.joboptions = copy.deepcopy(TomoRelionBayesPolishJob().joboptions)
 
-        # remove options unsupported by this wrapper (parallelism is n_workers, not MPI)
-        if "nr_mpi" in self.joboptions:
-            del self.joboptions["nr_mpi"]
-
     def create_output_nodes(self):
         self.add_output_node("motion.star", NODE_TOMOTRAJECTORYDATA, ["relion", "tomo", "polish", "python"])
         self.add_output_node("tomograms.star", NODE_TOMOGRAMGROUPMETADATA, ["relion", "tomo", "polish", "python"])
