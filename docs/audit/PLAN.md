@@ -253,14 +253,17 @@ Conventions that must each be explicitly checked (these are the usual sources of
   Every job is verified in isolation (zarr-fed == stock RELION; two-phase == all-at-once). What remains
   is the *orchestration* — the algorithms are done; this is wiring. Ordered sub-steps:
 
-  1. **Pipeliner job wrappers (first).** ccpem-pipeliner wrappers for `zarr-particle-ctfrefine` and
-     `zarr-particle-polish`, mirroring `pipeliner/subtomo_{extract,reconstruct}_pipeliner_job.py`, so
-     all four zarr jobs are pipeliner nodes with the optimisation-set handoff chaining across them. Then
-     a **full chained run** through pyRELION + ccpem-pipeliner on real data (dataset 10426, cf.
-     `pyrelion-runs/10426-fixed_38`): import → extract → Refine3D → CTF-refine → polish → re-extract →
-     Refine3D → reconstruct, tilt series streamed from OME-Zarr throughout. Validate vs a reference
-     pyRELION pipeline on resolution/consistency (not per-pixel — refinements diverge by design once
-     poses/CTF update).
+  1. **Pipeliner job wrappers.** ✅ **Wrappers DONE.** ccpem-pipeliner wrappers for
+     `zarr-particle-ctfrefine` and `zarr-particle-polish` landed
+     (`pipeliner/subtomo_{ctfrefine,polish}_pipeliner_job.py`, registered as
+     `zarrparticletools.{ctfrefine,polish}`), mirroring `subtomo_{extract,reconstruct}_pipeliner_job.py`:
+     reuse the stock RELION job's joboptions, translate to our `local` CLI, drop MPI (parallelism is
+     `n_workers`), emit the optimisation-set output node so all four zarr jobs chain. So all four zarr STA
+     jobs are now pipeliner nodes. **Still open:** a **full chained run** through pyRELION + ccpem-pipeliner
+     on real data (dataset 10426, cf. `pyrelion-runs/10426-fixed_38`): import → extract → Refine3D →
+     CTF-refine → polish → re-extract → Refine3D → reconstruct, tilt series streamed from OME-Zarr
+     throughout. Validate vs a reference pyRELION pipeline on resolution/consistency (not per-pixel —
+     refinements diverge by design once poses/CTF update).
 
   2. **Dataset-ID auto-orchestrator.** A top-level driver: given a **CryoET Data Portal dataset ID
      (+ optional run subset) + a point annotation**, resolve inputs via the portal API (the

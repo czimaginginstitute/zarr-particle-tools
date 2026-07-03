@@ -443,7 +443,7 @@ def extract_subtomograms(
     cpu_count = min(32, mp.cpu_count(), len(tomograms_df))
     logger.info(f"Starting extraction of subtomograms from {len(tomograms_df)} tiltseries using {cpu_count} CPU cores.")
 
-    with mp.Pool(processes=cpu_count) as pool:
+    with mp.get_context("spawn").Pool(processes=cpu_count) as pool:
         for updated_filtered_particles_df, skipped_count in track(
             pool.imap_unordered(process_tiltseries_wrapper, args_list, chunksize=1),
             description="Extracting subtomograms...",
@@ -743,7 +743,7 @@ def parse_extract_data_portal_subtomograms(
     return (
         output_dir / "particles.star",
         None,
-        output_dir,
+        Path("./"),  # tiltseries star paths already include output_dir; resolve from cwd
         tomograms_path,
         output_dir / "optimisation_set.star",
     )
@@ -869,7 +869,7 @@ def parse_extract_data_portal_copick_subtomograms(
     return (
         output_dir / "particles.star",
         None,
-        output_dir,
+        Path("./"),  # tiltseries star paths already include output_dir; resolve from cwd
         tomograms_path,
         output_dir / "optimisation_set.star",
     )

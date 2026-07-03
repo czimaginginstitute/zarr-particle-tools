@@ -194,6 +194,20 @@ def data_portal_options():
             help="If set, only particles from annotations marked as ground truth will be extracted.",
         )
     )
+    options.append(
+        click.option(
+            "--automated-only",
+            is_flag=True,
+            help="If set, only particles from automated (method_type=automated) annotations are pulled.",
+        )
+    )
+    options.append(
+        click.option(
+            "--no-orientations",
+            is_flag=True,
+            help="Zero particle orientations (rlnAngleRot/Tilt/Psi) so poses are determined de novo.",
+        )
+    )
 
     for arg, py_type in DATA_PORTAL_ARGS:
         field_name = arg.removeprefix("--").split("-")[0]

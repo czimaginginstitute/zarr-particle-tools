@@ -14,7 +14,10 @@ from zarr_particle_tools.core.constants import TILTSERIES_URI_RELION_COLUMN
 
 logger = logging.getLogger(__name__)
 
-global_fs = s3fs.S3FileSystem(anon=True)
+# S3 timeouts + retries so a stalled read fails/retries instead of hanging
+S3_CONFIG_KWARGS = {"connect_timeout": 20, "read_timeout": 60, "retries": {"max_attempts": 5, "mode": "adaptive"}}
+
+global_fs = s3fs.S3FileSystem(anon=True, config_kwargs=S3_CONFIG_KWARGS)
 
 
 class DataReader:
@@ -57,7 +60,7 @@ class DataReader:
 
     def _get_s3fs(self):
         if not self._s3fs:
-            self._s3fs = s3fs.S3FileSystem(anon=True)
+            self._s3fs = s3fs.S3FileSystem(anon=True, config_kwargs=S3_CONFIG_KWARGS)
         return self._s3fs
 
     def _load_data(self):
