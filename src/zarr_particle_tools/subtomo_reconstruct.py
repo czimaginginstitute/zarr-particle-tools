@@ -13,6 +13,7 @@ The same applies for half1 and half2 if random subsets are present.
 import ast
 import logging
 import multiprocessing as mp
+import os
 import shutil
 import time
 from pathlib import Path
@@ -312,7 +313,10 @@ def reconstruct_single_tiltseries(
     weight_fourier_volume_half1 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
     weight_fourier_volume_half2 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
 
-    cpu_count = auto_worker_count(min(32, mp.cpu_count(), len(filtered_particles_df)))
+    # cap by ALLOCATED cores (sched_getaffinity respects the SLURM/cgroup cpuset, unlike mp.cpu_count);
+    # reconstruct's per-worker footprint (box^3 Fourier volumes + crops) is modest, so a low per-worker gb
+    n_alloc = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else mp.cpu_count()
+    cpu_count = auto_worker_count(min(32, n_alloc, len(filtered_particles_df)), per_worker_gb=4)
     with mp.get_context("spawn").Pool(processes=cpu_count) as pool:
         for particle_data_fourier_volume, particle_weight_fourier_volume, random_subset in pool.imap_unordered(
             process_particle_wrapper, args_list
