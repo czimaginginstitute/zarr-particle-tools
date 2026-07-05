@@ -36,6 +36,7 @@ import starfile
 
 from zarr_particle_tools.core.constants import TILTSERIES_URI_RELION_COLUMN
 from zarr_particle_tools.core.data import get_tiltseries_datareader, write_tiltseries_to_mrc
+from zarr_particle_tools.core.helpers import auto_worker_count
 
 logger = logging.getLogger(__name__)
 
@@ -495,14 +496,14 @@ def run_relion_tomo_job(
             )
 
     two_phase = per_tomogram and len(global_df) > 1
-    if two_phase and (n_workers is None or n_workers <= 0):  # auto: ~1/4 cores (each worker also uses --j)
-        n_workers = min(len(global_df), max(1, min(16, (os.cpu_count() or 4) // 4)))
-    _preflight_budget(
-        shm_dir,
-        _peek_stack_bytes(global_df, src_base, tiltseries_relative_dir),
-        n_workers or 1,
-        all_at_once=not two_phase,
-    )
+    stack_bytes = _peek_stack_bytes(global_df, src_base, tiltseries_relative_dir)
+    if two_phase and (n_workers is None or n_workers <= 0):  # ~1/4 cores, then bounded by memory
+        cpu_cap = min(len(global_df), max(1, min(16, (os.cpu_count() or 4) // 4)))
+        # each worker holds a tilt-series copy in /dev/shm (counts against cgroup RAM) plus a
+        # memory-heavy relion job (box^3 volumes); ~7x the largest stack empirically avoids OOM/SIGKILL.
+        per_worker_gb = max(1.0, (max(stack_bytes) / 1024**3) * 7)
+        n_workers = auto_worker_count(cpu_cap, per_worker_gb)
+    _preflight_budget(shm_dir, stack_bytes, n_workers or 1, all_at_once=not two_phase)
 
     common = dict(
         src_base=src_base,
