@@ -384,9 +384,13 @@ def generate_individual_tomogram_starfile(
     individual_tomogram_df = individual_tomogram_df.drop(columns=["z_index"])
     individual_tomogram_df = individual_tomogram_df[INDIVIDUAL_TOMOGRAM_COLUMNS]
 
-    # generate empty placeholder tiltseries mrc (relative path)
-    with mrcfile.new(output_dir / TILTSERIES_MRCS_PLACEHOLDER, overwrite=True) as mrc:
-        mrc.set_data(np.zeros((tiltseries.size_z, tiltseries.size_y, tiltseries.size_x), dtype=np.float32))
+    # sparse placeholder tiltseries mrc
+    with mrcfile.new_mmap(
+        output_dir / TILTSERIES_MRCS_PLACEHOLDER,
+        shape=(tiltseries.size_z, tiltseries.size_y, tiltseries.size_x),
+        mrc_mode=2,
+        overwrite=True,
+    ) as mrc:
         mrc.voxel_size = (tiltseries.pixel_spacing, tiltseries.pixel_spacing, 1.0)
 
     if individual_tomogram_df.isna().any().any():
