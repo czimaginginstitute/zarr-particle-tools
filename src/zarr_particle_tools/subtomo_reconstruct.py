@@ -24,7 +24,7 @@ import mrcfile
 import numpy as np
 import pandas as pd
 import starfile
-from rich.progress import Progress, TaskID
+from rich.progress import Progress
 
 import zarr_particle_tools.cli.options as cli_options
 from zarr_particle_tools.core.backprojection import (
@@ -60,8 +60,25 @@ from zarr_particle_tools.subtomo_extract import (
 logger = logging.getLogger(__name__)
 
 
-def process_particle_wrapper(args):
-    return process_particle(**args)
+def process_particle_chunk(chunk):
+    """Accumulate a chunk of particles into per-worker half-set volumes; return once (not per particle)."""
+    per_particle, const = chunk["per_particle"], chunk["const"]
+    box_size = const["box_size"]
+    shape = (box_size, box_size, box_size // 2 + 1)
+    data_half1 = np.zeros(shape, dtype=np.complex128)
+    weight_half1 = np.zeros(shape, dtype=np.complex128)
+    data_half2 = np.zeros(shape, dtype=np.complex128)
+    weight_half2 = np.zeros(shape, dtype=np.complex128)
+    for args in per_particle:
+        particle = args["particle"]
+        random_subset = particle["rlnRandomSubset"] if "rlnRandomSubset" in particle else 1
+        if random_subset == 1:
+            process_particle(**args, **const, data_target=data_half1, weight_target=weight_half1)
+        elif random_subset == 2:
+            process_particle(**args, **const, data_target=data_half2, weight_target=weight_half2)
+        else:
+            raise ValueError(f"Invalid random subset {random_subset} found! Should be 1 or 2.")
+    return data_half1, weight_half1, data_half2, weight_half2, len(per_particle)
 
 
 def process_particle(
@@ -89,14 +106,11 @@ def process_particle(
     dose_weights: np.ndarray,
     freq_cutoff_idx: list[int],
     dose_xranges: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, int]:
+    data_target: np.ndarray,
+    weight_target: np.ndarray,
+) -> None:
     """
-    Read an extracted particle and backproject it into a Fourier volume.
-
-    Returns:
-        particle_data_fourier_volume (np.ndarray): The Fourier volume of the particle data.
-        particle_weight_fourier_volume (np.ndarray): The Fourier volume of the particle weights.
-        random_subset (int): The assigned random subset of the particle (for half-set reconstructions). If not present, returns 1.
+    Read an extracted particle and backproject it into the given Fourier volumes (in place).
     """
     visible_sections = ast.literal_eval(particle["rlnTomoVisibleFrames"])
     assert (
@@ -118,8 +132,6 @@ def process_particle(
     ), f"Mismatch between box size and particle data for {particle['rlnTomoParticleName']}"
 
     weight_data = np.ones((len(sections), box_size, box_size // 2 + 1), dtype=np.complex128)
-    particle_data_fourier_volume = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
-    particle_weight_fourier_volume = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
 
     particle_section_index = 0
     for section_index, section in enumerate(sections):
@@ -163,8 +175,8 @@ def process_particle(
         backproject_slice_backward(
             particle_data_slice=particle_data[particle_section_index],
             particle_weight_slice=weight_data[section_index],
-            particle_data_fourier_volume=particle_data_fourier_volume,
-            particle_weight_fourier_volume=particle_weight_fourier_volume,
+            particle_data_fourier_volume=data_target,
+            particle_weight_fourier_volume=weight_target,
             particle_projection_matrix=particle_projection_matrices[section_index],
             # RELION passes the dose-based xRanges(0,f) as maxFreq regardless of CTF
             # (reconstruct_particle.cpp:416); the dose weights (and thus the cutoff) are computed
@@ -172,12 +184,6 @@ def process_particle(
             freq_cutoff=freq_cutoff_idx[section_index],
         )
         particle_section_index += 1
-
-    return (
-        particle_data_fourier_volume,
-        particle_weight_fourier_volume,
-        particle["rlnRandomSubset"] if "rlnRandomSubset" in particle else 1,
-    )
 
 
 def reconstruct_single_tiltseries(
@@ -188,9 +194,7 @@ def reconstruct_single_tiltseries(
     tiltseries_row_entry: pd.Series,
     individual_tiltseries_df: pd.DataFrame,
     optics_row: pd.DataFrame,
-    progress_bar: Progress = None,
-    progress_task: TaskID = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
     """
     Reconstruct particles from a single tiltseries.
     Returns:
@@ -275,7 +279,7 @@ def reconstruct_single_tiltseries(
     dose_xranges = compute_dose_xranges(dose_weights, cutoff_fraction)
     freq_cutoff_idx = dose_xranges[:, 0]
 
-    args_list = [
+    per_particle_args = [
         {
             "particle": particle,
             "particle_projection_matrices": all_particle_projection_matrices[particle_index],
@@ -306,38 +310,17 @@ def reconstruct_single_tiltseries(
         "freq_cutoff_idx": freq_cutoff_idx,
         "dose_xranges": dose_xranges,
     }
-    args_list = [{**args, **constant_args} for args in args_list]
 
-    data_fourier_volume_half1 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
-    data_fourier_volume_half2 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
-    weight_fourier_volume_half1 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
-    weight_fourier_volume_half2 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
-
-    # cap by ALLOCATED cores (sched_getaffinity respects the SLURM/cgroup cpuset, unlike mp.cpu_count);
-    # reconstruct's per-worker footprint (box^3 Fourier volumes + crops) is modest, so a low per-worker gb
-    n_alloc = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else mp.cpu_count()
-    cpu_count = auto_worker_count(min(32, n_alloc, len(filtered_particles_df)), per_worker_gb=4)
-    with mp.get_context("spawn").Pool(processes=cpu_count) as pool:
-        for particle_data_fourier_volume, particle_weight_fourier_volume, random_subset in pool.imap_unordered(
-            process_particle_wrapper, args_list
-        ):
-            if random_subset == 1:
-                data_fourier_volume_half1 += particle_data_fourier_volume
-                weight_fourier_volume_half1 += particle_weight_fourier_volume
-            elif random_subset == 2:
-                data_fourier_volume_half2 += particle_data_fourier_volume
-                weight_fourier_volume_half2 += particle_weight_fourier_volume
-            else:
-                raise ValueError(f"Invalid random subset {random_subset} found! Should be 1 or 2.")
-            if progress_bar is not None:
-                progress_bar.advance(progress_task)
-
-    return (
-        data_fourier_volume_half1,
-        weight_fourier_volume_half1,
-        data_fourier_volume_half2,
-        weight_fourier_volume_half2,
+    # this whole tiltseries runs in one worker (parallelism is across tiltseries in reconstruct());
+    # accumulate all its particles into a single half-set volume set, returned once
+    data_half1, weight_half1, data_half2, weight_half2, _ = process_particle_chunk(
+        {"per_particle": per_particle_args, "const": constant_args}
     )
+    return data_half1, weight_half1, data_half2, weight_half2, len(per_particle_args)
+
+
+def reconstruct_single_tiltseries_wrapper(arg):
+    return reconstruct_single_tiltseries(**arg)
 
 
 def finalise_volume(
@@ -472,12 +455,7 @@ def reconstruct(
 
     try:
         progress_task = progress_bar.add_task("Reconstructing particles", total=len(particles_df))
-        constant_args = {
-            "no_ctf": no_ctf,
-            "cutoff_fraction": cutoff_fraction,
-            "progress_bar": progress_bar,
-            "progress_task": progress_task,
-        }
+        constant_args = {"no_ctf": no_ctf, "cutoff_fraction": cutoff_fraction}
         args_list = [{**args, **constant_args} for args in args_list if args is not None]
 
         output_data_fourier_volume_half1 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
@@ -485,18 +463,25 @@ def reconstruct(
         output_weight_fourier_volume_half1 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
         output_weight_fourier_volume_half2 = np.zeros((box_size, box_size, box_size // 2 + 1), dtype=np.complex128)
 
-        for arg in args_list:
-            (
+        # parallelise across tiltseries: each worker reconstructs a whole tiltseries into its own volumes
+        # and returns once, so only ~n_tiltseries box^3 volumes cross the pool boundary (not per-particle).
+        # cap by allocated cores (sched_getaffinity respects the SLURM/cgroup cpuset); per-worker footprint
+        # is ~4 box^3 volumes + a tilt series working set
+        n_alloc = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else mp.cpu_count()
+        cpu_count = auto_worker_count(min(32, n_alloc, len(args_list)), per_worker_gb=5)
+        with mp.get_context("spawn").Pool(processes=cpu_count) as pool:
+            for (
                 data_fourier_volume_half1,
                 weight_fourier_volume_half1,
                 data_fourier_volume_half2,
                 weight_fourier_volume_half2,
-            ) = reconstruct_single_tiltseries(**arg)
-
-            output_data_fourier_volume_half1 += data_fourier_volume_half1
-            output_data_fourier_volume_half2 += data_fourier_volume_half2
-            output_weight_fourier_volume_half1 += weight_fourier_volume_half1
-            output_weight_fourier_volume_half2 += weight_fourier_volume_half2
+                n_done,
+            ) in pool.imap_unordered(reconstruct_single_tiltseries_wrapper, args_list):
+                output_data_fourier_volume_half1 += data_fourier_volume_half1
+                output_data_fourier_volume_half2 += data_fourier_volume_half2
+                output_weight_fourier_volume_half1 += weight_fourier_volume_half1
+                output_weight_fourier_volume_half2 += weight_fourier_volume_half2
+                progress_bar.advance(progress_task, n_done)
     finally:
         progress_bar.stop()
 
