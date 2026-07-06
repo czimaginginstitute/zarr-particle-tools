@@ -34,6 +34,13 @@ Primary steps in subtomogram reconstruction are:
 - Gridding correction
 - CTF correction
 
+This package also runs RELION's CTF refinement (`relion_tomo_refine_ctf`) and Bayesian polishing / frame
+alignment (`relion_tomo_align`) directly against OME-Zarr tilt series, without modifying RELION: each tilt
+series is streamed from zarr into a RAM-backed (`/dev/shm`) MRC that stock RELION reads. Both run in a
+memory-bounded two-phase per-tomogram mode by default (bounded RAM), or all-at-once. A companion tool emits
+a `tomograms.star` (S3-zarr tilt series with per-tilt CTF/geometry/dose) from the CryoET Data Portal or a
+copick project to feed these jobs.
+
 ## Installation
 
 Create a new conda environment if you'd like to keep this separate from your other Python environments:
@@ -52,7 +59,7 @@ uv pip install zarr-particle-tools
 > package with pipeliner, please install pipeliner manually from the [pipeliner repository](https://gitlab.com/ccpem/ccpem-pipeliner).
 
 ## Example runs
-### See full options with `zarr-particle-extract --help` and `zarr-particle-reconstruct --help`.
+### See full options with `zarr-particle-extract --help`, `zarr-particle-reconstruct --help`, `zarr-particle-ctfrefine --help`, `zarr-particle-polish --help`, and `zarr-particle-tomograms --help`.
 
 For RELION projects, a `--tiltseries-relative-dir` is not needed if this script is run from the RELION project directory root.
 
@@ -144,8 +151,57 @@ zarr-particle-reconstruct local-copick --help
 zarr-particle-reconstruct copick-data-portal --help
 ```
 
+#### Generate a tomograms.star for CTF-refine / polish
+
+Emits only a `tomograms.star` (S3-zarr tilt series with per-tilt CTF/geometry/dose) — supply your own refined `particles.star` and reference half-maps.
+
+```
+zarr-particle-tomograms data-portal \
+  --dataset-ids 10426 \
+  --output-dir tests/output/sample_tomograms_test/
+```
+
+```
+zarr-particle-tomograms copick-data-portal --help
+```
+
+#### CTF refinement (stock RELION on OME-Zarr)
+
+Runs `relion_tomo_refine_ctf` against zarr tilt series. Takes RELION stars (an optimisation set, or particles + tomograms) plus reference half-maps from a prior Refine3D.
+
+```
+zarr-particle-ctfrefine local \
+  --particles-starfile tests/data/relion_project_unroofing/refined_particles.star \
+  --tomograms-starfile tests/data/relion_project_unroofing/tomograms.star \
+  --ref1 tests/data/relion_project_unroofing/half1.mrc \
+  --ref2 tests/data/relion_project_unroofing/half2.mrc \
+  --box-size 384 --do-defocus --do-scale \
+  --output-dir tests/output/sample_ctfrefine_test/
+```
+
+#### Bayesian polishing / frame alignment (stock RELION on OME-Zarr)
+
+Runs `relion_tomo_align` against zarr tilt series (same input shape as CTF-refine); writes `motion.star` plus updated stars.
+
+```
+zarr-particle-polish local \
+  --particles-starfile tests/data/relion_project_unroofing/refined_particles.star \
+  --tomograms-starfile tests/data/relion_project_unroofing/tomograms.star \
+  --ref1 tests/data/relion_project_unroofing/half1.mrc \
+  --ref2 tests/data/relion_project_unroofing/half2.mrc \
+  --box-size 384 --do-motion \
+  --output-dir tests/output/sample_polish_test/
+```
+
+Both default to `--per-tomogram` (memory-bounded two-phase, `--n-workers 0` auto); pass `--all-at-once` to keep all tilt series in RAM.
+
 ## Pytest
 To ensure that the subtomogram extraction matches RELION's subtomogram extraction, we have a set of tests that compare the output of this script with RELION 5.0's output and ensure that they match within reasonable numerical precision. float16 data has a more relaxed tolerance due to the reduced precision of the data type, and the real experimental data has a more relaxed tolerance due to the noisier nature of the data.
+
+Comparisons use a magnitude-aware, unmasked (per-voxel) float32-storage-floor comparator (`tests/helpers/compare.py`): every voxel is checked against a tolerance of `ulp_factor * float32_ulp(max|values|)`, and the worst voxel is reported as a multiple of a float32 ULP. Test coverage:
+- Extraction and reconstruction (`test_extract_strict.py`, `test_reconstruct.py`): strict per-voxel equivalence vs RELION across synthetic and real (unroofing) data, with binning, cropping, and no-CTF cases, plus reconstruction half-map parity and self-consistency checks.
+- CTF refinement and polishing (`test_ctfrefine.py`, `test_polish.py`, RELION-binary-gated): zarr→`/dev/shm` results match stock RELION on real MRC tilt series, and two-phase per-tomogram matches all-at-once across fit variants (defocus, scale, aberrations, motion).
+- Unit tests (`tests/unit/`, no RELION binary required): CTF B-factor envelope and phase shift, per-row / scalar dose frequency cutoff vs RELION's `findDoseXRanges`, the zarr full-stack reader and zarr→MRC streamer, and the `/dev/shm` preflight / cleanup safeguards.
 
 To download the test data and run it yourself:
 
@@ -180,7 +236,6 @@ If you would like to see a feature added (on or off this limitation list), pleas
 - Does not support --apply_orientations
 - Does not support --dont_apply_offsets
 - Does not support cone flags (--cone_weight, --cone_angle, --cone_sig0)
-- Does not support CTF_BFACTOR (rlnCtfBfactor) or CTF_BFACTOR_PERELECTRONDOSE (rlnCtfBfactorPerElectronDose)
 - Does not support Anisotropic magnification matrix (EMDL_IMAGE_MAG_MATRIX_00, EMDL_IMAGE_MAG_MATRIX_01, EMDL_IMAGE_MAG_MATRIX_10, EMDL_IMAGE_MAG_MATRIX_11)
 - Does not support 2D deformations (EMDL_TOMO_DEFORMATION_GRID_SIZE_X, EMDL_TOMO_DEFORMATION_GRID_SIZE_Y, EMDL_TOMO_DEFORMATION_TYPE, EMDL_TOMO_DEFORMATION_COEFFICIENTS)
 
