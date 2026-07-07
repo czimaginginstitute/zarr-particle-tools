@@ -3,8 +3,10 @@ from pathlib import Path
 
 import copick
 import pandas as pd
+import starfile
 from copick.models import CopickPicks
 
+import zarr_particle_tools.generate.cdp_generate_starfiles as cdp_generate
 from zarr_particle_tools.core.constants import PARTICLES_DF_COLUMNS
 
 logger = logging.getLogger(__name__)
@@ -93,3 +95,68 @@ def copick_picks_to_starfile(
         dfs.append(df)
 
     return pd.concat(dfs, ignore_index=True)[PARTICLES_DF_COLUMNS]
+
+
+def generate_copick_data_portal_starfiles(
+    output_dir: Path,
+    copick_config: Path,
+    copick_name: str,
+    copick_session_id: str,
+    copick_user_id: str,
+    copick_run_names: list[str] = None,
+    copick_dataset_ids: list[int] = None,
+) -> tuple[Path, Path, Path, pd.DataFrame, list[int]]:
+    """
+    Generate particles.star + tomograms.star (+ per-tomogram tilt stars) for a Data Portal-backed copick
+    project: tomograms come from the Data Portal runs, particles from copick picks. The copick run names
+    must be integer Data Portal run IDs.
+
+    Returns:
+        tuple: particles.star path, tomograms.star path, tiltseries folder, optics dataframe, filtered run IDs.
+    """
+    output_dir = Path(output_dir)
+
+    if not copick_run_names:
+        picks = get_copick_picks(copick_config, copick_name, copick_session_id, copick_user_id, copick_run_names)
+        copick_run_names = [p.run.name for p in picks]
+
+    copick_run_ids = [int(s) for s in copick_run_names if s.isdigit()]
+    if len(copick_run_ids) != len(copick_run_names):
+        raise ValueError("All copick runs must be nonnegative integers (Data Portal run IDs).")
+
+    filtered_run_ids, optics_df, tomograms_path, tiltseries_folder = cdp_generate.generate_tomograms_from_runs(
+        run_ids=copick_run_ids,
+        dataset_ids=copick_dataset_ids,
+        output_dir=output_dir,
+    )
+    filtered_run_names = [str(run_id) for run_id in filtered_run_ids]
+
+    particles_df = copick_picks_to_starfile(
+        copick_config,
+        copick_name,
+        copick_session_id,
+        copick_user_id,
+        filtered_run_names,
+        optics_df,
+        data_portal_runs=True,
+    )
+    # keep only particles whose tomogram is present in the generated tomograms.star
+    particles_df = particles_df[particles_df["rlnTomoName"].isin(optics_df["rlnTomoName"])]
+    particles_path = output_dir / "particles.star"
+    starfile.write({"optics": optics_df, "particles": particles_df}, particles_path)
+    logger.info(f"Generated particles star file at {particles_path} with {len(particles_df)} particles.")
+
+    if not particles_path.exists():
+        raise ValueError(
+            f"Starfile generation failed. Expected particles star file at {particles_path} does not exist."
+        )
+    if not tomograms_path.exists():
+        raise ValueError(
+            f"Starfile generation failed. Expected tomograms star file at {tomograms_path} does not exist."
+        )
+    if not tiltseries_folder.exists() or not any(tiltseries_folder.glob("*.star")):
+        raise ValueError(
+            f"Starfile generation failed. Expected tiltseries star files in {tiltseries_folder} do not exist."
+        )
+
+    return particles_path, tomograms_path, tiltseries_folder, optics_df, filtered_run_ids

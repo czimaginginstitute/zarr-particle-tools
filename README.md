@@ -41,6 +41,13 @@ memory-bounded two-phase per-tomogram mode by default (bounded RAM), or all-at-o
 a `tomograms.star` (S3-zarr tilt series with per-tilt CTF/geometry/dose) from the CryoET Data Portal or a
 copick project to feed these jobs.
 
+Finally, `zarr-particle-pipeline` is a top-level orchestrator: given a CryoET Data Portal dataset ID
+(+ optional run subset) and a point annotation, it resolves inputs via the portal, auto-derives and
+verifies the tilt-series pixel size (portal metadata cross-checked against each tilt-series MRC header),
+generates the zarr-native star files, and drives the full [py2rely](https://github.com/chanzuckerberg/py2rely)
+sub-tomogram-averaging pipeline end to end - the four tilt-series-reading jobs run against OME-Zarr
+throughout, so nothing is downloaded to disk.
+
 ## Installation
 
 Create a new conda environment if you'd like to keep this separate from your other Python environments:
@@ -58,8 +65,28 @@ uv pip install zarr-particle-tools
 > [CCPEM pipeliner](https://ccpem-pipeliner.readthedocs.io/en/latest/) is not yet released on PyPI. In order to use this
 > package with pipeliner, please install pipeliner manually from the [pipeliner repository](https://gitlab.com/ccpem/ccpem-pipeliner).
 
+### Prerequisites for the full pipeline orchestrator
+
+The individual jobs (extract / reconstruct / ctf-refine / polish / tomograms / export) only need this
+package. The **orchestrator** (`zarr-particle-pipeline`) drives
+[py2rely](https://github.com/chanzuckerberg/py2rely) (a Python STA pipeline driver; see its
+[README](https://github.com/chanzuckerberg/py2rely/blob/main/README.md)), which in turn shells out to
+RELION. To run it you also need:
+
+- **py2rely** on your `PATH`.
+- **RELION 5** with the `relion_*` binaries on your `PATH` (source its `setup-env.sh` / add its `build/bin`).
+  The chain calls `relion_refine`, `relion_mask_create`, `relion_postprocess`, and the zarr CTF-refine /
+  polish jobs call `relion_tomo_refine_ctf` / `relion_tomo_align`.
+- This package **installed editable** (`pip install -e .`) so its `ccpem_pipeliner.jobs` entry points
+  register - that registration is what lets py2rely auto-select the zarr jobs (via the `tomoTiltSeriesURI`
+  column) instead of stock RELION.
+- **[copick](https://github.com/copick/copick)** - only for the `copick-data-portal` variants.
+
+Run `zarr-particle-pipeline preflight` to verify all of the above at once; the orchestrator also runs
+this check automatically before it does any work.
+
 ## Example runs
-### See full options with `zarr-particle-extract --help`, `zarr-particle-reconstruct --help`, `zarr-particle-ctfrefine --help`, `zarr-particle-polish --help`, and `zarr-particle-tomograms --help`.
+### See full options with `zarr-particle-extract --help`, `zarr-particle-reconstruct --help`, `zarr-particle-ctfrefine --help`, `zarr-particle-polish --help`, `zarr-particle-tomograms --help`, and `zarr-particle-pipeline --help`.
 
 For RELION projects, a `--tiltseries-relative-dir` is not needed if this script is run from the RELION project directory root.
 
@@ -153,7 +180,7 @@ zarr-particle-reconstruct copick-data-portal --help
 
 #### Generate a tomograms.star for CTF-refine / polish
 
-Emits only a `tomograms.star` (S3-zarr tilt series with per-tilt CTF/geometry/dose) — supply your own refined `particles.star` and reference half-maps.
+Emits only a `tomograms.star` (S3-zarr tilt series with per-tilt CTF/geometry/dose) - supply your own refined `particles.star` and reference half-maps.
 
 ```
 zarr-particle-tomograms data-portal \
@@ -195,13 +222,74 @@ zarr-particle-polish local \
 
 Both default to `--per-tomogram` (memory-bounded two-phase, `--n-workers 0` auto); pass `--all-at-once` to keep all tilt series in RAM.
 
+#### Full pipeline orchestration (CryoET Data Portal -> py2rely STA)
+
+`zarr-particle-pipeline data-portal` resolves a dataset + annotation, derives and verifies the pixel size,
+generates the star files (into `<output-dir>/input`), then runs `py2rely prepare relion5-parameters` ->
+`prepare relion5-pipeline` -> `sbatch pipeline.sh`. The generated `input/tomograms.star` carries the
+`tomoTiltSeriesURI` column, which is what makes py2rely auto-select our four zarr jobs (extract /
+reconstruct / ctf-refine / polish) in place of stock RELION; Refine3D / Class3D / MaskCreate / PostProcess
+stay stock. Requires `py2rely` and the `relion_*` binaries on `PATH` (activate the env and source
+RELION's `setup-env.sh` first).
+
+Example - dataset 10426 (unroofing), ground-truth ribosome picks, tilt series streamed from OME-Zarr:
+
+```
+zarr-particle-pipeline data-portal \
+  --dataset-id 10426 \
+  --annotation-name ribosome --inexact-match --ground-truth \
+  --output-dir 10426_sta \
+  --protein-diameter 330 \
+  --reference-template ribo80s_emd_3883_866_128_resized.mrc \
+  --symmetry C1 --low-pass 50 --binning-list 4,2,1 \
+  --num-gpus 4 --cpu-constraint 16,8 --timeout 120
+```
+
+Add `--run-ids 16848,16851` to restrict to a subset of runs, and `--prepare-only` to generate
+`all_sta_parameters.json` + `pipeline.sh` without submitting (inspect them, then `cd 10426_sta &&
+sbatch pipeline.sh`). The pixel size is auto-derived from the portal and cross-checked against each
+tilt-series MRC header; pass `--pixel-size` to override or `--pixel-size-tol` to loosen the check.
+`--protein-diameter` is required; `--reference-template` is required unless `--run-denovo-generation`.
+
+To drive the same pipeline from a Data Portal-backed copick project (picks from copick, tomograms from
+the portal - the copick run names must be Data Portal run IDs), use the `copick-data-portal` subcommand
+with the same science/compute options:
+
+```
+zarr-particle-pipeline copick-data-portal \
+  --copick-config pick-unroofing.json \
+  --copick-name ribosome --copick-user-id user0 --copick-session-id 19 \
+  --output-dir 10426_sta_copick \
+  --protein-diameter 330 \
+  --reference-template ribo80s_emd_3883_866_128_resized.mrc
+```
+
+#### Export a self-contained on-disk project (downloaded tilt series)
+
+The zarr jobs read OME-Zarr directly, so this is mostly optional - it exists to hand off a portable
+project (or run stock RELION with no portal access). `zarr-particle-export` generates the star files,
+downloads each tilt-series MRC from the portal to `<output-dir>/tiltseries/`, and repoints the tilt
+stars at the on-disk MRCs (dropping the `tomoTiltSeriesURI` column so stock jobs are used). Note the
+tilt-series MRCs are large - this downloads the full stacks.
+
+```
+zarr-particle-export data-portal \
+  --dataset-id 10426 \
+  --annotation-name ribosome --inexact-match --ground-truth \
+  --output-dir 10426_ondisk
+```
+
+```
+zarr-particle-export copick-data-portal --help
+```
+
 ## Pytest
 To ensure that the subtomogram extraction matches RELION's subtomogram extraction, we have a set of tests that compare the output of this script with RELION 5.0's output and ensure that they match within reasonable numerical precision. float16 data has a more relaxed tolerance due to the reduced precision of the data type, and the real experimental data has a more relaxed tolerance due to the noisier nature of the data.
 
 Comparisons use a magnitude-aware, unmasked (per-voxel) float32-storage-floor comparator (`tests/helpers/compare.py`): every voxel is checked against a tolerance of `ulp_factor * float32_ulp(max|values|)`, and the worst voxel is reported as a multiple of a float32 ULP. Test coverage:
 - Extraction and reconstruction (`test_extract_strict.py`, `test_reconstruct.py`): strict per-voxel equivalence vs RELION across synthetic and real (unroofing) data, with binning, cropping, and no-CTF cases, plus reconstruction half-map parity and self-consistency checks.
-- CTF refinement and polishing (`test_ctfrefine.py`, `test_polish.py`, RELION-binary-gated): zarr→`/dev/shm` results match stock RELION on real MRC tilt series, and two-phase per-tomogram matches all-at-once across fit variants (defocus, scale, aberrations, motion).
-- Unit tests (`tests/unit/`, no RELION binary required): CTF B-factor envelope and phase shift, per-row / scalar dose frequency cutoff vs RELION's `findDoseXRanges`, the zarr full-stack reader and zarr→MRC streamer, and the `/dev/shm` preflight / cleanup safeguards.
+- CTF refinement and polishing (`test_ctfrefine.py`, `test_polish.py`, RELION-binary-gated): zarr->`/dev/shm` results match stock RELION on real MRC tilt series, and two-phase per-tomogram matches all-at-once across fit variants (defocus, scale, aberrations, motion).
+- Unit tests (`tests/unit/`, no RELION binary required): CTF B-factor envelope and phase shift, per-row / scalar dose frequency cutoff vs RELION's `findDoseXRanges`, the zarr full-stack reader and zarr->MRC streamer, and the `/dev/shm` preflight / cleanup safeguards.
 
 To download the test data and run it yourself:
 
