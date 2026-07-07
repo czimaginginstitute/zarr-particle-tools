@@ -1,7 +1,8 @@
 import logging
+import threading
 from collections import defaultdict
 from functools import lru_cache, wraps
-from typing import Any, Callable, Union
+from typing import Any, Callable, Optional, Union
 
 from cryoet_data_portal import (
     Alignment,
@@ -47,7 +48,62 @@ alignment_to_tomograms_cache: dict[int, list[int]] = defaultdict(list)
 # tomogram voxel spacing id to tomogram id
 tomogram_voxel_spacing_to_tomograms_cache: dict[int, list[int]] = defaultdict(list)
 
-client = Client()
+# Dict caches, cleared together on an API-URL switch.
+_ALL_DICT_CACHES = [
+    run_cache,
+    tiltseries_cache,
+    alignment_cache,
+    voxel_spacing_cache,
+    tomograms_cache,
+    per_section_alignments_cache,
+    per_section_parameters_cache,
+    run_to_frames_cache,
+    dataset_id_to_runs_cache,
+    run_id_to_alignment_ids_cache,
+    run_id_to_voxel_spacing_ids_cache,
+    alignment_to_tomograms_cache,
+    tomogram_voxel_spacing_to_tomograms_cache,
+]
+# lru-wrapped getters, registered at import for clear_caches().
+_lru_wrapped: list[Callable] = []
+
+# Staging GraphQL endpoint; prod is the default when url is None.
+STAGING_GRAPHQL_URL = "https://graphql.cryoet.staging.si.czi.technology/graphql"
+
+# Lazy shared client so --staging can set the URL before the first query.
+_api_url: Optional[str] = None
+_client: Optional[Client] = None
+_client_lock = threading.Lock()
+# Guards shared-cache access; reentrant for nested derived-cache getters.
+_cache_lock = threading.RLock()
+
+
+def get_client() -> Client:
+    """Return the shared cryoet_data_portal Client, creating it on first use."""
+    global _client
+    if _client is None:
+        with _client_lock:
+            if _client is None:
+                _client = Client(_api_url)  # url=None -> prod default
+    return _client
+
+
+def clear_caches() -> None:
+    """Clear all lru_caches and module dict caches (e.g. after switching API URL)."""
+    for getter in _lru_wrapped:
+        getter.cache_clear()
+    for cache in _ALL_DICT_CACHES:
+        cache.clear()
+
+
+def set_api_url(url: Optional[str]) -> None:
+    """Point the shared client at `url` (None=prod); reset it and clear caches."""
+    global _api_url, _client
+    with _client_lock:
+        _api_url = url
+        _client = None
+    clear_caches()
+
 
 CACHE_DEBUG = False
 
@@ -99,55 +155,57 @@ def get_items_by_ids(
     if isinstance(ids, int):
         ids = [ids]
 
-    if derived_cache is not None:
-        # will later be used to fetch items from the derived cache
-        result_ids: dict[int, list[int]] = defaultdict(list)
-    else:
-        result_items: dict[int, Any] = defaultdict(list) if multiple_results else {}
-    missing_ids = []
-
-    # for every item, check the cache first
-    for item_id in ids:
-        if item_id in cache:
-            if derived_cache is not None:
-                result_ids[item_id] = cache[item_id]
-            else:
-                result_items[item_id] = cache[item_id]
+    # Lock shared-cache access; fetch stays inside so check->fetch->populate is atomic.
+    with _cache_lock:
+        if derived_cache is not None:
+            # will later be used to fetch items from the derived cache
+            result_ids: dict[int, list[int]] = defaultdict(list)
         else:
-            missing_ids.append(item_id)
+            result_items: dict[int, Any] = defaultdict(list) if multiple_results else {}
+        missing_ids = []
 
-    # if there are ids missing from the cache, fetch them from the database
-    if missing_ids:
-        if CACHE_DEBUG:
-            logger.debug(f"Fetching items by IDS: {ids}, model: {model_cls.__name__}, missing ids: {missing_ids}")
-        fetched_items = model_cls.find(client, query_filters=[query_field._in(missing_ids)])
-        for item in fetched_items:
-            item_key = key_extractor(item)
-            # first add them to the results being returned
-            if derived_cache is not None:
-                result_ids[item_key].append(item.id)
+        # for every item, check the cache first
+        for item_id in ids:
+            if item_id in cache:
+                if derived_cache is not None:
+                    result_ids[item_id] = cache[item_id]
+                else:
+                    result_items[item_id] = cache[item_id]
             else:
-                if multiple_results:
-                    result_items[item_key].append(item)
-                else:
-                    result_items[item_key] = item
+                missing_ids.append(item_id)
 
-            # if there is a derived cache, that means this cache just holds the ids, while we need to add the actual item to the derived cache
-            if derived_cache is not None:
-                if multiple_results:
-                    cache[item_key].append(item.id)
+        # if there are ids missing from the cache, fetch them from the database
+        if missing_ids:
+            if CACHE_DEBUG:
+                logger.debug(f"Fetching items by IDS: {ids}, model: {model_cls.__name__}, missing ids: {missing_ids}")
+            fetched_items = model_cls.find(get_client(), query_filters=[query_field._in(missing_ids)])
+            for item in fetched_items:
+                item_key = key_extractor(item)
+                # first add them to the results being returned
+                if derived_cache is not None:
+                    result_ids[item_key].append(item.id)
                 else:
-                    cache[item_key] = item.id
-                derived_cache[item.id] = item  # this is always a one-to-one mapping
-            else:
-                if multiple_results:
-                    cache[item_key].append(item)
-                else:
-                    cache[item_key] = item
+                    if multiple_results:
+                        result_items[item_key].append(item)
+                    else:
+                        result_items[item_key] = item
 
-    # derived cache means that the result_items are actually ids of the derived cache, must hit the derived cache to get the actual items
-    if derived_cache is not None:
-        result_items = {item_id: derived_cache_callable(item_ids) for item_id, item_ids in result_ids.items()}
+                # if there is a derived cache, that means this cache just holds the ids, while we need to add the actual item to the derived cache
+                if derived_cache is not None:
+                    if multiple_results:
+                        cache[item_key].append(item.id)
+                    else:
+                        cache[item_key] = item.id
+                    derived_cache[item.id] = item  # this is always a one-to-one mapping
+                else:
+                    if multiple_results:
+                        cache[item_key].append(item)
+                    else:
+                        cache[item_key] = item
+
+        # derived cache means that the result_items are actually ids of the derived cache, must hit the derived cache to get the actual items
+        if derived_cache is not None:
+            result_items = {item_id: derived_cache_callable(item_ids) for item_id, item_ids in result_ids.items()}
 
     if as_dict:
         return result_items
@@ -175,7 +233,11 @@ def hashable_lru_cache(maxsize: int = None) -> Callable:
         def cached_func(*args, **kwargs):
             return func(*args, **kwargs)
 
-        return make_args_hashable(cached_func)
+        wrapper = make_args_hashable(cached_func)
+        # expose cache_clear + register for clear_caches()
+        wrapper.cache_clear = cached_func.cache_clear
+        _lru_wrapped.append(wrapper)
+        return wrapper
 
     return decorator
 

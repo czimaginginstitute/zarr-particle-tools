@@ -601,7 +601,7 @@ def resolve_annotation_files(
     ground_truth: bool = False,
     automated_only: bool = False,
 ) -> list[cdp.AnnotationFile]:
-    client = cdp.Client()
+    client = cdp_cache.get_client()  # shared lazy client (respects --staging)
 
     # First filter with information related to the Annotation class; ids are always exact match
     annotation_query_filters = []

@@ -208,6 +208,14 @@ def data_portal_options():
             help="Zero particle orientations (rlnAngleRot/Tilt/Psi) so poses are determined de novo.",
         )
     )
+    options.append(
+        click.option(
+            "--staging",
+            is_flag=True,
+            help="Query the staging CryoET Data Portal (GraphQL + authenticated S3) instead of prod. "
+            "Omit for prod. Fails hard with a 403 message if staging S3 access is denied.",
+        )
+    )
 
     for arg, py_type in DATA_PORTAL_ARGS:
         field_name = arg.removeprefix("--").split("-")[0]
@@ -230,6 +238,19 @@ def data_portal_options():
     return compose_options(options)
 
 
+def configure_portal_endpoint(staging: bool) -> None:
+    """Point the shared client + S3 at staging (GraphQL + authenticated S3) or prod."""
+    import zarr_particle_tools.core.data as data
+    import zarr_particle_tools.generate.cdp_cache as cdp_cache
+
+    if staging:
+        cdp_cache.set_api_url(cdp_cache.STAGING_GRAPHQL_URL)
+        data.set_s3_anon(False)
+    else:
+        cdp_cache.set_api_url(None)
+        data.set_s3_anon(True)
+
+
 def flatten(val: Any) -> list:
     "Flattens a list of lists to a single list."
     if isinstance(val, (list, tuple)) and val and isinstance(val[0], (list, tuple)):
@@ -239,7 +260,8 @@ def flatten(val: Any) -> list:
 
 
 def flatten_data_portal_args(kwargs: dict) -> dict:
-    "Flattens the data portal arguments from lists of lists to a single list."
+    "Flatten the data portal list args and point client/S3 at staging or prod (--staging)."
+    configure_portal_endpoint(kwargs.pop("staging", False))
     for ref in DATA_PORTAL_ARG_REFS:
         if val := kwargs.get(ref):
             kwargs[ref] = flatten(val)
