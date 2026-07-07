@@ -384,15 +384,6 @@ def generate_individual_tomogram_starfile(
     individual_tomogram_df = individual_tomogram_df.drop(columns=["z_index"])
     individual_tomogram_df = individual_tomogram_df[INDIVIDUAL_TOMOGRAM_COLUMNS]
 
-    # sparse placeholder tiltseries mrc
-    with mrcfile.new_mmap(
-        output_dir / TILTSERIES_MRCS_PLACEHOLDER,
-        shape=(tiltseries.size_z, tiltseries.size_y, tiltseries.size_x),
-        mrc_mode=2,
-        overwrite=True,
-    ) as mrc:
-        mrc.voxel_size = (tiltseries.pixel_spacing, tiltseries.pixel_spacing, 1.0)
-
     if individual_tomogram_df.isna().any().any():
         raise ValueError(
             f"[Run {alignment.run_id}, TiltSeries {tiltseries.id}, Alignment {alignment.id}] Data contains NA values. This can cause issues with RELION subtomogram extraction. Please check the star file."
@@ -406,6 +397,22 @@ def generate_individual_tomogram_starfile(
     )
 
     return individual_tomogram_df, tomo_name
+
+
+def write_tiltseries_placeholder(output_dir: Path, tiltseries) -> None:
+    """Write the shared placeholder tiltseries mrc that rlnTomoTiltSeriesName points to (to satisfy RELION's
+    schema + the pipeliner node-existence check). Pixels stream from the tomoTiltSeriesURI, so the single
+    tomogram's dims are harmless. Written ONCE before the tomogram pool (not per-tomogram): the single-writer
+    guarantee is what makes new_mmap safe here — the earlier per-tomogram new_mmap raced on this shared path
+    (concurrent truncate/mmap -> "mmap length > file size"). Sparse: ~8 KB on disk vs a full ~GB volume."""
+    (output_dir / "tiltseries").mkdir(parents=True, exist_ok=True)
+    with mrcfile.new_mmap(
+        output_dir / TILTSERIES_MRCS_PLACEHOLDER,
+        shape=(tiltseries.size_z, tiltseries.size_y, tiltseries.size_x),
+        mrc_mode=2,
+        overwrite=True,
+    ) as mrc:
+        mrc.voxel_size = (tiltseries.pixel_spacing, tiltseries.pixel_spacing, 1.0)
 
 
 def generate_individual_tomogram_starfiles(
@@ -423,6 +430,12 @@ def generate_individual_tomogram_starfiles(
 
     individual_tomograms_dfs = []
     tomo_names = []
+
+    # create the single shared placeholder once, before the pool, to avoid a concurrent-write race on it
+    if alignment_and_voxel_spacing_ids:
+        first_alignment_id = alignment_and_voxel_spacing_ids[0][0]
+        first_tiltseries = cdp_cache.get_tiltseries(cdp_cache.get_alignments(first_alignment_id)[0].tiltseries_id)[0]
+        write_tiltseries_placeholder(output_dir, first_tiltseries)
 
     with ThreadPoolExecutor(max_workers=THREAD_POOL_WORKER_COUNT) as thread_pool:
         futures = [
