@@ -301,6 +301,9 @@ def get_tomograms_df(optics_df: pd.DataFrame, output_dir: Path) -> tuple[pd.Data
         tomograms_df.at[index, "rlnTomoSizeX"] = tomo_x
         tomograms_df.at[index, "rlnTomoSizeY"] = tomo_y
         tomograms_df.at[index, "rlnTomoSizeZ"] = tomo_z
+        # zarr locator in the global table (not just individual stars) so it propagates through all jobs
+        tiltseries = cdp_cache.get_tiltseries(cdp_cache.get_alignments(row["alignment_id"])[0].tiltseries_id)[0]
+        tomograms_df.at[index, TILTSERIES_URI_RELION_COLUMN] = tiltseries.s3_omezarr_dir
 
     return tomograms_df, list(zip(tomograms_df.pop("alignment_id"), tomograms_df.pop("voxel_spacing_id")))
 

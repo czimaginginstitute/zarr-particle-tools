@@ -429,9 +429,13 @@ def _restore_zarr_source(output_dir: Path, global_df, src_base, tiltseries_relat
     if not out_tomo.exists():  # e.g. an aberrations-only run doesn't rewrite tomograms.star
         return
 
-    # original zarr locator per tomogram name (URI column, else the rlnMicrographName path)
+    # zarr locator per tomogram: prefer the global URI column, else the individual tilt star
     locator = {}
+    have_global_uri = TILTSERIES_URI_RELION_COLUMN in global_df.columns
     for _, row in global_df.iterrows():
+        if have_global_uri and pd.notna(row[TILTSERIES_URI_RELION_COLUMN]):
+            locator[str(row["rlnTomoName"])] = str(row[TILTSERIES_URI_RELION_COLUMN])
+            continue
         ip = _resolve_tiltstar(row["rlnTomoTiltSeriesStarFile"], src_base)
         indiv = read_single_table(ip)
         if TILTSERIES_URI_RELION_COLUMN in indiv.columns:
