@@ -51,6 +51,8 @@ STRICT_CASES = {
 def test_extract_strict_unmasked(case):
     cfg = STRICT_CASES[case]
     data_root = DATA_ROOTS[cfg["dataset"]]
+    if not (data_root / "particles.star").exists():
+        pytest.skip(f"local test data not available: {data_root} (requires the large Zenodo tarball)")
     output_dir = Path(f"tests/output/strict_{case}")
     if output_dir.exists():
         shutil.rmtree(output_dir)
