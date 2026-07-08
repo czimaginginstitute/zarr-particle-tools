@@ -465,18 +465,16 @@ def workflow_options():
 
 def compute_options():
     opts = [
-        click.option("--nthreads", type=int, default=16, show_default=True, help="Threads per job."),
-        click.option("--num-gpus", type=int, default=4, show_default=True, help="GPUs for GPU jobs (Refine3D)."),
+        click.option("--nthreads", type=int, default=5, show_default=True, help="RELION threads per MPI rank (--j)."),
+        click.option("--num-gpus", type=int, default=2, show_default=True, help="GPUs for GPU jobs (Refine3D)."),
         click.option(
             "--gpu-constraint",
             type=str,
             default=None,
             help="SLURM GPU architecture constraint (e.g. a100 or 'a100|h100').",
         ),
-        click.option(
-            "--cpu-constraint", type=str, default="16,8", show_default=True, help="CPUs,mem-per-cpu-GB (e.g. 16,8)."
-        ),
-        click.option("--timeout", type=int, default=120, show_default=True, help="submitit per-trial timeout [hours]."),
+        click.option("--cpu-constraint", type=str, default="16,12", show_default=True, help="CPUs,mem-per-cpu-GB)."),
+        click.option("--timeout", type=int, default=12, show_default=True, help="submitit per-trial timeout [hours]."),
         click.option("--num-days", type=int, default=14, show_default=True, help="SLURM walltime request [days]."),
     ]
     return cli_options.compose_options(opts)
