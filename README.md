@@ -147,6 +147,12 @@ zarr-particle-reconstruct copick-data-portal --help
 ## Pytest
 To ensure that the subtomogram extraction matches RELION's subtomogram extraction, we have a set of tests that compare the output of this script with RELION 5.0's output and ensure that they match within reasonable numerical precision. float16 data has a more relaxed tolerance due to the reduced precision of the data type, and the real experimental data has a more relaxed tolerance due to the noisier nature of the data.
 
+> [!NOTE]
+> On shared/login nodes, avoid `pytest -n auto`: it spawns a worker per core and each worker's BLAS pool adds threads, oversubscribing the CPU. Pin BLAS threads and use a modest worker count instead:
+> ```bash
+> OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 pytest -n 4 -q
+> ```
+
 To download the test data and run it yourself:
 
 ```
