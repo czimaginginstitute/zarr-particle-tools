@@ -474,7 +474,7 @@ def compute_options():
             help="SLURM GPU architecture constraint (e.g. a100 or 'a100|h100').",
         ),
         click.option("--cpu-constraint", type=str, default="16,12", show_default=True, help="CPUs,mem-per-cpu-GB)."),
-        click.option("--timeout", type=int, default=12, show_default=True, help="submitit per-trial timeout [hours]."),
+        click.option("--timeout", type=int, default=24, show_default=True, help="submitit per-trial timeout [hours]."),
         click.option("--num-days", type=int, default=14, show_default=True, help="SLURM walltime request [days]."),
     ]
     return cli_options.compose_options(opts)
