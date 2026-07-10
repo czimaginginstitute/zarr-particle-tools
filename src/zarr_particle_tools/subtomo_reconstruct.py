@@ -253,7 +253,7 @@ def reconstruct_single_tiltseries(
     defocus_angle = individual_tiltseries_df["rlnDefocusAngle"].values
     doses = individual_tiltseries_df["rlnMicrographPreExposure"].values
     ctf_scalefactor = (
-        individual_tiltseries_df["rlnCtfScalefactor"]
+        individual_tiltseries_df["rlnCtfScalefactor"].values
         if "rlnCtfScalefactor" in individual_tiltseries_df.columns
         else [1.0] * len(individual_tiltseries_df)
     )

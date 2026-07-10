@@ -154,7 +154,7 @@ def process_tiltseries(
     defocus_angle = individual_tiltseries_df["rlnDefocusAngle"].values
     doses = individual_tiltseries_df["rlnMicrographPreExposure"].values
     ctf_scalefactor = (
-        individual_tiltseries_df["rlnCtfScalefactor"]
+        individual_tiltseries_df["rlnCtfScalefactor"].values
         if "rlnCtfScalefactor" in individual_tiltseries_df.columns
         else [1.0] * len(individual_tiltseries_df)
     )
@@ -730,7 +730,7 @@ def parse_extract_data_portal_subtomograms(
     particles_count, total_skipped_count, individual_tiltseries_count = extract_subtomograms(
         particles_starfile=particles_path,
         trajectories_starfile=None,  # No trajectories data in Data Portal
-        tiltseries_relative_dir=Path("./"),
+        tiltseries_relative_dir=output_dir.parent,  # star paths are relative to project root, not cwd
         tomograms_starfile=tomograms_path,
         box_size=box_size,
         crop_size=crop_size,
@@ -754,7 +754,7 @@ def parse_extract_data_portal_subtomograms(
     return (
         output_dir / "particles.star",
         None,
-        Path("./"),  # tiltseries star paths already include output_dir; resolve from cwd
+        output_dir.parent,
         tomograms_path,
         output_dir / "optimisation_set.star",
     )
@@ -817,7 +817,7 @@ def parse_extract_data_portal_copick_subtomograms(
     particles_count, total_skipped_count, individual_tiltseries_count = extract_subtomograms(
         particles_starfile=particles_path,
         trajectories_starfile=None,  # No trajectories data in Data Portal
-        tiltseries_relative_dir=Path("./"),
+        tiltseries_relative_dir=output_dir.parent,  # star paths are relative to project root, not cwd
         tomograms_starfile=tomograms_path,
         box_size=box_size,
         crop_size=crop_size,
@@ -841,7 +841,7 @@ def parse_extract_data_portal_copick_subtomograms(
     return (
         output_dir / "particles.star",
         None,
-        Path("./"),  # tiltseries star paths already include output_dir; resolve from cwd
+        output_dir.parent,
         tomograms_path,
         output_dir / "optimisation_set.star",
     )

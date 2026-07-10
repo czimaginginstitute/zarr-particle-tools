@@ -225,6 +225,7 @@ def write_tiltseries_to_mrc(
     out_path: str | Path,
     voxel_size: float | None = None,
     overwrite: bool = True,
+    sections: "list[int] | None" = None,
 ) -> Path:
     """
     Stream a tilt-series ``DataReader`` into an MRC image stack (float32, MRC mode 2) written to
@@ -245,12 +246,18 @@ def write_tiltseries_to_mrc(
         The output path as a ``Path``.
     """
     out_path = Path(out_path)
-    nz, ny, nx = (int(d) for d in reader.data.shape)
+    full_nz, ny, nx = (int(d) for d in reader.data.shape)
+    # sections: 0-based section indices to write, in order (for dark-frame-trimmed tilt series). None = all.
+    idx = list(range(full_nz)) if sections is None else [int(s) for s in sections]
+    subset = idx != list(range(full_nz))
+    nz = len(idx)
     with mrcfile.new_mmap(str(out_path), shape=(nz, ny, nx), mrc_mode=2, overwrite=overwrite) as mrc:
         # Mark as an image stack (ispg=0, mz=1), matching how a tilt series is stored.
         mrc.set_image_stack()
         if reader.is_zarr and isinstance(reader.data, da.Array):
             source = reader.data
+            if subset:  # keep only the referenced sections, in row order
+                source = source[np.array(idx)]
             if source.dtype != np.float32:
                 logger.warning(
                     f"Tilt series {reader.locator} is stored as {source.dtype}; casting to float32 "
@@ -261,6 +268,8 @@ def write_tiltseries_to_mrc(
             da.store(source, mrc.data)
         else:
             arr = np.asarray(reader.data)
+            if subset:
+                arr = arr[np.array(idx)]
             if arr.dtype != np.float32:
                 logger.warning(
                     f"Tilt series {reader.locator} is stored as {arr.dtype}; casting to float32 "
