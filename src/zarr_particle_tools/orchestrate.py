@@ -198,8 +198,6 @@ def run_py2rely_parameters(
     nclasses: int | None,
     ninit_models: int | None,
     max_dose: float | None,
-    mask_percentile: float = 98.5,
-    mask_extend: int = 3,
 ) -> Path:
     cmd = [
         "py2rely",
@@ -225,10 +223,6 @@ def run_py2rely_parameters(
         binning_list,
         "--nthreads",
         nthreads,
-        "--mask-percentile",
-        mask_percentile,
-        "--mask-extend",
-        mask_extend,
     ]
     if denovo_generation:
         cmd.append("--denovo-generation")
@@ -311,8 +305,6 @@ class Py2RelyConfig:
     num_gpus: int = 2
     gpu_constraint: str | None = None
     cpu_constraint: str = "16,12"
-    mask_percentile: float = 98.5
-    mask_extend: int = 3
     timeout: int = 24
     num_days: int = 14
     prepare_only: bool = False
@@ -342,8 +334,6 @@ def _prepare_and_submit(
         nclasses=cfg.nclasses,
         ninit_models=cfg.ninit_models,
         max_dose=cfg.max_dose,
-        mask_percentile=cfg.mask_percentile,
-        mask_extend=cfg.mask_extend,
     )
     pipeline_sh = run_py2rely_pipeline(
         output_dir=output_dir,
@@ -484,20 +474,6 @@ def compute_options():
             help="SLURM GPU architecture constraint (e.g. a100 or 'a100|h100').",
         ),
         click.option("--cpu-constraint", type=str, default="16,12", show_default=True, help="CPUs,mem-per-cpu-GB)."),
-        click.option(
-            "--mask-percentile",
-            type=float,
-            default=98.5,
-            show_default=True,
-            help="Percentile of the low-passed map for auto mask isocontour (every MaskCreate; lower=looser, e.g. 92 for weak structures).",
-        ),
-        click.option(
-            "--mask-extend",
-            type=int,
-            default=3,
-            show_default=True,
-            help="Pixels to extend the binary mask before the soft edge (relion_mask_create --extend_inimask; larger=more generous).",
-        ),
         click.option("--timeout", type=int, default=24, show_default=True, help="submitit per-trial timeout [hours]."),
         click.option("--num-days", type=int, default=14, show_default=True, help="SLURM walltime request [days]."),
     ]
@@ -547,8 +523,6 @@ _CONFIG_KEYS = (
     "num_gpus",
     "gpu_constraint",
     "cpu_constraint",
-    "mask_percentile",
-    "mask_extend",
     "timeout",
     "num_days",
     "prepare_only",
