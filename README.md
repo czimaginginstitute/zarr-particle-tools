@@ -220,6 +220,12 @@ curl -L --fail --retry 5 --retry-delay 5 --continue-at - \
 for f in *.tar.gz; do tar -xzf "$f"; done
 ```
 
+> [!NOTE]
+> On shared/login nodes, avoid `pytest -n auto`: it spawns a worker per core and each worker's BLAS pool adds threads, oversubscribing the CPU. Pin BLAS threads and use a modest worker count instead:
+> ```bash
+> OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 pytest -n 4 -q
+> ```
+
 ## Known Limitations
 If you would like to see a feature added (on or off this limitation list), please open an issue!
 
