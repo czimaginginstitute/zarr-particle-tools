@@ -159,15 +159,7 @@ def test_cli_baseline(validate_starfile):
     # validate rlnTomoTiltSeriesStarFile separately; it is relative to the RELION project root
     tomograms_starfile_data = starfile.read(tomograms_starfile)
     assert (output_dir.parent / tomograms_starfile_data["rlnTomoTiltSeriesStarFile"].iloc[0]).exists()
-    # tomoTiltSeriesURI is propagated up into tomograms.star, which the reference predates; check it
-    # against the per-tiltseries reference instead of the tomograms reference
-    tiltseries_reference_data = starfile.read(tiltseries_reference_starfile)
-    assert set(tomograms_starfile_data["tomoTiltSeriesURI"]) == set(tiltseries_reference_data["tomoTiltSeriesURI"])
-    validate_starfile(
-        tomograms_starfile,
-        tomograms_reference_starfile,
-        ignore_columns=["rlnTomoTiltSeriesStarFile", "tomoTiltSeriesURI"],
-    )
+    validate_starfile(tomograms_starfile, tomograms_reference_starfile)
     validate_starfile(particles_starfile, particles_reference_starfile)
     # validate rlnMicrographName separately; its path is relative to the RELION project root
     tiltseries_starfile_data = starfile.read(tiltseries_starfile)
@@ -177,4 +169,4 @@ def test_cli_baseline(validate_starfile):
     assert before_at == list(range(1, len(before_at) + 1))
     assert len(after_at) == 1
     assert (output_dir.parent / after_at.pop()).exists()
-    validate_starfile(tiltseries_starfile, tiltseries_reference_starfile, ignore_columns=["rlnMicrographName"])
+    validate_starfile(tiltseries_starfile, tiltseries_reference_starfile)

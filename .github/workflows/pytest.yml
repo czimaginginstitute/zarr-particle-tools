@@ -13,6 +13,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Zenodo record hosting the test data tarballs. Bump this when publishing a new version; it also
+  # keys the cache, so a stale cache is not reused across record versions.
+  ZENODO_RECORD: "21780175"
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -50,7 +55,7 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: tests/data
-          key: zenodo-17529862-small
+          key: zenodo-${{ env.ZENODO_RECORD }}-small
 
       - name: Download test data from Zenodo (cache miss)
         if: steps.cache.outputs.cache-hit != 'true'
@@ -63,18 +68,18 @@ jobs:
           # Download both files with retries and resume
           # curl -L --fail --retry 5 --retry-delay 5 --continue-at - \
           #   -o zarr_particle_tools_test_data_large.tar.gz \
-          #   "https://zenodo.org/records/17529862/files/zarr_particle_tools_test_data_large.tar.gz?download=1"
+          #   "https://zenodo.org/records/${{ env.ZENODO_RECORD }}/files/zarr_particle_tools_test_data_large.tar.gz?download=1"
 
           curl -L --fail --retry 5 --retry-delay 5 --continue-at - \
             -o zarr_particle_tools_test_data_small.tar.gz \
-            "https://zenodo.org/records/17529862/files/zarr_particle_tools_test_data_small.tar.gz?download=1"
+            "https://zenodo.org/records/${{ env.ZENODO_RECORD }}/files/zarr_particle_tools_test_data_small.tar.gz?download=1"
 
       - name: Save test data to cache
         if:  ${{ matrix.cache && steps.cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: tests/data
-          key: zenodo-17529862-small
+          key: zenodo-${{ env.ZENODO_RECORD }}-small
 
       - name: Extract test data from tar.gz files
         run: |
