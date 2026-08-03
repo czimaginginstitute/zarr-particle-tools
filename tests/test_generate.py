@@ -32,6 +32,8 @@ RESOLVE_PARAM_CONFIGS = [
         "expected_annotation_file_ids": [74186],
         "run_ids": [16463],
         "annotation_names": ["cytosolic ribosome"],
+        # ground truth only; the portal has since gained non-GT picks on this run
+        "ground_truth": True,
     },
     {
         "test_id": "run_16463_ribosome_simple_nomatch",
@@ -45,6 +47,8 @@ RESOLVE_PARAM_CONFIGS = [
         "run_ids": [16467],
         "annotation_names": ["beta-gal"],
         "inexact_match": True,
+        # ground truth only; the portal has since gained non-GT picks on this run
+        "ground_truth": True,
     },
     {
         "test_id": "run_16468_ferritin_precise",
@@ -108,6 +112,8 @@ def test_cli_baseline(validate_starfile):
         "cytosolic ribosome",
         "--output-dir",
         str(output_dir),
+        # ground truth only, to match the static reference starfiles
+        "--ground-truth",
         "--debug",
     ]
 
