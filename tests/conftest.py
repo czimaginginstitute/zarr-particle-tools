@@ -59,11 +59,10 @@ def validate_starfile():
             star_file_data = {"data": star_file_data}
 
         if ignore_columns is not None:
+            # drop from each side independently; a column may be present in only one of them
             for key in expected_data:
-                for col in ignore_columns:
-                    if col in expected_data[key].columns:
-                        expected_data[key] = expected_data[key].drop(columns=[col])
-                        star_file_data[key] = star_file_data[key].drop(columns=[col])
+                expected_data[key] = expected_data[key].drop(columns=ignore_columns, errors="ignore")
+                star_file_data[key] = star_file_data[key].drop(columns=ignore_columns, errors="ignore")
 
         assert type(star_file_data) is type(
             expected_data
