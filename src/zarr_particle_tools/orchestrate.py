@@ -316,10 +316,21 @@ class Py2RelyConfig:
 
 
 def read_tomograms_df(tomograms_star: Path):
-    """Read a tomograms.star into a single DataFrame, whether or not starfile returns a block dict."""
+    """
+    Read a tomograms.star into a single DataFrame. starfile returns a bare DataFrame for a
+    single-block file; a multi-block file must carry the RELION `global` block, matching how the
+    rest of the codebase reads these (subtomo_relion_job.read_global_tomograms, subtomo_extract).
+    """
     df = starfile.read(tomograms_star)
     if isinstance(df, dict):
-        df = df.get("global", next(iter(df.values())))
+        if "global" not in df:
+            raise click.ClickException(
+                f"{tomograms_star} has blocks {sorted(df)} but no `global` block; expected a RELION "
+                "tomograms.star with a data_global block."
+            )
+        df = df["global"]
+    if df is None or len(df.columns) == 0:
+        raise click.ClickException(f"{tomograms_star} has no tabular data.")
     return df
 
 
@@ -337,6 +348,11 @@ def pixel_size_from_tomograms_star(tomograms_star: Path, override: float | None 
             f"{tomograms_star} has no rlnTomoTiltSeriesPixelSize column; pass --pixel-size explicitly."
         )
     values = sorted({round(float(v), 6) for v in df["rlnTomoTiltSeriesPixelSize"]})
+    if any(not math.isfinite(v) or v <= 0 for v in values):
+        raise click.ClickException(
+            f"{tomograms_star} has a non-positive or non-finite rlnTomoTiltSeriesPixelSize {values}; "
+            "pass --pixel-size explicitly."
+        )
     if len(values) != 1:
         raise click.ClickException(
             f"{tomograms_star} reports multiple pixel sizes {values} (mixed optics is not supported yet). "
@@ -347,16 +363,85 @@ def pixel_size_from_tomograms_star(tomograms_star: Path, override: float | None 
 
 
 def _require_under_output_dir(star: Path, flag: str, output_dir: Path) -> Path:
-    """py2rely resolves star paths relative to the project dir, so inputs must live inside it."""
-    star = Path(star).resolve()
-    if not star.is_relative_to(output_dir):
+    """
+    py2rely resolves star paths relative to the project dir, so inputs must live inside it.
+
+    Accepts the star if either its absolute or its symlink-resolved path sits under either form of
+    output_dir, so symlinking a star into <output_dir>/input works (py2rely just opens the relative
+    path) and a symlinked output_dir does not spuriously reject a real file.
+    """
+    star = Path(star).absolute()
+    candidates = (star, star.resolve())
+    for candidate in candidates:
+        if candidate.is_relative_to(output_dir):
+            return candidate
+    # output_dir itself may be a symlink; re-express the hit in the caller's terms so that the
+    # relative_to() in _prepare_and_submit still succeeds
+    resolved_base = output_dir.resolve()
+    for candidate in candidates:
+        if candidate.is_relative_to(resolved_base):
+            return output_dir / candidate.relative_to(resolved_base)
+    raise click.ClickException(
+        f"{flag} must be inside --output-dir ({output_dir}), because py2rely resolves star paths "
+        f"relative to the project directory. Got {star}.\nGenerate or copy it under "
+        f"{output_dir / 'input'} first, e.g.:\n"
+        f"  zarr-particle-tomograms data-portal --output-dir {output_dir / 'input'} ..."
+    )
+
+
+def _optics_from_tomograms_star(tomograms_star: Path):
+    """Pull the optics columns out of a tomograms.star, naming anything the file is missing."""
+    df = read_tomograms_df(tomograms_star)
+    missing = [c for c in OPTICS_DF_COLUMNS if c not in df.columns]
+    if missing:
         raise click.ClickException(
-            f"{flag} must be inside --output-dir ({output_dir}), because py2rely resolves star paths "
-            f"relative to the project directory. Got {star}.\nGenerate or copy it under "
-            f"{output_dir / 'input'} first, e.g.:\n"
-            f"  zarr-particle-tomograms data-portal --output-dir {output_dir / 'input'} ..."
+            f"{tomograms_star} is missing the optics column(s) {missing}. A RELION-native "
+            "tomograms.star keeps the integer rlnOpticsGroup in its particles' data_optics block "
+            "rather than data_global; use a tomograms.star written by zarr-particle-tomograms, or "
+            "add the missing column(s)."
         )
-    return star
+    return df[OPTICS_DF_COLUMNS].drop_duplicates().reset_index(drop=True)
+
+
+def _uses_portal_run_naming(
+    copick_run_names: list[str], optics_df, tomograms_label: str = "the tomograms.star"
+) -> bool:
+    """
+    Decide how copick run names map onto rlnOpticsGroupName: exactly (a locally-written
+    tomograms.star) or by containment (portal naming, e.g. run 33379 -> run_33379_tiltseries_16106).
+
+    Deliberately strict: every run must resolve by exactly one of the two schemes, and portal naming
+    additionally requires all-numeric run names, or we fail rather than guess.
+    """
+    group_names = list(optics_df["rlnOpticsGroupName"].astype(str))
+    if len(optics_df) == 1:
+        return False  # a single optics group is applied to everything, so naming is irrelevant
+    runs = [str(r) for r in copick_run_names]
+    if all(r in group_names for r in runs):
+        logger.info("Matching %d copick run(s) to optics groups by exact name.", len(runs))
+        return False
+
+    # anchored on the run_<id>_ prefix the portal generator emits: a bare substring test would let a
+    # run ID collide with another tomogram's tiltseries ID (both are 5-digit portal IDs)
+    def portal_matches(run: str) -> list:
+        return [g for g in group_names if g.startswith(f"run_{run}_")]
+
+    portal_style = all(r.isdigit() for r in runs) and all(len(portal_matches(r)) == 1 for r in runs)
+    injective = len({portal_matches(r)[0] for r in runs}) == len(runs) if portal_style else False
+    if portal_style and injective:
+        logger.info(
+            "Matching %d copick run(s) to optics groups by Data Portal run-ID naming (e.g. %s -> %s).",
+            len(runs),
+            runs[0],
+            portal_matches(runs[0])[0],
+        )
+        return True
+    unresolved = [r for r in runs if r not in group_names and len(portal_matches(r)) != 1] or runs
+    raise click.ClickException(
+        f"Cannot map copick run name(s) {unresolved[:5]} onto the {len(group_names)} optics group(s) in "
+        f"{tomograms_label}. Run names must either equal an rlnOpticsGroupName exactly, or be Data Portal "
+        "run IDs each matching the run_<id>_ prefix of exactly one distinct optics group."
+    )
 
 
 def orchestrate_local(
@@ -406,7 +491,7 @@ def orchestrate_copick_local(
         )
         copick_run_names = [p.run.name for p in picks]
 
-    optics_df = read_tomograms_df(tomograms_star)[OPTICS_DF_COLUMNS].drop_duplicates().reset_index(drop=True)
+    optics_df = _optics_from_tomograms_star(tomograms_star)
     particles_df = copick_generate.copick_picks_to_starfile(
         copick_config,
         copick_name,
@@ -414,7 +499,7 @@ def orchestrate_copick_local(
         copick_user_id,
         copick_run_names,
         optics_df,
-        data_portal_runs=False,
+        data_portal_runs=_uses_portal_run_naming(copick_run_names, optics_df, str(tomograms_star)),
     )
     particles_star = input_dir / "particles.star"
     starfile.write({"optics": optics_df, "particles": particles_df}, particles_star)

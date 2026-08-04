@@ -154,11 +154,16 @@ def cmd_local(**kwargs):
 @cli_options.local_options()
 @cli_options.ctfrefine_options()
 @cli_options.data_portal_options()
+@cli_options.job_dry_run_option
 def cmd_data_portal(**kwargs):
     setup_logging(kwargs.pop("debug", False))
+    dry_run = kwargs.pop("dry_run", False)
     reject_optimisation_set(kwargs.pop("optimisation_set_starfile", None), "data-portal")
     portal_args, kwargs = cli_options.split_data_portal_args(kwargs)
     kwargs["tomograms_starfile"] = tomograms_star_for_job(kwargs["output_dir"], data_portal_args=portal_args)
+    if dry_run:
+        logger.info("Dry run: generated %s; skipping RELION.", kwargs["tomograms_starfile"])
+        return kwargs["tomograms_starfile"]
     run_ctf_refine(**kwargs)
 
 
@@ -171,11 +176,16 @@ def cmd_data_portal(**kwargs):
 @cli_options.ctfrefine_options()
 @cli_options.copick_options()
 @cli_options.data_portal_copick_options()
+@cli_options.job_dry_run_option
 def cmd_copick_data_portal(**kwargs):
     setup_logging(kwargs.pop("debug", False))
+    dry_run = kwargs.pop("dry_run", False)
     reject_optimisation_set(kwargs.pop("optimisation_set_starfile", None), "copick-data-portal")
     copick_args, kwargs = cli_options.split_copick_args(kwargs)
     kwargs["tomograms_starfile"] = tomograms_star_for_job(kwargs["output_dir"], copick_args=copick_args)
+    if dry_run:
+        logger.info("Dry run: generated %s; skipping RELION.", kwargs["tomograms_starfile"])
+        return kwargs["tomograms_starfile"]
     run_ctf_refine(**kwargs)
 
 

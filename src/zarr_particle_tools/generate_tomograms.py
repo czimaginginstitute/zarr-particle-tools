@@ -12,6 +12,7 @@ import logging
 from pathlib import Path
 
 import click
+import starfile
 
 import zarr_particle_tools.cli.options as cli_options
 import zarr_particle_tools.generate.cdp_generate_starfiles as cdp_generate
@@ -70,8 +71,46 @@ def tomograms_star_for_job(output_dir, data_portal_args=None, copick_args=None) 
     """
     input_dir = Path(output_dir) / JOB_INPUT_SUBDIR
     if copick_args is not None:
-        return generate_copick_data_portal_tomograms(output_dir=input_dir, **copick_args)
-    return generate_data_portal_tomograms(output_dir=input_dir, **(data_portal_args or {}))
+        path = generate_copick_data_portal_tomograms(output_dir=input_dir, **copick_args)
+    else:
+        path = generate_data_portal_tomograms(output_dir=input_dir, **(data_portal_args or {}))
+    return _absolutize_tiltseries_paths(path)
+
+
+def _absolutize_tiltseries_paths(tomograms_star: Path) -> Path:
+    """
+    Rewrite rlnTomoTiltSeriesStarFile to absolute paths.
+
+    The generator writes it relative to the *project root* (<output_dir>.parent), which is right for
+    the pipeline (py2rely runs with cwd=<output_dir>). The CTF-refine / polish jobs get no such cwd:
+    they try the value cwd-relative and then relative to the tomograms.star's own directory, so a
+    relative value either misses entirely (landing on <output_dir>/input/input/tiltseries/...) or, if
+    a same-named tiltseries/ exists under the cwd, silently resolves to the wrong job's tilt star.
+    Absolute paths remove both hazards; the job driver rewrites this column for its own outputs
+    anyway, so nothing downstream depends on it staying relative.
+    """
+    data = starfile.read(tomograms_star)
+    blocks = data if isinstance(data, dict) else {getattr(data, "name", "global") or "global": data}
+    base = tomograms_star.parent
+    changed = False
+    for key, df in blocks.items():
+        if df is None or "rlnTomoTiltSeriesStarFile" not in getattr(df, "columns", []):
+            continue
+
+        def absolutize(value, base=base):
+            p = Path(str(value))
+            if p.is_absolute():
+                return str(p)
+            # the generator prefixes the output dir's own name, so that prefix is relative to base.parent
+            root = base.parent if p.parts and p.parts[0] == base.name else base
+            return str((root / p).resolve())
+
+        blocks[key] = df.assign(rlnTomoTiltSeriesStarFile=df["rlnTomoTiltSeriesStarFile"].map(absolutize))
+        changed = True
+    if changed:
+        # write back through the block dict so the RELION-required `global` block name survives
+        starfile.write(blocks, tomograms_star)
+    return tomograms_star
 
 
 def reject_optimisation_set(optimisation_set_starfile, subcommand: str) -> None:

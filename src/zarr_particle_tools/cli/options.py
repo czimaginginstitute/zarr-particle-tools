@@ -56,6 +56,12 @@ def extract_options():
         click.option(
             "--write-fourier", is_flag=True, help="Write Fourier space stacks (.npy) in addition to real space (.mrcs)."
         ),
+        click.option(
+            "--dont-apply-offsets",
+            is_flag=True,
+            help="Do not fold rlnOriginX/Y/ZAngst into the particle coordinates (RELION "
+            "--dont_apply_offsets); by default they are applied.",
+        ),
     ]
     return compose_options(opts)
 
@@ -109,6 +115,14 @@ def dry_run_option(f):
         "--dry-run",
         is_flag=True,
         help="If set, do not extract subtomograms, only generate the starfiles needed for extraction.",
+    )(f)
+
+
+def job_dry_run_option(f):
+    return click.option(
+        "--dry-run",
+        is_flag=True,
+        help="If set, only generate the tomograms.star and stop before running RELION.",
     )(f)
 
 
@@ -477,6 +491,20 @@ def reconstruct_options():
             default=0.01,
             show_default=True,
             help="Ignore shells for which the dose weight falls below this value.",
+        ),
+        click.option(
+            "--snr",
+            type=float,
+            default=None,
+            help="Assumed signal-to-noise ratio (RELION --SNR). Given, CTF correction uses a Wiener "
+            "offset of 1/SNR; omitted, it uses RELION's radial-average heuristic.",
+        ),
+        click.option(
+            "--taper",
+            type=float,
+            default=10.0,
+            show_default=True,
+            help="Spherical soft-mask falloff in pixels for the final volume (RELION --taper).",
         ),
         click.option(
             "--symmetry",

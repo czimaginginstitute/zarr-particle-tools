@@ -48,17 +48,20 @@ uv pip install zarr-particle-tools
 
 ### Prerequisites for the pipeline
 
-The individual jobs need only this package. The **orchestrator** additionally needs:
+Extraction and reconstruction need only this package; ctfrefine and polish additionally need the
+`relion_tomo_*` binaries on `PATH`. The **orchestrator** needs all of:
 
 - **py2rely** on your `PATH`
   ([README](https://github.com/chanzuckerberg/py2rely/blob/main/README.md)).
 - **RELION 5** with the `relion_*` binaries on `PATH` (source its `setup-env.sh`, or add its `build/bin`).
-- This package installed **editable** (`uv pip install -e .`) so its `ccpem_pipeliner.jobs` entry points
-  register — that registration is what lets py2rely pick the zarr jobs over stock RELION.
+- This package installed with pip (editable or not) so its `ccpem_pipeliner.jobs` entry points register —
+  that registration is what lets py2rely pick the zarr jobs over stock RELION.
 - **[copick](https://github.com/copick/copick)**, for the `copick-*` variants only.
 - A **SLURM** cluster: py2rely submits via `sbatch`.
 
-`zarr-particle-pipeline preflight` verifies all of this; the orchestrator also runs it automatically.
+`zarr-particle-pipeline preflight` verifies py2rely, the RELION binaries, ccpem-pipeliner and the zarr job
+registration (add `--copick` to include copick; SLURM availability is not checked). The orchestrator also
+runs it automatically.
 
 ## Commands
 
@@ -158,8 +161,8 @@ zarr-particle-extract local \
   --box-size 16 --bin 4
 ```
 
-Add `--crop-size 64` to crop a larger box after extraction, `--no-ctf` to skip CTF premultiplication, and
-`--no-circle-crop` for noisier real data:
+Extract a larger box and crop it back down with `--crop-size` (which must be even and no larger than
+`--box-size`), `--no-ctf` to skip CTF premultiplication, and `--no-circle-crop` for noisier real data:
 
 ```bash
 zarr-particle-extract local \
@@ -343,13 +346,13 @@ If you would like to see a feature added, on or off this list, please open an is
 - Does not support 3D volume extraction
 - Does not support min_frames or max_dose flags
 - Does not support --apply_orientations
-- Does not support --dont_apply_offsets
+- Does not support --dont_apply_offsets for reconstruction (extraction does, via `--dont-apply-offsets`)
 - Does not support cone flags (--cone_weight, --cone_angle, --cone_sig0)
 - Does not support anisotropic magnification matrix (EMDL_IMAGE_MAG_MATRIX_00, EMDL_IMAGE_MAG_MATRIX_01, EMDL_IMAGE_MAG_MATRIX_10, EMDL_IMAGE_MAG_MATRIX_11)
 - Does not support 2D deformations (EMDL_TOMO_DEFORMATION_GRID_SIZE_X, EMDL_TOMO_DEFORMATION_GRID_SIZE_Y, EMDL_TOMO_DEFORMATION_TYPE, EMDL_TOMO_DEFORMATION_COEFFICIENTS)
 
 ### Reconstruction
-- Does not (yet) support an SNR value (`--snr`) flag
+- Only reproduces RELION's `--no_circle_crop` mode; its default circle cropping is not implemented
 - Does not support `weight_*.mrc` output files
 - Does not support helical symmetry
 - Does not support backup / only-do-unfinished features

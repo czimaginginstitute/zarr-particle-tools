@@ -282,6 +282,29 @@ def radial_avg_half_3d_linear(volume: np.ndarray) -> np.ndarray:
         return avg_real + 1j * avg_imag
 
 
+def ctf_correct_3d_wiener(
+    real_space_volume: np.ndarray,
+    weights_fourier_volume: np.ndarray,
+    wiener_offset: float,
+) -> np.ndarray:
+    """
+    Correct a 3D volume for CTF effects with a plain Wiener offset. Port of RELION's
+    Reconstruction::ctfCorrect3D_Wiener, which divides by (weights + offset) with offset = 1/SNR and,
+    unlike the heuristic, applies no radial-average floor and no Nyquist cutoff.
+
+    Args:
+        real_space_volume (np.ndarray): Real-space volume (box_size, box_size, box_size).
+        weights_fourier_volume (np.ndarray): Half-volume fourier-space weights (box_size, box_size, box_size // 2 + 1).
+        wiener_offset (float): The Wiener constant, 1 / SNR.
+
+    Returns:
+        np.ndarray: CTF-corrected real-space volume (box_size, box_size, box_size).
+    """
+    corrected_fourier_volume = np.fft.rfftn(real_space_volume, norm="ortho")
+    corrected_fourier_volume = corrected_fourier_volume / (weights_fourier_volume + wiener_offset)
+    return np.fft.irfftn(corrected_fourier_volume, norm="ortho")
+
+
 def ctf_correct_3d_heuristic(
     real_space_volume: np.ndarray,
     weights_fourier_volume: np.ndarray,

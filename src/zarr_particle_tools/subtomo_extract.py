@@ -43,9 +43,17 @@ from zarr_particle_tools.generate.copick_generate_starfiles import (
 
 logger = logging.getLogger(__name__)
 
+# RELION hardcodes the 2D circle-crop falloff (EDGE_FALLOFF in its extraction.h); its --taper
+# option only affects 3D volumes, so there is deliberately no --taper here.
+EDGE_FALLOFF = 5.0
+
 
 def update_particles_df(
-    particles_df: pd.DataFrame, output_folder: Path, all_visible_sections_relion_column: list, skipped_particles: set
+    particles_df: pd.DataFrame,
+    output_folder: Path,
+    all_visible_sections_relion_column: list,
+    skipped_particles: set,
+    offsets_applied: bool = True,
 ) -> pd.DataFrame:
     """Updates the particles DataFrame to include the new columns and values for RELION format."""
     updated_particles_df = particles_df.copy()
@@ -70,10 +78,12 @@ def update_particles_df(
         ]
     )
     updated_particles_df["rlnTomoVisibleFrames"] = all_visible_sections_relion_column
-    # offsets are applied to rlnCenteredCoordinateXAngst/YAngst/ZAngst beforehand if they exist, so they can be removed here
-    updated_particles_df["rlnOriginXAngst"] = 0.0
-    updated_particles_df["rlnOriginYAngst"] = 0.0
-    updated_particles_df["rlnOriginZAngst"] = 0.0
+    if offsets_applied:
+        # already folded into rlnCenteredCoordinate*Angst, so zero them as RELION does. When they were
+        # NOT applied they must be preserved, or the refined translation is lost entirely.
+        updated_particles_df["rlnOriginXAngst"] = 0.0
+        updated_particles_df["rlnOriginYAngst"] = 0.0
+        updated_particles_df["rlnOriginZAngst"] = 0.0
 
     return updated_particles_df
 
@@ -90,6 +100,7 @@ def process_tiltseries(
     no_ctf: bool,
     circle_precrop: bool,
     no_circle_crop: bool,
+    dont_apply_offsets: bool,
     no_ic: bool,
     normalize_bin: bool,
     write_fourier: bool,
@@ -125,9 +136,9 @@ def process_tiltseries(
 
     # projection-relevant variables
     pre_bin_background_mask = circular_mask(pre_bin_box_size, pre_bin_box_size) == 0.0
-    pre_bin_soft_mask = circular_soft_mask(pre_bin_box_size, pre_bin_box_size, falloff=5.0)
+    pre_bin_soft_mask = circular_soft_mask(pre_bin_box_size, pre_bin_box_size, falloff=EDGE_FALLOFF)
     background_mask = circular_mask(box_size, crop_size) == 0.0
-    soft_mask = circular_soft_mask(box_size, crop_size, falloff=5.0)
+    soft_mask = circular_soft_mask(box_size, crop_size, falloff=EDGE_FALLOFF)
     tiltseries_pixel_size = tiltseries_row_entry["rlnTomoTiltSeriesPixelSize"]
     tiltseries_x = tiltseries_datareader.data.shape[2]
     tiltseries_y = tiltseries_datareader.data.shape[1]
@@ -317,7 +328,11 @@ def process_tiltseries(
             future.result()
 
     updated_filtered_particles_df = update_particles_df(
-        filtered_particles_df, output_folder, all_visible_sections_relion_column, skipped_particles
+        filtered_particles_df,
+        output_folder,
+        all_visible_sections_relion_column,
+        skipped_particles,
+        offsets_applied=not dont_apply_offsets,
     )
 
     end_time = time.time()
@@ -383,6 +398,7 @@ def extract_subtomograms(
     no_ctf: bool = False,
     circle_precrop: bool = False,
     no_circle_crop: bool = False,
+    dont_apply_offsets: bool = False,
     no_ic: bool = False,
     normalize_bin: bool = True,
     write_fourier: bool = False,
@@ -404,7 +420,9 @@ def extract_subtomograms(
 
     logger.debug(f"Starting subtomogram extraction, reading file {particles_starfile} and {tomograms_starfile}")
     particles_data = starfile.read(particles_starfile)
-    particles_df = apply_offsets_to_coordinates(particles_data["particles"])
+    particles_df = particles_data["particles"]
+    if not dont_apply_offsets:
+        particles_df = apply_offsets_to_coordinates(particles_df)
     optics_df = particles_data["optics"]
     trajectories_dict = starfile.read(trajectories_starfile) if trajectories_starfile else None
     tomograms_data = starfile.read(tomograms_starfile)
@@ -437,6 +455,7 @@ def extract_subtomograms(
         "no_ctf": no_ctf,
         "circle_precrop": circle_precrop,
         "no_circle_crop": no_circle_crop,
+        "dont_apply_offsets": dont_apply_offsets,
         "no_ic": no_ic,
         "normalize_bin": normalize_bin,
         "write_fourier": write_fourier,
@@ -497,6 +516,7 @@ def parse_extract_local_subtomograms(
     no_ctf: bool = False,
     circle_precrop: bool = False,
     no_circle_crop: bool = False,
+    dont_apply_offsets: bool = False,
     no_ic: bool = False,
     normalize_bin: bool = True,
     write_fourier: bool = False,
@@ -544,6 +564,7 @@ def parse_extract_local_subtomograms(
         no_ctf=no_ctf,
         circle_precrop=circle_precrop,
         no_circle_crop=no_circle_crop,
+        dont_apply_offsets=dont_apply_offsets,
         no_ic=no_ic,
         normalize_bin=normalize_bin,
         write_fourier=write_fourier,
@@ -581,6 +602,7 @@ def parse_extract_copick_local_subtomograms(
     no_ctf: bool = False,
     circle_precrop: bool = False,
     no_circle_crop: bool = False,
+    dont_apply_offsets: bool = False,
     no_ic: bool = False,
     normalize_bin: bool = True,
     write_fourier: bool = False,
@@ -642,6 +664,7 @@ def parse_extract_copick_local_subtomograms(
         no_ctf=no_ctf,
         circle_precrop=circle_precrop,
         no_circle_crop=no_circle_crop,
+        dont_apply_offsets=dont_apply_offsets,
         no_ic=no_ic,
         normalize_bin=normalize_bin,
         write_fourier=write_fourier,
@@ -679,6 +702,7 @@ def parse_extract_data_portal_subtomograms(
     no_ctf: bool = False,
     circle_precrop: bool = False,
     no_circle_crop: bool = False,
+    dont_apply_offsets: bool = False,
     no_ic: bool = False,
     normalize_bin: bool = True,
     write_fourier: bool = False,
@@ -742,6 +766,7 @@ def parse_extract_data_portal_subtomograms(
         no_ctf=no_ctf,
         circle_precrop=circle_precrop,
         no_circle_crop=no_circle_crop,
+        dont_apply_offsets=dont_apply_offsets,
         no_ic=no_ic,
         normalize_bin=normalize_bin,
         write_fourier=write_fourier,
@@ -777,6 +802,7 @@ def parse_extract_data_portal_copick_subtomograms(
     no_ctf: bool = False,
     circle_precrop: bool = False,
     no_circle_crop: bool = False,
+    dont_apply_offsets: bool = False,
     no_ic: bool = False,
     normalize_bin: bool = True,
     write_fourier: bool = False,
@@ -829,6 +855,7 @@ def parse_extract_data_portal_copick_subtomograms(
         no_ctf=no_ctf,
         circle_precrop=circle_precrop,
         no_circle_crop=no_circle_crop,
+        dont_apply_offsets=dont_apply_offsets,
         no_ic=no_ic,
         normalize_bin=normalize_bin,
         write_fourier=write_fourier,

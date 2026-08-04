@@ -196,11 +196,87 @@ def test_orchestrate_copick_local_generates_particles(tmp_path, monkeypatch, stu
 
 
 def test_tomograms_star_for_job_writes_under_input(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        gt, "generate_data_portal_tomograms", lambda output_dir, **k: Path(output_dir) / "tomograms.star"
-    )
+    def fake_generate(output_dir, **kwargs):
+        star = Path(output_dir) / "tomograms.star"
+        star.parent.mkdir(parents=True, exist_ok=True)
+        starfile.write(pd.DataFrame({"rlnTomoName": ["tomo1"]}), star)
+        return star
+
+    monkeypatch.setattr(gt, "generate_data_portal_tomograms", fake_generate)
     got = gt.tomograms_star_for_job(tmp_path / "run", data_portal_args={"dataset_ids": [10426]})
     assert got == tmp_path / "run" / "input" / "tomograms.star"
+
+
+def test_tomograms_star_for_job_paths_are_absolute_and_exist(tmp_path, monkeypatch):
+    """
+    Regression: the generator writes rlnTomoTiltSeriesStarFile relative to the project root, but the
+    ctf-refine / polish jobs get no such cwd. Left as-is it resolved to
+    <output_dir>/input/input/tiltseries/... and every portal run died on FileNotFoundError; left merely
+    relative it could resolve against an unrelated job's tiltseries/ dir. Absolute removes both.
+    """
+    out = tmp_path / "run"
+    tiltstar_name = "run_1_tiltseries_2_alignment_3_spacing_4.star"
+
+    def fake_generate(output_dir, **kwargs):
+        output_dir = Path(output_dir)
+        (output_dir / "tiltseries").mkdir(parents=True, exist_ok=True)
+        (output_dir / "tiltseries" / tiltstar_name).write_text("")
+        star = output_dir / "tomograms.star"
+        # exactly what get_tomograms_df writes: prefixed with the output dir's own name
+        starfile.write(
+            pd.DataFrame(
+                {
+                    "rlnTomoName": ["tomo1"],
+                    "rlnTomoTiltSeriesStarFile": [str(Path(output_dir.name) / "tiltseries" / tiltstar_name)],
+                }
+            ),
+            star,
+        )
+        return star
+
+    monkeypatch.setattr(gt, "generate_data_portal_tomograms", fake_generate)
+    star = gt.tomograms_star_for_job(out, data_portal_args={"dataset_ids": [10426]})
+
+    value = starfile.read(star)["rlnTomoTiltSeriesStarFile"].iloc[0]
+    assert Path(value).is_absolute(), value
+    assert Path(value).exists(), f"{value} does not exist"
+    assert "input/input" not in value
+
+
+def test_tomograms_star_for_job_keeps_the_global_block_name(tmp_path, monkeypatch):
+    """
+    Regression: rewriting the star through DataFrame.copy() dropped starfile's block name, emitting
+    `data_` instead of `data_global`. RELION only enters a block named `global`, so the file silently
+    described zero tomograms.
+    """
+    out = tmp_path / "run"
+
+    def fake_generate(output_dir, **kwargs):
+        output_dir = Path(output_dir)
+        (output_dir / "tiltseries").mkdir(parents=True, exist_ok=True)
+        (output_dir / "tiltseries" / "t.star").write_text("")
+        star = output_dir / "tomograms.star"
+        starfile.write(
+            {
+                "global": pd.DataFrame(
+                    {
+                        "rlnTomoName": ["tomo1"],
+                        "rlnTomoTiltSeriesStarFile": [str(Path(output_dir.name) / "tiltseries" / "t.star")],
+                    }
+                )
+            },
+            star,
+        )
+        return star
+
+    monkeypatch.setattr(gt, "generate_data_portal_tomograms", fake_generate)
+    star = gt.tomograms_star_for_job(out, data_portal_args={})
+
+    assert "data_global" in star.read_text(), star.read_text()[:200]
+    written = starfile.read(star)
+    df = written["global"] if isinstance(written, dict) else written
+    # and the rewritten path must actually point at the real file
+    assert Path(df["rlnTomoTiltSeriesStarFile"].iloc[0]).exists()
 
 
 def test_reject_optimisation_set_points_at_local():
@@ -391,3 +467,48 @@ def test_portal_variants_reject_optimisation_set(module, tmp_path, monkeypatch):
     )
     assert result.exit_code != 0
     assert "optimisation-set-starfile" in result.output
+
+
+# --------------------------------------------------------------- copick run-name auto-detection
+
+
+def _optics(group_names):
+    return pd.DataFrame(
+        {
+            "rlnOpticsGroup": range(1, len(group_names) + 1),
+            "rlnOpticsGroupName": list(group_names),
+        }
+    )
+
+
+def test_portal_naming_detected_by_anchored_prefix():
+    assert orch._uses_portal_run_naming(
+        ["33379", "44444"], _optics(["run_33379_tiltseries_1", "run_44444_tiltseries_2"])
+    )
+
+
+def test_exact_naming_detected():
+    assert not orch._uses_portal_run_naming(["tomo1", "tomo2"], _optics(["tomo1", "tomo2"]))
+
+
+def test_run_id_colliding_with_another_tiltseries_id_is_rejected():
+    """
+    Regression: a bare containment test matched run 16106 against run_33379_tiltseries_16106, silently
+    writing its particles under the wrong tomogram. Portal run and tiltseries IDs share an ID space.
+    """
+    optics = _optics(["run_33379_tiltseries_16106", "run_44444_tiltseries_5"])
+    with pytest.raises(Exception, match="Cannot map copick run name"):
+        orch._uses_portal_run_naming(["33379", "16106"], optics)
+
+
+def test_ambiguous_substring_runs_are_rejected():
+    with pytest.raises(Exception, match="Cannot map copick run name"):
+        orch._uses_portal_run_naming(["1"], _optics(["run_10_tiltseries_1", "run_11_tiltseries_2"]))
+
+
+def test_missing_optics_columns_is_actionable(tmp_path):
+    """A RELION-native tomograms.star keeps the integer rlnOpticsGroup out of data_global."""
+    star = tmp_path / "tomograms.star"
+    starfile.write(pd.DataFrame({"rlnTomoName": ["t"], "rlnTomoTiltSeriesPixelSize": [1.0]}), star)
+    with pytest.raises(Exception, match="rlnOpticsGroup"):
+        orch._optics_from_tomograms_star(star)

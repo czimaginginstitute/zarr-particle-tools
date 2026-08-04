@@ -29,6 +29,7 @@ import zarr_particle_tools.cli.options as cli_options
 from zarr_particle_tools.core.backprojection import (
     backproject_slice_backward,
     ctf_correct_3d_heuristic,
+    ctf_correct_3d_wiener,
     get_rotation_matrix_from_euler,
     gridding_correct_3d_sinc2,
 )
@@ -336,6 +337,8 @@ def finalise_volume(
     crop_size: int,
     symmetry: str,
     tag: str,
+    snr: float = None,
+    taper: float = 10.0,
 ) -> tuple[Path, Path, Path]:
     """
     Finalise the volume by applying symmetry, gridding correction, CTF correction, and spherical masking with mean subtraction.
@@ -351,9 +354,17 @@ def finalise_volume(
         weight_fourier_volume = symmetrise_fs_real(weight_fourier_volume, transforms)
 
     gridding_corrected_volume = gridding_correct_3d_sinc2(particle_fourier_volume=data_fourier_volume)
-    ctf_corrected_real_volume = ctf_correct_3d_heuristic(
-        real_space_volume=gridding_corrected_volume, weights_fourier_volume=weight_fourier_volume
-    )
+    # RELION uses the Wiener correction when an explicit SNR is given, else the heuristic
+    if snr is not None and snr > 0:
+        ctf_corrected_real_volume = ctf_correct_3d_wiener(
+            real_space_volume=gridding_corrected_volume,
+            weights_fourier_volume=weight_fourier_volume,
+            wiener_offset=1.0 / snr,
+        )
+    else:
+        ctf_corrected_real_volume = ctf_correct_3d_heuristic(
+            real_space_volume=gridding_corrected_volume, weights_fourier_volume=weight_fourier_volume
+        )
 
     data_path = Path(output_dir) / f"data_{tag}.mrc"
     with mrcfile.new(data_path, overwrite=True) as mrc:
@@ -374,7 +385,7 @@ def finalise_volume(
         end = start + crop_size
         final_volume = ctf_corrected_real_volume[start:end, start:end, start:end]
 
-    soft_mask = spherical_soft_mask(box_size=crop_size, crop_size=crop_size, falloff=10.0)
+    soft_mask = spherical_soft_mask(box_size=crop_size, crop_size=crop_size, falloff=taper)
     inner_mask = soft_mask > 0
     inner_mean = (final_volume[inner_mask] * soft_mask[inner_mask]).sum() / soft_mask[inner_mask].sum()
     final_volume[~inner_mask] = 0.0
@@ -393,8 +404,10 @@ def finalise_volume(
 # TODO: write out weight*.mrc files
 # TODO: implement tiltseries relative dir but for particles
 # TODO: support multiple box sizes / crop sizes / pixel sizes
-# No no-circle-crop flag: RELION always tapers (reconstruct_particle.cpp:633-649, both branches) and
-# the untapered volume is already written as <tag>_full.mrc.
+# TODO: support circle cropping (RELION reconstruct_particle's default; we only implement its
+# --no_circle_crop mode, which is how our references were generated). Blocked on precision, not
+# wiring: this path needs write_fourier=True, which raises unless no_circle_crop=True, because
+# real-space cropping forces an irfft2->rfft2 round trip that drops the Nyquist-bin phase.
 def reconstruct(
     output_dir: Union[str, Path],
     box_size: int,
@@ -402,6 +415,8 @@ def reconstruct(
     symmetry: str = "C1",
     no_ctf: bool = False,
     cutoff_fraction: float = 0.01,
+    snr: float = None,
+    taper: float = 10.0,
     particles_starfile: Union[str, Path] = None,
     trajectories_starfile: Union[str, Path] = None,
     tiltseries_relative_dir: Union[str, Path] = None,
@@ -505,6 +520,8 @@ def reconstruct(
             crop_size,
             symmetry,
             tag="half1",
+            snr=snr,
+            taper=taper,
         )
         finalise_volume(
             output_data_fourier_volume_half2,
@@ -514,6 +531,8 @@ def reconstruct(
             crop_size,
             symmetry,
             tag="half2",
+            snr=snr,
+            taper=taper,
         )
     finalise_volume(
         output_data_fourier_volume,
@@ -523,6 +542,8 @@ def reconstruct(
         crop_size,
         symmetry,
         tag="merged",
+        snr=snr,
+        taper=taper,
     )
 
     # remove bulky intermediate subtomograms; keep the star files (optimisation_set.star is a pipeliner output)
@@ -542,6 +563,8 @@ def reconstruct_local(
     symmetry: str = "C1",
     no_ctf: bool = False,
     cutoff_fraction: float = 0.01,
+    snr: float = None,
+    taper: float = 10.0,
     particles_starfile: Union[str, Path] = None,
     trajectories_starfile: Union[str, Path] = None,
     tiltseries_relative_dir: Union[str, Path] = None,
@@ -585,6 +608,8 @@ def reconstruct_local(
         symmetry=symmetry,
         no_ctf=no_ctf,
         cutoff_fraction=cutoff_fraction,
+        snr=snr,
+        taper=taper,
         particles_starfile=new_particles_starfile,
         trajectories_starfile=trajectories_starfile,
         tiltseries_relative_dir=tiltseries_relative_dir,
@@ -604,6 +629,8 @@ def reconstruct_copick_local(
     symmetry: str = "C1",
     no_ctf: bool = False,
     cutoff_fraction: float = 0.01,
+    snr: float = None,
+    taper: float = 10.0,
     copick_run_names: list[str] = None,
     tiltseries_relative_dir: Path = None,
     tomograms_starfile: Path = None,
@@ -647,6 +674,8 @@ def reconstruct_copick_local(
         symmetry=symmetry,
         no_ctf=no_ctf,
         cutoff_fraction=cutoff_fraction,
+        snr=snr,
+        taper=taper,
         particles_starfile=particles_starfile,
         trajectories_starfile=trajectories_starfile,
         tiltseries_relative_dir=tiltseries_relative_dir,
@@ -662,6 +691,8 @@ def reconstruct_data_portal(
     symmetry: str = "C1",
     no_ctf: bool = False,
     cutoff_fraction: float = 0.01,
+    snr: float = None,
+    taper: float = 10.0,
     overwrite: bool = False,
     **data_portal_args,
 ):
@@ -697,6 +728,8 @@ def reconstruct_data_portal(
         symmetry=symmetry,
         no_ctf=no_ctf,
         cutoff_fraction=cutoff_fraction,
+        snr=snr,
+        taper=taper,
         particles_starfile=particles_starfile,
         trajectories_starfile=trajectories_starfile,
         tiltseries_relative_dir=tiltseries_relative_dir,
@@ -718,6 +751,8 @@ def reconstruct_data_portal_copick(
     symmetry: str = "C1",
     no_ctf: bool = False,
     cutoff_fraction: float = 0.01,
+    snr: float = None,
+    taper: float = 10.0,
     overwrite: bool = False,
     **extra_kwargs,
 ):
@@ -759,6 +794,8 @@ def reconstruct_data_portal_copick(
         symmetry=symmetry,
         no_ctf=no_ctf,
         cutoff_fraction=cutoff_fraction,
+        snr=snr,
+        taper=taper,
         particles_starfile=particles_starfile,
         trajectories_starfile=trajectories_starfile,
         tiltseries_relative_dir=tiltseries_relative_dir,

@@ -4,8 +4,9 @@ Unit tests for the per-tomogram defocus slope (rlnTomoDefocusSlope).
 RELION's `Tomogram::getCtf` offsets the central defocus by
 `dz = handedness * pixelSize * defocusSlope * depthOffset`, and `TomogramSet::read` defaults
 `defocusSlope` to 1.0 when the column is absent. Our `calculate_ctf` applies
-`handedness * defocus_slope * depth_offset` (the pixel-size scaling is already carried by the
-projection matrix, which is why extraction matches RELION at float32-ULP level).
+`handedness * defocus_slope * depth_offset`; RELION's extra `optics.pixelSize` factor is absorbed
+because our coordinates are already in Angstroms (rlnCenteredCoordinate*Angst) while RELION's are in
+tomogram voxels.
 """
 
 import numpy as np
