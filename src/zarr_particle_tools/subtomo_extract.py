@@ -144,6 +144,9 @@ def process_tiltseries(
     spherical_aberration = tiltseries_row_entry["rlnSphericalAberration"]
     amplitude_contrast = tiltseries_row_entry["rlnAmplitudeContrast"]
     handedness = tiltseries_row_entry["rlnTomoHand"]
+    defocus_slope = (
+        float(tiltseries_row_entry["rlnTomoDefocusSlope"]) if "rlnTomoDefocusSlope" in tiltseries_row_entry else 1.0
+    )
     phase_shift = (
         individual_tiltseries_df["rlnPhaseShift"].values
         if "rlnPhaseShift" in individual_tiltseries_df.columns
@@ -257,6 +260,7 @@ def process_tiltseries(
                     spherical_aberration=spherical_aberration,
                     amplitude_contrast=amplitude_contrast,
                     handedness=handedness,
+                    defocus_slope=defocus_slope,
                     tiltseries_pixel_size=tiltseries_pixel_size,
                     phase_shift=phase_shift[section_index],
                     defocus_u=defocus_u[section_index],
@@ -565,8 +569,7 @@ def parse_extract_local_subtomograms(
     )
 
 
-# TODO: test that this actually works
-def parse_extract_local_copick_subtomograms(
+def parse_extract_copick_local_subtomograms(
     box_size: int,
     output_dir: Union[str, Path],
     copick_config: Path,
@@ -847,7 +850,7 @@ def parse_extract_data_portal_copick_subtomograms(
     )
 
 
-@click.group("Extract subtomograms.")
+@click.group(help="Extract subtomograms.")
 def cli():
     pass
 
@@ -862,17 +865,16 @@ def cmd_local(**kwargs):
     parse_extract_local_subtomograms(**kwargs)
 
 
-# TODO: write tests
 @cli.command("copick-local", help="Extract subtomograms from local files (tiltseries) with copick particles.")
 @cli_options.local_shared_options()
 @cli_options.copick_options()
 @cli_options.common_options()
 @cli_options.extract_options()
 @cli_options.dry_run_option
-def cmd_local_copick(**kwargs):
+def cmd_copick_local(**kwargs):
     setup_logging(debug=kwargs.get("debug", False))
     kwargs["copick_run_names"] = cli_options.flatten(kwargs["copick_run_names"])
-    parse_extract_local_copick_subtomograms(**kwargs)
+    parse_extract_copick_local_subtomograms(**kwargs)
 
 
 # TODO: write full tests
@@ -887,7 +889,6 @@ def cmd_data_portal(**kwargs):
     parse_extract_data_portal_subtomograms(**kwargs)
 
 
-# TODO: write tests
 @cli.command("copick-data-portal", help="Extract subtomograms from CryoET Data Portal runs with copick particles.")
 @cli_options.common_options()
 @cli_options.extract_options()

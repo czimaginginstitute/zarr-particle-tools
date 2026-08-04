@@ -3,7 +3,6 @@ Functions to generate symmetry operators as 4x4 affine matrices.
 Based on RELION symmetry definitions in src/symmetries.cpp.
 """
 
-# TODO: WRITE TESTS!!! test these functions
 # TODO: improve variable names for clarity
 from functools import cache
 

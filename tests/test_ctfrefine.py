@@ -24,6 +24,8 @@ from zarr_particle_tools.subtomo_ctfrefine import run_ctf_refine
 
 DATA = Path(__file__).parent / "data" / "relion_project_synthetic"
 RELION_BIN = "relion_tomo_refine_ctf"
+# these jobs materialize tilt series into a RAM-backed /dev/shm, which does not exist on macOS
+HAS_SHM = Path("/dev/shm").exists()
 
 
 def test_read_full_stack_and_shm_writer_roundtrip(tmp_path):
@@ -56,7 +58,9 @@ def _refined_defocus(tiltseries_star: Path) -> pd.DataFrame:
     return df[["rlnDefocusU", "rlnDefocusV", "rlnDefocusAngle"]].astype(float)
 
 
-@pytest.mark.skipif(shutil.which(RELION_BIN) is None, reason="relion_tomo_refine_ctf not on PATH")
+@pytest.mark.skipif(
+    shutil.which(RELION_BIN) is None or not HAS_SHM, reason="relion_tomo_refine_ctf not on PATH or /dev/shm unavailable"
+)
 def test_ctfrefine_zarr_matches_stock_relion(tmp_path):
     """zarr->/dev/shm CTF refinement == stock RELION on the real MRC (identical pixels)."""
     ref = DATA / "Reconstruct" / "relion_output_baseline" / "merged.mrc"
@@ -233,7 +237,9 @@ def _build_multi_tomo_zarr_case(dest: Path, n: int):
     return dest / "particles.star", dest / "tomograms.star"
 
 
-@pytest.mark.skipif(shutil.which(RELION_BIN) is None, reason="relion_tomo_refine_ctf not on PATH")
+@pytest.mark.skipif(
+    shutil.which(RELION_BIN) is None or not HAS_SHM, reason="relion_tomo_refine_ctf not on PATH or /dev/shm unavailable"
+)
 def test_ctfrefine_per_tomogram_matches_all_at_once(tmp_path):
     """Per-tomogram mode (1 tilt series in RAM + merge) == all-at-once, for defocus (exact split)."""
     ref = DATA / "Reconstruct" / "relion_output_baseline" / "merged.mrc"
@@ -252,7 +258,9 @@ def test_ctfrefine_per_tomogram_matches_all_at_once(tmp_path):
         assert np.array_equal(pt.to_numpy(), aa.to_numpy()), f"per-tomogram != all-at-once for {name}"
 
 
-@pytest.mark.skipif(shutil.which(RELION_BIN) is None, reason="relion_tomo_refine_ctf not on PATH")
+@pytest.mark.skipif(
+    shutil.which(RELION_BIN) is None or not HAS_SHM, reason="relion_tomo_refine_ctf not on PATH or /dev/shm unavailable"
+)
 @pytest.mark.parametrize(
     "flags",
     [
@@ -285,7 +293,9 @@ def test_ctfrefine_two_phase_flag_variants(tmp_path, flags):
                     assert pp[tbl][c].astype(str).tolist() == ap[tbl][c].astype(str).tolist(), f"{tbl}:{c} differs"
 
 
-@pytest.mark.skipif(shutil.which(RELION_BIN) is None, reason="relion_tomo_refine_ctf not on PATH")
+@pytest.mark.skipif(
+    shutil.which(RELION_BIN) is None or not HAS_SHM, reason="relion_tomo_refine_ctf not on PATH or /dev/shm unavailable"
+)
 def test_ctfrefine_zero_particle_tomogram(tmp_path):
     """A tomogram with no particles is skipped gracefully (RELION continues; two-phase must too)."""
     ref = DATA / "Reconstruct" / "relion_output_baseline" / "merged.mrc"
@@ -308,7 +318,9 @@ def test_ctfrefine_zero_particle_tomogram(tmp_path):
     assert (tmp_path / "pt" / "tiltseries" / "session1_TS_0.star").exists()  # the populated one refined
 
 
-@pytest.mark.skipif(shutil.which(RELION_BIN) is None, reason="relion_tomo_refine_ctf not on PATH")
+@pytest.mark.skipif(
+    shutil.which(RELION_BIN) is None or not HAS_SHM, reason="relion_tomo_refine_ctf not on PATH or /dev/shm unavailable"
+)
 def test_ctfrefine_two_phase_joint_scale_matches_all_at_once(tmp_path):
     """Two-phase collect (header stubs + --only_do_unfinished) == all-at-once for a global-scale
     (joint) fit -- exercises RELION's fitGlobalScale finalise without any stack in the collect pass."""

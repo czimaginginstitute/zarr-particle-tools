@@ -9,8 +9,7 @@ from click.testing import CliRunner
 
 from zarr_particle_tools.generate.cdp_generate_starfiles import cli, resolve_annotation_files
 
-# TODO: add more tests that actually check the values (after real testing)
-# TODO: add tests - with all possible parameters and edge cases, including:
+# TODO: add tests for these edge cases:
 # - no annotations
 # - no alignments
 # - no tiltseries

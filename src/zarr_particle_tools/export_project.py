@@ -111,7 +111,7 @@ def export_copick_data_portal_project(
     return output_dir
 
 
-@click.group("Export a self-contained on-disk STA project (downloaded tilt series) from the CryoET Data Portal.")
+@click.group(help="Export a self-contained on-disk STA project (downloaded tilt series) from the CryoET Data Portal.")
 def cli():
     pass
 

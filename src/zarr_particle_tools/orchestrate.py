@@ -23,12 +23,13 @@ from importlib.metadata import entry_points
 from pathlib import Path
 
 import click
+import starfile
 
 import zarr_particle_tools.cli.options as cli_options
 import zarr_particle_tools.generate.cdp_cache as cdp_cache
 import zarr_particle_tools.generate.cdp_generate_starfiles as cdp_generate
 import zarr_particle_tools.generate.copick_generate_starfiles as copick_generate
-from zarr_particle_tools.core.constants import THREAD_POOL_WORKER_COUNT
+from zarr_particle_tools.core.constants import OPTICS_DF_COLUMNS, THREAD_POOL_WORKER_COUNT
 from zarr_particle_tools.core.data import global_fs
 from zarr_particle_tools.core.helpers import setup_logging
 
@@ -314,6 +315,115 @@ class Py2RelyConfig:
             raise click.ClickException("--reference-template is required unless --run-denovo-generation is set.")
 
 
+def read_tomograms_df(tomograms_star: Path):
+    """Read a tomograms.star into a single DataFrame, whether or not starfile returns a block dict."""
+    df = starfile.read(tomograms_star)
+    if isinstance(df, dict):
+        df = df.get("global", next(iter(df.values())))
+    return df
+
+
+def pixel_size_from_tomograms_star(tomograms_star: Path, override: float | None = None) -> float:
+    """
+    Read the tilt-series pixel size out of a tomograms.star (asserting a single value across rows).
+    Unlike the portal path there is no metadata to cross-check against, so nothing is verified here.
+    """
+    if override is not None:
+        logger.info("Using pixel size override %.6f A.", float(override))
+        return float(override)
+    df = read_tomograms_df(tomograms_star)
+    if "rlnTomoTiltSeriesPixelSize" not in df.columns:
+        raise click.ClickException(
+            f"{tomograms_star} has no rlnTomoTiltSeriesPixelSize column; pass --pixel-size explicitly."
+        )
+    values = sorted({round(float(v), 6) for v in df["rlnTomoTiltSeriesPixelSize"]})
+    if len(values) != 1:
+        raise click.ClickException(
+            f"{tomograms_star} reports multiple pixel sizes {values} (mixed optics is not supported yet). "
+            "Narrow the star file to a single pixel size, or pass --pixel-size."
+        )
+    logger.info("Derived pixel size %.6f A from %s.", values[0], tomograms_star.name)
+    return values[0]
+
+
+def _require_under_output_dir(star: Path, flag: str, output_dir: Path) -> Path:
+    """py2rely resolves star paths relative to the project dir, so inputs must live inside it."""
+    star = Path(star).resolve()
+    if not star.is_relative_to(output_dir):
+        raise click.ClickException(
+            f"{flag} must be inside --output-dir ({output_dir}), because py2rely resolves star paths "
+            f"relative to the project directory. Got {star}.\nGenerate or copy it under "
+            f"{output_dir / 'input'} first, e.g.:\n"
+            f"  zarr-particle-tomograms data-portal --output-dir {output_dir / 'input'} ..."
+        )
+    return star
+
+
+def orchestrate_local(
+    output_dir: Path,
+    cfg: Py2RelyConfig,
+    particles_starfile: Path,
+    tomograms_starfile: Path,
+    pixel_size: float | None = None,
+) -> Path:
+    """
+    Drive the py2rely STA pipeline from RELION stars you already have (no portal query).
+
+    py2rely only needs a tomograms.star + particles.star + pixel size, so this works for any source.
+    The four zarr jobs are auto-selected only if the tomograms.star carries tomoTiltSeriesURI;
+    otherwise py2rely runs stock RELION against whatever the tilt stars point at.
+    """
+    assert_preflight()
+    output_dir = Path(output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    particles_star = _require_under_output_dir(particles_starfile, "--particles-starfile", output_dir)
+    tomograms_star = _require_under_output_dir(tomograms_starfile, "--tomograms-starfile", output_dir)
+    pixel_size = pixel_size_from_tomograms_star(tomograms_star, override=pixel_size)
+    return _prepare_and_submit(output_dir, particles_star, tomograms_star, pixel_size, cfg)
+
+
+def orchestrate_copick_local(
+    output_dir: Path,
+    cfg: Py2RelyConfig,
+    tomograms_starfile: Path,
+    copick_config: Path,
+    copick_name: str,
+    copick_session_id: str,
+    copick_user_id: str,
+    copick_run_names: list[str] = None,
+    pixel_size: float | None = None,
+) -> Path:
+    """Generate particles.star from copick picks against a local tomograms.star, then prepare + submit."""
+    assert_preflight(require_copick=True)
+    output_dir = Path(output_dir).resolve()
+    input_dir = output_dir / "input"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    tomograms_star = _require_under_output_dir(tomograms_starfile, "--tomograms-starfile", output_dir)
+
+    if not copick_run_names:
+        picks = copick_generate.get_copick_picks(
+            copick_config, copick_name, copick_session_id, copick_user_id, copick_run_names
+        )
+        copick_run_names = [p.run.name for p in picks]
+
+    optics_df = read_tomograms_df(tomograms_star)[OPTICS_DF_COLUMNS].drop_duplicates().reset_index(drop=True)
+    particles_df = copick_generate.copick_picks_to_starfile(
+        copick_config,
+        copick_name,
+        copick_session_id,
+        copick_user_id,
+        copick_run_names,
+        optics_df,
+        data_portal_runs=False,
+    )
+    particles_star = input_dir / "particles.star"
+    starfile.write({"optics": optics_df, "particles": particles_df}, particles_star)
+    logger.info("Generated %s with %d particles.", particles_star, len(particles_df))
+
+    pixel_size = pixel_size_from_tomograms_star(tomograms_star, override=pixel_size)
+    return _prepare_and_submit(output_dir, particles_star, tomograms_star, pixel_size, cfg)
+
+
 def _prepare_and_submit(
     output_dir: Path, particles_star: Path, tomograms_star: Path, pixel_size: float, cfg: Py2RelyConfig
 ) -> Path:
@@ -471,16 +581,24 @@ def compute_options():
             "--gpu-constraint",
             type=str,
             default=None,
-            help="SLURM GPU architecture constraint (e.g. a100 or 'a100|h100').",
+            help="SLURM GPU architecture constraint; one arch (a100) or several meaning OR, comma- or "
+            "pipe-separated (a100,h100 or 'a100|h100'). py2rely checks these against the cluster's SLURM "
+            "features and drops any that are unavailable. Default: no constraint.",
         ),
-        click.option("--cpu-constraint", type=str, default="16,12", show_default=True, help="CPUs,mem-per-cpu-GB)."),
+        click.option(
+            "--cpu-constraint",
+            type=str,
+            default="16,12",
+            show_default=True,
+            help="CPUs and memory per CPU in GB, as 'CPUs,mem-per-cpu-GB' (e.g. 16,12 = 16 CPUs, 12 GB each).",
+        ),
         click.option("--timeout", type=int, default=24, show_default=True, help="submitit per-trial timeout [hours]."),
         click.option("--num-days", type=int, default=14, show_default=True, help="SLURM walltime request [days]."),
     ]
     return cli_options.compose_options(opts)
 
 
-def control_options():
+def control_options(pixel_size_tol: bool = True):
     opts = [
         click.option(
             "--output-dir",
@@ -491,13 +609,19 @@ def control_options():
         click.option(
             "--pixel-size", type=float, default=None, help="Override the auto-derived tilt-series pixel size [A]."
         ),
-        click.option(
-            "--pixel-size-tol",
-            type=float,
-            default=DEFAULT_PIXEL_SIZE_TOL,
-            show_default=True,
-            help="Relative tolerance for the MRC-header pixel-size cross-check.",
-        ),
+    ]
+    # only the portal paths cross-check the derived pixel size against tilt-series MRC headers
+    if pixel_size_tol:
+        opts.append(
+            click.option(
+                "--pixel-size-tol",
+                type=float,
+                default=DEFAULT_PIXEL_SIZE_TOL,
+                show_default=True,
+                help="Relative tolerance for the MRC-header pixel-size cross-check.",
+            )
+        )
+    opts += [
         click.option("--prepare-only", is_flag=True, help="Prepare params + pipeline.sh but do not sbatch."),
         click.option("--debug", is_flag=True, help="Enable debug logging."),
     ]
@@ -535,7 +659,7 @@ def _pop_config(kwargs: dict) -> Py2RelyConfig:
     return Py2RelyConfig(denovo_generation=denovo, **{k: kwargs.pop(k) for k in _CONFIG_KEYS})
 
 
-@click.group("Drive the full CryoET Data Portal -> zarr STA pipeline via py2rely.")
+@click.group(help="Drive the full CryoET Data Portal -> zarr STA pipeline via py2rely.")
 def cli():
     pass
 
@@ -581,6 +705,58 @@ def cmd_copick_data_portal(**kwargs):
     cfg = _pop_config(kwargs)
     output_dir = kwargs.pop("output_dir")
     orchestrate_copick_data_portal(output_dir, cfg, **kwargs)
+
+
+@cli.command(
+    "local",
+    help="Orchestrate the full STA pipeline from RELION stars you already have (both must live inside "
+    "--output-dir). Zarr jobs are used only if the tomograms.star carries tomoTiltSeriesURI.",
+)
+@click.option(
+    "--particles-starfile",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    required=True,
+    help="Your particles.star (inside --output-dir).",
+)
+@click.option(
+    "--tomograms-starfile",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    required=True,
+    help="Your tomograms.star (inside --output-dir); pixel size is read from rlnTomoTiltSeriesPixelSize.",
+)
+@science_options()
+@workflow_options()
+@compute_options()
+@control_options(pixel_size_tol=False)
+def cmd_local(**kwargs):
+    setup_logging(kwargs.pop("debug", False))
+    cfg = _pop_config(kwargs)
+    output_dir = kwargs.pop("output_dir")
+    orchestrate_local(output_dir, cfg, **kwargs)
+
+
+@cli.command(
+    "copick-local",
+    help="Orchestrate the full STA pipeline from copick picks plus your own tomograms.star (inside "
+    "--output-dir); particles.star is generated into <output-dir>/input.",
+)
+@click.option(
+    "--tomograms-starfile",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    required=True,
+    help="Your tomograms.star (inside --output-dir); supplies optics and the pixel size.",
+)
+@cli_options.copick_options()
+@science_options()
+@workflow_options()
+@compute_options()
+@control_options(pixel_size_tol=False)
+def cmd_copick_local(**kwargs):
+    setup_logging(kwargs.pop("debug", False))
+    kwargs["copick_run_names"] = cli_options.flatten(kwargs["copick_run_names"])
+    cfg = _pop_config(kwargs)
+    output_dir = kwargs.pop("output_dir")
+    orchestrate_copick_local(output_dir, cfg, **kwargs)
 
 
 if __name__ == "__main__":

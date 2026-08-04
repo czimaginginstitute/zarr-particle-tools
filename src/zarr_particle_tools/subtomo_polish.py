@@ -15,6 +15,7 @@ import click
 
 import zarr_particle_tools.cli.options as cli_options
 from zarr_particle_tools.core.helpers import setup_logging
+from zarr_particle_tools.generate_tomograms import reject_optimisation_set, tomograms_star_for_job
 from zarr_particle_tools.subtomo_relion_job import run_relion_tomo_job
 
 logger = logging.getLogger(__name__)
@@ -119,7 +120,7 @@ def run_polish(
     )
 
 
-@click.group("Run RELION Bayesian polish / frame alignment on zarr tilt series.")
+@click.group(help="Run RELION Bayesian polish / frame alignment on zarr tilt series.")
 def cli():
     pass
 
@@ -130,6 +131,39 @@ def cli():
 @cli_options.polish_options()
 def cmd_local(**kwargs):
     setup_logging(kwargs.pop("debug", False))
+    run_polish(**kwargs)
+
+
+@cli.command(
+    "data-portal",
+    help="Polish with a tomograms.star generated from the CryoET Data Portal (still needs your refined "
+    "--particles-starfile and --ref1/--ref2).",
+)
+@cli_options.local_options()
+@cli_options.polish_options()
+@cli_options.data_portal_options()
+def cmd_data_portal(**kwargs):
+    setup_logging(kwargs.pop("debug", False))
+    reject_optimisation_set(kwargs.pop("optimisation_set_starfile", None), "data-portal")
+    portal_args, kwargs = cli_options.split_data_portal_args(kwargs)
+    kwargs["tomograms_starfile"] = tomograms_star_for_job(kwargs["output_dir"], data_portal_args=portal_args)
+    run_polish(**kwargs)
+
+
+@cli.command(
+    "copick-data-portal",
+    help="Polish with a tomograms.star generated for a copick project's Data Portal runs (still needs "
+    "your refined --particles-starfile and --ref1/--ref2).",
+)
+@cli_options.local_options()
+@cli_options.polish_options()
+@cli_options.copick_options()
+@cli_options.data_portal_copick_options()
+def cmd_copick_data_portal(**kwargs):
+    setup_logging(kwargs.pop("debug", False))
+    reject_optimisation_set(kwargs.pop("optimisation_set_starfile", None), "copick-data-portal")
+    copick_args, kwargs = cli_options.split_copick_args(kwargs)
+    kwargs["tomograms_starfile"] = tomograms_star_for_job(kwargs["output_dir"], copick_args=copick_args)
     run_polish(**kwargs)
 
 

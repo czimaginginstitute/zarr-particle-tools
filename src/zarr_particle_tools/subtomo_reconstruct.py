@@ -9,7 +9,6 @@ Regarding output files:
 The same applies for half1 and half2 if random subsets are present.
 """
 
-# TODO: write tests (at least for local)
 import ast
 import logging
 import multiprocessing as mp
@@ -51,9 +50,9 @@ from zarr_particle_tools.core.symmetry import (
     symmetrise_fs_real,
 )
 from zarr_particle_tools.subtomo_extract import (
+    parse_extract_copick_local_subtomograms,
     parse_extract_data_portal_copick_subtomograms,
     parse_extract_data_portal_subtomograms,
-    parse_extract_local_copick_subtomograms,
     parse_extract_local_subtomograms,
 )
 
@@ -94,6 +93,7 @@ def process_particle(
     spherical_aberration: float,
     amplitude_contrast: float,
     handedness: int,
+    defocus_slope: float,
     tiltseries_pixel_size: float,
     phase_shift: list[float],
     defocus_u: list[float],
@@ -148,6 +148,7 @@ def process_particle(
                     spherical_aberration=spherical_aberration,
                     amplitude_contrast=amplitude_contrast,
                     handedness=handedness,
+                    defocus_slope=defocus_slope,
                     tiltseries_pixel_size=tiltseries_pixel_size,
                     phase_shift=phase_shift[section_index],
                     defocus_u=defocus_u[section_index],
@@ -243,6 +244,9 @@ def reconstruct_single_tiltseries(
     spherical_aberration = tiltseries_row_entry["rlnSphericalAberration"]
     amplitude_contrast = tiltseries_row_entry["rlnAmplitudeContrast"]
     handedness = tiltseries_row_entry["rlnTomoHand"]
+    defocus_slope = (
+        float(tiltseries_row_entry["rlnTomoDefocusSlope"]) if "rlnTomoDefocusSlope" in tiltseries_row_entry else 1.0
+    )
     phase_shift = (
         individual_tiltseries_df["rlnPhaseShift"].values
         if "rlnPhaseShift" in individual_tiltseries_df.columns
@@ -297,6 +301,7 @@ def reconstruct_single_tiltseries(
         "spherical_aberration": spherical_aberration,
         "amplitude_contrast": amplitude_contrast,
         "handedness": handedness,
+        "defocus_slope": defocus_slope,
         "tiltseries_pixel_size": tiltseries_pixel_size,
         "phase_shift": phase_shift,
         "defocus_u": defocus_u,
@@ -387,8 +392,9 @@ def finalise_volume(
 
 # TODO: write out weight*.mrc files
 # TODO: implement tiltseries relative dir but for particles
-# TODO: support no_circle_crop
 # TODO: support multiple box sizes / crop sizes / pixel sizes
+# No no-circle-crop flag: RELION always tapers (reconstruct_particle.cpp:633-649, both branches) and
+# the untapered volume is already written as <tag>_full.mrc.
 def reconstruct(
     output_dir: Union[str, Path],
     box_size: int,
@@ -586,7 +592,7 @@ def reconstruct_local(
     )
 
 
-def reconstruct_local_copick(
+def reconstruct_copick_local(
     box_size: int,
     output_dir: Union[str, Path],
     copick_config: Path,
@@ -612,7 +618,7 @@ def reconstruct_local_copick(
         tiltseries_relative_dir,
         tomograms_starfile,
         _,
-    ) = parse_extract_local_copick_subtomograms(
+    ) = parse_extract_copick_local_subtomograms(
         box_size=box_size,
         output_dir=output_dir,
         copick_config=copick_config,
@@ -760,7 +766,7 @@ def reconstruct_data_portal_copick(
     )
 
 
-@click.group("Reconstruct a particle map from particles and tiltseries.")
+@click.group(help="Reconstruct a particle map from particles and tiltseries.")
 def cli():
     pass
 
@@ -775,15 +781,15 @@ def cmd_local(**kwargs):
     reconstruct_local(**kwargs)
 
 
-@cli.command("local-copick", help="Reconstruct a particle map from local tiltseries with copick particles.")
+@cli.command("copick-local", help="Reconstruct a particle map from local tiltseries with copick particles.")
 @cli_options.local_shared_options()
 @cli_options.copick_options()
 @cli_options.common_options()
 @cli_options.reconstruct_options()
-def cmd_local_copick(**kwargs):
+def cmd_copick_local(**kwargs):
     setup_logging(debug=kwargs.pop("debug", False))
     kwargs["copick_run_names"] = cli_options.flatten(kwargs["copick_run_names"])
-    reconstruct_local_copick(**kwargs)
+    reconstruct_copick_local(**kwargs)
 
 
 @cli.command("data-portal", help="Reconstruct a particle map using picks and tiltseries from the CryoET Data Portal.")

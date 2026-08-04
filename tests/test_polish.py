@@ -24,6 +24,8 @@ from zarr_particle_tools.subtomo_polish import run_polish
 
 DATA = Path(__file__).parent / "data" / "relion_project_synthetic"
 RELION_BIN = "relion_tomo_align"
+# these jobs materialize tilt series into a RAM-backed /dev/shm, which does not exist on macOS
+HAS_SHM = Path("/dev/shm").exists()
 PROJ_COLS = ["rlnTomoXTilt", "rlnTomoYTilt", "rlnTomoZRot", "rlnTomoXShiftAngst", "rlnTomoYShiftAngst"]
 
 
@@ -81,7 +83,9 @@ def _build_multi_tomo_zarr_case(dest: Path, n: int):
     return dest / "particles.star", dest / "tomograms.star"
 
 
-@pytest.mark.skipif(shutil.which(RELION_BIN) is None, reason="relion_tomo_align not on PATH")
+@pytest.mark.skipif(
+    shutil.which(RELION_BIN) is None or not HAS_SHM, reason="relion_tomo_align not on PATH or /dev/shm unavailable"
+)
 def test_polish_zarr_matches_stock_relion(tmp_path):
     ref = DATA / "Reconstruct" / "relion_output_baseline" / "merged.mrc"
     box = 64
@@ -184,7 +188,9 @@ def test_polish_zarr_matches_stock_relion(tmp_path):
     assert np.array_equal(b, o), "zarr-fed polish differs from stock RELION"
 
 
-@pytest.mark.skipif(shutil.which(RELION_BIN) is None, reason="relion_tomo_align not on PATH")
+@pytest.mark.skipif(
+    shutil.which(RELION_BIN) is None or not HAS_SHM, reason="relion_tomo_align not on PATH or /dev/shm unavailable"
+)
 def test_polish_two_phase_matches_all_at_once(tmp_path):
     ref = DATA / "Reconstruct" / "relion_output_baseline" / "merged.mrc"
     parts, tomos = _build_multi_tomo_zarr_case(tmp_path / "proj", n=2)
@@ -206,7 +212,9 @@ def test_polish_two_phase_matches_all_at_once(tmp_path):
         assert np.array_equal(pt, aa), f"per-tomogram != all-at-once for {name}"
 
 
-@pytest.mark.skipif(shutil.which(RELION_BIN) is None, reason="relion_tomo_align not on PATH")
+@pytest.mark.skipif(
+    shutil.which(RELION_BIN) is None or not HAS_SHM, reason="relion_tomo_align not on PATH or /dev/shm unavailable"
+)
 def test_polish_two_phase_motion_matches_all_at_once(tmp_path):
     """Two-phase == all-at-once with --motion (the Bayesian-polish path); motion.star is produced."""
     ref = DATA / "Reconstruct" / "relion_output_baseline" / "merged.mrc"
@@ -232,7 +240,10 @@ def test_polish_two_phase_motion_matches_all_at_once(tmp_path):
         assert np.array_equal(pt, aa), f"motion per-tomogram != all-at-once for {name}"
 
 
-@pytest.mark.skipif(shutil.which("relion_tomo_refine_ctf") is None, reason="relion binaries not on PATH")
+@pytest.mark.skipif(
+    shutil.which("relion_tomo_refine_ctf") is None or not HAS_SHM,
+    reason="relion binaries not on PATH or /dev/shm unavailable",
+)
 def test_polish_output_chains_into_ctfrefine_on_zarr(tmp_path):
     """finding-1 fix: polish output tomograms.star keeps the zarr locator, so a following CTF-refine
     re-materializes from zarr (rather than the deleted shm / dropped tomoTiltSeriesURI)."""

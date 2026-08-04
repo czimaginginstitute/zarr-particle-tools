@@ -60,7 +60,30 @@ def generate_copick_data_portal_tomograms(
     return tomograms_path
 
 
-@click.group("Generate a tomograms.star (S3-zarr tilt series) for CTF-refine / polish.")
+JOB_INPUT_SUBDIR = "input"
+
+
+def tomograms_star_for_job(output_dir, data_portal_args=None, copick_args=None) -> Path:
+    """
+    Generate a tomograms.star under <output_dir>/input for a CTF-refine / polish run, so the
+    generated inputs sit alongside (not inside) the RELION results. Returns its path.
+    """
+    input_dir = Path(output_dir) / JOB_INPUT_SUBDIR
+    if copick_args is not None:
+        return generate_copick_data_portal_tomograms(output_dir=input_dir, **copick_args)
+    return generate_data_portal_tomograms(output_dir=input_dir, **(data_portal_args or {}))
+
+
+def reject_optimisation_set(optimisation_set_starfile, subcommand: str) -> None:
+    """An optimisation set already names its own tomograms.star, so it cannot take a generated one."""
+    if optimisation_set_starfile is not None:
+        raise click.UsageError(
+            f"--optimisation-set-starfile is not supported by `{subcommand}`, because it already "
+            "references its own tomograms.star. Use the `local` subcommand for an optimisation set."
+        )
+
+
+@click.group(help="Generate a tomograms.star (S3-zarr tilt series) for CTF-refine / polish.")
 def cli():
     pass
 

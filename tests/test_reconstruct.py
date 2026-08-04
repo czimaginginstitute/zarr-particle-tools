@@ -18,7 +18,6 @@ DEFAULT_ULP_FACTOR = 64.0
 # data_half* (pre-gridding-correction) runs highest (~72x ULP); final/full halves ~3-4x.
 HALF_ULP_FACTOR = 128.0
 
-# TODO: need to add real datasets
 SYNTHETIC_RECONSTRUCT_PARAMETERS = {
     "baseline": {"box_size": 64},
     "baseline_C2": {"box_size": 64, "symmetry": "C2"},

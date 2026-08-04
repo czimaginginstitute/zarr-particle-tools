@@ -269,6 +269,35 @@ def flatten_data_portal_args(kwargs: dict) -> dict:
     return kwargs
 
 
+# Everything generate_starfiles() accepts, i.e. the portal query + how to render the picks.
+DATA_PORTAL_GENERATION_KEYS = DATA_PORTAL_ARG_REFS + ["ground_truth", "automated_only", "no_orientations"]
+COPICK_GENERATION_KEYS = [
+    "copick_config",
+    "copick_name",
+    "copick_session_id",
+    "copick_user_id",
+    "copick_run_names",
+    "copick_dataset_ids",
+]
+
+
+def split_data_portal_args(kwargs: dict) -> tuple[dict, dict]:
+    """Split a command's kwargs into (portal generation args, everything else)."""
+    kwargs = flatten_data_portal_args(dict(kwargs))
+    portal = {k: kwargs.pop(k) for k in DATA_PORTAL_GENERATION_KEYS if k in kwargs}
+    return portal, kwargs
+
+
+def split_copick_args(kwargs: dict) -> tuple[dict, dict]:
+    """Split a command's kwargs into (copick generation args, everything else)."""
+    kwargs = dict(kwargs)
+    copick = {k: kwargs.pop(k) for k in COPICK_GENERATION_KEYS if k in kwargs}
+    for k in ("copick_run_names", "copick_dataset_ids"):
+        if k in copick:
+            copick[k] = flatten(copick[k])
+    return copick, kwargs
+
+
 def ctfrefine_options():
     opts = [
         click.option(
