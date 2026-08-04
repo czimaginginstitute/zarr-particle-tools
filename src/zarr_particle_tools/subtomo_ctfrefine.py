@@ -3,12 +3,11 @@ Run RELION's CTF refinement (relion_tomo_refine_ctf) on tilt series stored as OM
 
 Thin wrapper over subtomo_relion_job: it only supplies the binary name and the CTF-refine flag
 builder. Reference half-maps (--ref1/--ref2) from a prior Refine3D are mandatory (RELION requires
-them). See docs/audit/phase3_4_ctfrefine_polish_design.md.
+them).
 """
 
 import logging
 from pathlib import Path
-from typing import Optional, Union
 
 import click
 
@@ -64,17 +63,17 @@ def build_ctf_cmd(relion_bin, opt_set, output_dir, box_size, ref1, ref2, mask, f
 
 
 def run_ctf_refine(
-    output_dir: Union[str, Path],
+    output_dir: str | Path,
     box_size: int,
-    ref1: Union[str, Path],
-    ref2: Union[str, Path],
-    particles_starfile: Optional[Path] = None,
-    tomograms_starfile: Optional[Path] = None,
-    trajectories_starfile: Optional[Path] = None,
-    optimisation_set_starfile: Optional[Path] = None,
-    tiltseries_relative_dir: Optional[Path] = None,
-    mask: Optional[Path] = None,
-    fsc: Optional[Path] = None,
+    ref1: str | Path,
+    ref2: str | Path,
+    particles_starfile: Path | None = None,
+    tomograms_starfile: Path | None = None,
+    trajectories_starfile: Path | None = None,
+    optimisation_set_starfile: Path | None = None,
+    tiltseries_relative_dir: Path | None = None,
+    mask: Path | None = None,
+    fsc: Path | None = None,
     do_defocus: bool = False,
     do_reg_defocus: bool = False,
     lambda_reg: float = 0.1,
@@ -86,7 +85,7 @@ def run_ctf_refine(
     focus_range: float = 3000.0,
     threads: int = 6,
     relion_bin: str = RELION_BIN,
-    shm_dir: Union[str, Path] = "/dev/shm",
+    shm_dir: str | Path = "/dev/shm",
     keep_shm: bool = False,
     per_tomogram: bool = True,
     n_workers: int = 0,

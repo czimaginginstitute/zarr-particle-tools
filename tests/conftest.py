@@ -22,7 +22,9 @@ def fail_on_log_warning_or_error(caplog):
 def validate_optimisation_set_starfile():
     def _validate_starfile(star_file: Path):
         optimisation_dict = starfile.read(star_file)
-        assert len(optimisation_dict) == 2, f"Expected exactly two rows in {star_file}, found {len(optimisation_dict)}"
+        assert (
+            len(optimisation_dict) == 2
+        ), f"Expected exactly two fields in {star_file}, found {len(optimisation_dict)}"
         assert "rlnTomoTomogramsFile" in optimisation_dict
         assert "rlnTomoParticlesFile" in optimisation_dict
         assert os.path.exists(optimisation_dict["rlnTomoTomogramsFile"])

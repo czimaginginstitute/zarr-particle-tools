@@ -9,7 +9,6 @@ memory-bounded. Reference half-maps (--ref1/--ref2) from a prior Refine3D are re
 
 import logging
 from pathlib import Path
-from typing import Optional, Union
 
 import click
 
@@ -56,17 +55,17 @@ def build_align_cmd(relion_bin, opt_set, output_dir, box_size, ref1, ref2, mask,
 
 
 def run_polish(
-    output_dir: Union[str, Path],
+    output_dir: str | Path,
     box_size: int,
-    ref1: Union[str, Path],
-    ref2: Union[str, Path],
-    particles_starfile: Optional[Path] = None,
-    tomograms_starfile: Optional[Path] = None,
-    trajectories_starfile: Optional[Path] = None,
-    optimisation_set_starfile: Optional[Path] = None,
-    tiltseries_relative_dir: Optional[Path] = None,
-    mask: Optional[Path] = None,
-    fsc: Optional[Path] = None,
+    ref1: str | Path,
+    ref2: str | Path,
+    particles_starfile: Path | None = None,
+    tomograms_starfile: Path | None = None,
+    trajectories_starfile: Path | None = None,
+    optimisation_set_starfile: Path | None = None,
+    tiltseries_relative_dir: Path | None = None,
+    mask: Path | None = None,
+    fsc: Path | None = None,
     do_motion: bool = True,
     s_vel: float = 0.2,
     s_div: float = 5000.0,
@@ -76,7 +75,7 @@ def run_polish(
     align_range: int = 20,
     threads: int = 6,
     relion_bin: str = RELION_BIN,
-    shm_dir: Union[str, Path] = "/dev/shm",
+    shm_dir: str | Path = "/dev/shm",
     keep_shm: bool = False,
     per_tomogram: bool = True,
     n_workers: int = 0,

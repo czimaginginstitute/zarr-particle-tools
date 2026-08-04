@@ -2,7 +2,7 @@
 Shared harness for running RELION tomography jobs (CTF refinement, Bayesian polish) against tilt
 series stored as OME-Zarr, without modifying RELION.
 
-Strategy (docs/audit/phase3_4_ctfrefine_polish_design.md): reuse the stock RELION binary and replace
+Strategy: reuse the stock RELION binary and replace
 only the pixel source. Per tomogram we stream the zarr tilt series into a RAM-backed MRC (/dev/shm),
 point rlnTomoTiltSeriesName at it, and let RELION read its own format. A two-phase mode keeps at most
 n_workers tilt series in RAM: phase 1 processes each tomogram alone (parallel pool, writes RELION temp
@@ -26,8 +26,8 @@ import subprocess
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Optional, Union
 
 import mrcfile.dtypes as mrc_dtypes
 import numpy as np
@@ -158,7 +158,7 @@ def _slug(name: str, max_len: int = 200) -> str:
     return s
 
 
-def read_single_table(path: Union[str, Path]) -> pd.DataFrame:
+def read_single_table(path: str | Path) -> pd.DataFrame:
     """Read a star file that holds a single (optionally named) data block as a DataFrame."""
     data = starfile.read(str(path))
     if isinstance(data, dict):
@@ -168,7 +168,7 @@ def read_single_table(path: Union[str, Path]) -> pd.DataFrame:
     return data
 
 
-def resolve_optimisation_set(optimisation_set_starfile: Path) -> tuple[Path, Path, Optional[Path]]:
+def resolve_optimisation_set(optimisation_set_starfile: Path) -> tuple[Path, Path, Path | None]:
     """Return (particles, tomograms, trajectories) paths from an optimisation_set.star."""
     opt = read_single_table(optimisation_set_starfile)
     base = Path(optimisation_set_starfile).parent
@@ -476,20 +476,20 @@ def _restore_zarr_source(output_dir: Path, global_df, src_base, tiltseries_relat
 def run_relion_tomo_job(
     build_cmd: Callable,
     relion_bin: str,
-    output_dir: Union[str, Path],
+    output_dir: str | Path,
     box_size: int,
-    ref1: Union[str, Path],
-    ref2: Union[str, Path],
+    ref1: str | Path,
+    ref2: str | Path,
     opts: dict,
-    particles_starfile: Optional[Path] = None,
-    tomograms_starfile: Optional[Path] = None,
-    trajectories_starfile: Optional[Path] = None,
-    optimisation_set_starfile: Optional[Path] = None,
-    tiltseries_relative_dir: Optional[Path] = None,
-    mask: Optional[Path] = None,
-    fsc: Optional[Path] = None,
+    particles_starfile: Path | None = None,
+    tomograms_starfile: Path | None = None,
+    trajectories_starfile: Path | None = None,
+    optimisation_set_starfile: Path | None = None,
+    tiltseries_relative_dir: Path | None = None,
+    mask: Path | None = None,
+    fsc: Path | None = None,
     threads: int = 6,
-    shm_dir: Union[str, Path] = "/dev/shm",
+    shm_dir: str | Path = "/dev/shm",
     keep_shm: bool = False,
     per_tomogram: bool = True,
     n_workers: int = 0,

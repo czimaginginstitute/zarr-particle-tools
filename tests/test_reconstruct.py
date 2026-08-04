@@ -15,7 +15,7 @@ from zarr_particle_tools.subtomo_reconstruct import cli, reconstruct_local
 # baseline_OH is the sole exception: RELION's improper-group symmetrization is non-Hermitian on kx=0
 # (a RELION bug; Python is correct), so it keeps a loose ulp_factor.
 DEFAULT_ULP_FACTOR = 64.0
-# data_half* (pre-gridding-correction) runs highest (~72x ULP); final/full halves ~3-4x.
+# data_half* (post-gridding, pre-CTF-correction) runs highest (~72x ULP); final/full halves ~3-4x.
 HALF_ULP_FACTOR = 128.0
 
 SYNTHETIC_RECONSTRUCT_PARAMETERS = {

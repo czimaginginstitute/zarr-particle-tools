@@ -262,7 +262,9 @@ def ih_transforms(n: int) -> list[np.ndarray]:
         raise ValueError("Invalid n for IH symmetry. Must be 1, 2, 3, or 4.")
 
     MI_matrices = [_embed(M @ T[:3, :3]) for T in I_matrices]
-    return I_matrices + MI_matrices
+    # i_transforms returns an ndarray, so `+` would broadcast into an element-wise sum rather than
+    # concatenate (o_transforms returns a list, which is why the O path does not need this)
+    return list(I_matrices) + MI_matrices
 
 
 _SQRT_HALF = np.sqrt(0.5)
@@ -285,7 +287,7 @@ def sanitize_transform(T, atol=1e-12):
 def get_transforms_from_symmetry(symmetry: str) -> list[np.ndarray]:
     """
     Given a symmetry string, return the corresponding list of 4x4 affine transformation matrices.
-    Supported symmetries: C1, CN, Ci, Cs, CNv, CNh, DN, DNv, DNh, SN (N even), T, Td, O, Oh.
+    Supported symmetries: C1, CN, Ci, Cs, CNv, CNh, DN, DNv, DNh, SN (N even), T, Td, TH, O, Oh, I/I1-I4 and IH/I1H-I4H (I5 and I5H raise NotImplementedError, as RELION does not support them).
     """
     symmetry = symmetry.upper()
     transforms = None

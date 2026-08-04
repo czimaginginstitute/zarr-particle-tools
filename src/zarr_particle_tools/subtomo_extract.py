@@ -10,7 +10,6 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Union
 
 import click
 import mrcfile
@@ -112,7 +111,7 @@ def process_tiltseries(
     tiltseries_relative_dir: Path,
     optics_row: pd.DataFrame,
     debug: bool = False,
-) -> Union[None, tuple[pd.DataFrame, int]]:
+) -> None | tuple[pd.DataFrame, int]:
     """
     Processes a single alignment file to extract subtomograms from the tiltseries.
     Does projection math to map from 3D coordinates to 2D tiltseries coordinates and then applies CTF premultiplication, dose weighting, and background subtraction.
@@ -187,7 +186,7 @@ def process_tiltseries(
     dose_weights = np.stack(
         [
             calculate_dose_weight_image(dose, tiltseries_pixel_size * bin, box_size, bfactor)
-            for dose, bfactor in zip(doses, bfactor_per_electron_dose)
+            for dose, bfactor in zip(doses, bfactor_per_electron_dose, strict=True)
         ],
         dtype=np.complex64,
     )
@@ -390,7 +389,7 @@ def write_starfiles(
 
 def extract_subtomograms(
     box_size: int,
-    output_dir: Union[str, Path],
+    output_dir: str | Path,
     particles_starfile: Path,
     tomograms_starfile: Path,
     bin: int = 1,
@@ -510,7 +509,7 @@ def extract_subtomograms(
 # TODO: compress all the common options into a model / kwargs?
 def parse_extract_local_subtomograms(
     box_size: int,
-    output_dir: Union[str, Path],
+    output_dir: str | Path,
     bin: int = 1,
     float16: bool = False,
     no_ctf: bool = False,
@@ -592,7 +591,7 @@ def parse_extract_local_subtomograms(
 
 def parse_extract_copick_local_subtomograms(
     box_size: int,
-    output_dir: Union[str, Path],
+    output_dir: str | Path,
     copick_config: Path,
     copick_name: str,
     copick_session_id: str,
@@ -695,7 +694,7 @@ def parse_extract_copick_local_subtomograms(
 
 
 def parse_extract_data_portal_subtomograms(
-    output_dir: Union[str, Path],
+    output_dir: str | Path,
     box_size: int = None,
     bin: int = 1,
     float16: bool = False,
@@ -789,7 +788,7 @@ def parse_extract_data_portal_subtomograms(
 
 
 def parse_extract_data_portal_copick_subtomograms(
-    output_dir: Union[str, Path],
+    output_dir: str | Path,
     copick_config: Path,
     copick_name: str,
     copick_session_id: str,

@@ -4,8 +4,10 @@ Data Portal or a copick project, for feeding `zarr-particle-ctfrefine`/`zarr-par
 
 CTF-refine / polish need the tomograms.star (portal/copick-derived) plus your OWN refined particles.star
 and reference half-maps (from a prior Refine3D) — so this emits only the tomograms.star (+ per-tomogram
-tilt stars), not particles. The job driver hard-errors if the generated rlnTomoName scheme doesn't
-overlap your particles, so a mismatch surfaces immediately instead of silently processing nothing.
+tilt stars). The data-portal variant also writes a particles.star into the same directory, which
+ctf-refine / polish ignore in favour of your own. The job driver hard-errors if the generated
+rlnTomoName scheme doesn't overlap your particles, so a mismatch surfaces immediately instead of
+silently processing nothing.
 """
 
 import logging

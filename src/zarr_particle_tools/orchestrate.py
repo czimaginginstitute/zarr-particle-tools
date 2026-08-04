@@ -49,7 +49,7 @@ RELION_BINARIES = (
     "relion_tomo_refine_ctf",
     "relion_tomo_align",
 )
-# our pipeliner jobs, registered as ccpem_pipeliner.jobs entry points only after `pip install -e .`;
+# our pipeliner jobs, registered as ccpem_pipeliner.jobs entry points by any pip install;
 # py2rely selects them (over stock RELION) when it sees the tomoTiltSeriesURI column
 REQUIRED_JOB_ENTRY_POINTS = (
     "zarrparticletools.pseudosubtomo",
@@ -84,7 +84,7 @@ def preflight_problems(require_copick: bool = False) -> list[str]:
     if missing_eps:
         problems.append(
             f"pipeliner job entry points not registered: {', '.join(missing_eps)} "
-            "(run `pip install -e .` so py2rely selects the zarr jobs)"
+            "(reinstall the package so py2rely selects the zarr jobs)"
         )
     return problems
 
@@ -313,6 +313,13 @@ class Py2RelyConfig:
     def __post_init__(self):
         if not self.denovo_generation and self.reference_template is None:
             raise click.ClickException("--reference-template is required unless --run-denovo-generation is set.")
+        if self.max_dose is not None and self.max_dose > 0:
+            # py2rely would accept this and the zarr Extract job would then raise NotImplementedError
+            # mid-pipeline, after SLURM submission; fail here instead
+            raise click.ClickException(
+                "--max-dose is not supported: the zarr extract job has no max-dose handling, so the "
+                "pipeline would fail once it reached Extract. Omit the flag."
+            )
 
 
 def read_tomograms_df(tomograms_star: Path):

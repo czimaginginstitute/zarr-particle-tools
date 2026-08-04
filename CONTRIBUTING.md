@@ -78,10 +78,11 @@ for f in *.tar.gz; do tar -xzf "$f"; done
    pytest
    ```
 
-4. **Commit your changes** with a clear, descriptive commit message:
+4. **Commit your changes** using a [conventional commit](https://www.conventionalcommits.org/)
+   message — CI checks the PR title against this, and release-please builds the changelog from it:
    ```bash
    git add .
-   git commit -m "Add feature X" -m "Detailed description of changes"
+   git commit -m "feat: add feature X" -m "Detailed description of changes"
    ```
 
 5. **Push to your fork**:
@@ -137,7 +138,7 @@ The test suite compares output with RELION 5.0 to ensure numerical precision. Di
 - Update the README.md if you add new features or change existing behavior
 - Add examples for new command-line options
 - Update docstrings for modified functions
-- Add entries to CHANGELOG.md for notable changes
+- Do not edit CHANGELOG.md; release-please generates it from conventional-commit messages
 
 ## Submitting a Pull Request
 

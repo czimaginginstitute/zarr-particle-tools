@@ -1,8 +1,9 @@
 import logging
 import threading
 from collections import defaultdict
+from collections.abc import Callable
 from functools import lru_cache, wraps
-from typing import Any, Callable, Optional, Union
+from typing import Any
 
 from cryoet_data_portal import (
     Alignment,
@@ -71,8 +72,8 @@ _lru_wrapped: list[Callable] = []
 STAGING_GRAPHQL_URL = "https://graphql.cryoet.staging.si.czi.technology/graphql"
 
 # Lazy shared client so --staging can set the URL before the first query.
-_api_url: Optional[str] = None
-_client: Optional[Client] = None
+_api_url: str | None = None
+_client: Client | None = None
 _client_lock = threading.Lock()
 # Guards shared-cache access; reentrant for nested derived-cache getters.
 _cache_lock = threading.RLock()
@@ -96,7 +97,7 @@ def clear_caches() -> None:
         cache.clear()
 
 
-def set_api_url(url: Optional[str]) -> None:
+def set_api_url(url: str | None) -> None:
     """Point the shared client at `url` (None=prod); reset it and clear caches."""
     global _api_url, _client
     with _client_lock:
@@ -110,7 +111,7 @@ CACHE_DEBUG = False
 
 # TODO: Does this really need to return a dict? Could just return the list of values, and determine the key from the values' foreign key attributes.
 def get_items_by_ids(
-    ids: Union[tuple[int], list[int], int],
+    ids: tuple[int] | list[int] | int,
     cache: dict,
     query_field,
     model_cls,
@@ -119,7 +120,7 @@ def get_items_by_ids(
     derived_cache_callable: Callable[[Any], Any] = None,
     derived_cache: dict = None,
     as_dict: bool = False,
-) -> Union[Union[list[Any], Any], dict[int, Union[list[Any], Any]]]:
+) -> list[Any] | Any | dict[int, list[Any] | Any]:
     """
     Fetch items from the cache or database by their IDs.
 
@@ -217,7 +218,7 @@ def get_items_by_ids(
 # Designed only for the case of the get functions, where the arguments are lists or integers
 def make_args_hashable(func: Callable) -> Callable:
     @wraps(func)
-    def wrapper(arg: Union[list, int]):
+    def wrapper(arg: list | int):
         if isinstance(arg, zip):
             arg = list(arg)
         if isinstance(arg, list):
@@ -243,14 +244,14 @@ def hashable_lru_cache(maxsize: int = None) -> Callable:
 
 
 @hashable_lru_cache(maxsize=None)
-def get_runs(run_ids: Union[list[int], int]) -> list[Run]:
+def get_runs(run_ids: list[int] | int) -> list[Run]:
     return get_items_by_ids(
         ids=run_ids, cache=run_cache, query_field=Run.id, model_cls=Run, key_extractor=lambda r: r.id
     )
 
 
 @hashable_lru_cache(maxsize=None)
-def get_runs_by_dataset_id(dataset_ids: Union[list[int], int]) -> dict[int, list[Run]]:
+def get_runs_by_dataset_id(dataset_ids: list[int] | int) -> dict[int, list[Run]]:
     return get_items_by_ids(
         ids=dataset_ids,
         cache=dataset_id_to_runs_cache,
@@ -265,7 +266,7 @@ def get_runs_by_dataset_id(dataset_ids: Union[list[int], int]) -> dict[int, list
 
 
 @hashable_lru_cache(maxsize=None)
-def get_tiltseries(tiltseries_ids: Union[list[int], int]) -> list[TiltSeries]:
+def get_tiltseries(tiltseries_ids: list[int] | int) -> list[TiltSeries]:
     return get_items_by_ids(
         ids=tiltseries_ids,
         cache=tiltseries_cache,
@@ -276,7 +277,7 @@ def get_tiltseries(tiltseries_ids: Union[list[int], int]) -> list[TiltSeries]:
 
 
 @hashable_lru_cache(maxsize=None)
-def get_alignments(alignment_ids: Union[list[int], int]) -> list[Alignment]:
+def get_alignments(alignment_ids: list[int] | int) -> list[Alignment]:
     return get_items_by_ids(
         ids=alignment_ids,
         cache=alignment_cache,
@@ -287,7 +288,7 @@ def get_alignments(alignment_ids: Union[list[int], int]) -> list[Alignment]:
 
 
 @hashable_lru_cache(maxsize=None)
-def get_alignments_by_run_id(run_ids: Union[list[int], int]) -> dict[int, list[Alignment]]:
+def get_alignments_by_run_id(run_ids: list[int] | int) -> dict[int, list[Alignment]]:
     return get_items_by_ids(
         ids=run_ids,
         cache=run_id_to_alignment_ids_cache,
@@ -302,7 +303,7 @@ def get_alignments_by_run_id(run_ids: Union[list[int], int]) -> dict[int, list[A
 
 
 @hashable_lru_cache(maxsize=None)
-def get_voxel_spacings(voxel_spacing_ids: Union[list[int], int]) -> list[TomogramVoxelSpacing]:
+def get_voxel_spacings(voxel_spacing_ids: list[int] | int) -> list[TomogramVoxelSpacing]:
     return get_items_by_ids(
         ids=voxel_spacing_ids,
         cache=voxel_spacing_cache,
@@ -313,7 +314,7 @@ def get_voxel_spacings(voxel_spacing_ids: Union[list[int], int]) -> list[Tomogra
 
 
 @hashable_lru_cache(maxsize=None)
-def get_voxel_spacings_by_run_id(run_ids: Union[list[int], int]) -> dict[int, list[TomogramVoxelSpacing]]:
+def get_voxel_spacings_by_run_id(run_ids: list[int] | int) -> dict[int, list[TomogramVoxelSpacing]]:
     return get_items_by_ids(
         ids=run_ids,
         cache=run_id_to_voxel_spacing_ids_cache,
@@ -328,7 +329,7 @@ def get_voxel_spacings_by_run_id(run_ids: Union[list[int], int]) -> dict[int, li
 
 
 @hashable_lru_cache(maxsize=None)
-def get_tomograms(tomogram_ids: Union[list[int], int]) -> list[Tomogram]:
+def get_tomograms(tomogram_ids: list[int] | int) -> list[Tomogram]:
     return get_items_by_ids(
         ids=tomogram_ids,
         cache=tomograms_cache,
@@ -339,7 +340,7 @@ def get_tomograms(tomogram_ids: Union[list[int], int]) -> list[Tomogram]:
 
 
 @hashable_lru_cache(maxsize=None)
-def get_tomograms_by_alignment_id(alignment_ids: Union[list[int], int]) -> dict[int, list[Tomogram]]:
+def get_tomograms_by_alignment_id(alignment_ids: list[int] | int) -> dict[int, list[Tomogram]]:
     return get_items_by_ids(
         ids=alignment_ids,
         cache=alignment_to_tomograms_cache,
@@ -354,7 +355,7 @@ def get_tomograms_by_alignment_id(alignment_ids: Union[list[int], int]) -> dict[
 
 
 @hashable_lru_cache(maxsize=None)
-def get_tomograms_by_voxel_spacing_id(voxel_spacing_ids: Union[list[int], int]) -> dict[int, list[Tomogram]]:
+def get_tomograms_by_voxel_spacing_id(voxel_spacing_ids: list[int] | int) -> dict[int, list[Tomogram]]:
     return get_items_by_ids(
         ids=voxel_spacing_ids,
         cache=tomogram_voxel_spacing_to_tomograms_cache,
@@ -370,7 +371,7 @@ def get_tomograms_by_voxel_spacing_id(voxel_spacing_ids: Union[list[int], int]) 
 
 @hashable_lru_cache(maxsize=None)
 def get_tomograms_by_alignment_id_and_voxel_spacing_id(
-    alignment_and_voxel_spacing_ids: Union[list[tuple[int, int]], tuple[int, int]],
+    alignment_and_voxel_spacing_ids: list[tuple[int, int]] | tuple[int, int],
 ) -> dict[tuple[int, int], list[Tomogram]]:
     """
     Fetch tomograms by alignment ID and voxel spacing ID (tuple of alignment ID and voxel spacing ID).
@@ -418,7 +419,7 @@ def get_tomograms_by_alignment_id_and_voxel_spacing_id(
 
 @hashable_lru_cache(maxsize=None)
 def get_per_section_alignments_by_alignment_id(
-    alignment_ids: Union[list[int], int],
+    alignment_ids: list[int] | int,
 ) -> dict[int, list[PerSectionAlignmentParameters]]:
     return get_items_by_ids(
         ids=alignment_ids,
@@ -433,7 +434,7 @@ def get_per_section_alignments_by_alignment_id(
 
 @hashable_lru_cache(maxsize=None)
 def get_per_section_parameters_by_tiltseries_id(
-    tiltseries_ids: Union[list[int], int],
+    tiltseries_ids: list[int] | int,
 ) -> dict[int, list[PerSectionParameters]]:
     """Fetches per-section parameters (CTF information) by tiltseries ID. tiltseries with invalid / incomplete CTF parameters will have a None value in the returned dictionary."""
     tiltseries_id_to_psp: dict[int, list[PerSectionParameters]] = get_items_by_ids(
@@ -454,7 +455,7 @@ def get_per_section_parameters_by_tiltseries_id(
 
 
 @hashable_lru_cache(maxsize=None)
-def get_frames_by_run_id(run_ids: Union[list[int], int]) -> dict[int, list[Frame]]:
+def get_frames_by_run_id(run_ids: list[int] | int) -> dict[int, list[Frame]]:
     return get_items_by_ids(
         ids=run_ids,
         cache=run_to_frames_cache,

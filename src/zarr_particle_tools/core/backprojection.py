@@ -234,7 +234,7 @@ def radial_avg_half_3d_linear(volume: np.ndarray) -> np.ndarray:
         volume (np.ndarray): 3D volume in np.rfft3 layout (box_size, box_size, box_size // 2 + 1).
 
     Returns:
-        avg: length = wh (i.e., xdim), complex if img is complex.
+        avg: length = wh (i.e., xdim), complex; complex input is required.
     """
     h, d, wh = volume.shape[0], volume.shape[1], volume.shape[2]
 

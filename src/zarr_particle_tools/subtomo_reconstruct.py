@@ -16,7 +16,6 @@ import os
 import shutil
 import time
 from pathlib import Path
-from typing import Union
 
 import click
 import mrcfile
@@ -277,7 +276,7 @@ def reconstruct_single_tiltseries(
     dose_weights = np.stack(
         [
             calculate_dose_weight_image(dose, tiltseries_pixel_size * bin, box_size, bfactor, cutoff_fraction)
-            for dose, bfactor in zip(doses, bfactor_per_electron_dose)
+            for dose, bfactor in zip(doses, bfactor_per_electron_dose, strict=True)
         ],
         dtype=np.complex128,
     )
@@ -332,7 +331,7 @@ def reconstruct_single_tiltseries_wrapper(arg):
 def finalise_volume(
     data_fourier_volume: np.ndarray,
     weight_fourier_volume: np.ndarray,
-    output_dir: Union[str, Path],
+    output_dir: str | Path,
     voxel_size: float,
     crop_size: int,
     symmetry: str,
@@ -409,7 +408,7 @@ def finalise_volume(
 # wiring: this path needs write_fourier=True, which raises unless no_circle_crop=True, because
 # real-space cropping forces an irfft2->rfft2 round trip that drops the Nyquist-bin phase.
 def reconstruct(
-    output_dir: Union[str, Path],
+    output_dir: str | Path,
     box_size: int,
     crop_size: int = None,
     symmetry: str = "C1",
@@ -417,10 +416,10 @@ def reconstruct(
     cutoff_fraction: float = 0.01,
     snr: float = None,
     taper: float = 10.0,
-    particles_starfile: Union[str, Path] = None,
-    trajectories_starfile: Union[str, Path] = None,
-    tiltseries_relative_dir: Union[str, Path] = None,
-    tomograms_starfile: Union[str, Path] = None,
+    particles_starfile: str | Path = None,
+    trajectories_starfile: str | Path = None,
+    tiltseries_relative_dir: str | Path = None,
+    tomograms_starfile: str | Path = None,
 ) -> None:
     """
     Reconstruct a particle map from particles and tiltseries.
@@ -557,7 +556,7 @@ def reconstruct(
 
 def reconstruct_local(
     box_size: int,
-    output_dir: Union[str, Path],
+    output_dir: str | Path,
     bin: int = 1,
     crop_size: int = None,
     symmetry: str = "C1",
@@ -565,11 +564,11 @@ def reconstruct_local(
     cutoff_fraction: float = 0.01,
     snr: float = None,
     taper: float = 10.0,
-    particles_starfile: Union[str, Path] = None,
-    trajectories_starfile: Union[str, Path] = None,
-    tiltseries_relative_dir: Union[str, Path] = None,
-    tomograms_starfile: Union[str, Path] = None,
-    optimisation_set_starfile: Union[str, Path] = None,
+    particles_starfile: str | Path = None,
+    trajectories_starfile: str | Path = None,
+    tiltseries_relative_dir: str | Path = None,
+    tomograms_starfile: str | Path = None,
+    optimisation_set_starfile: str | Path = None,
     overwrite: bool = False,
 ):
     """
@@ -619,7 +618,7 @@ def reconstruct_local(
 
 def reconstruct_copick_local(
     box_size: int,
-    output_dir: Union[str, Path],
+    output_dir: str | Path,
     copick_config: Path,
     copick_name: str,
     copick_session_id: str,
@@ -684,7 +683,7 @@ def reconstruct_copick_local(
 
 
 def reconstruct_data_portal(
-    output_dir: Union[str, Path],
+    output_dir: str | Path,
     box_size: int = None,
     bin: int = 1,
     crop_size: int = None,
@@ -738,7 +737,7 @@ def reconstruct_data_portal(
 
 
 def reconstruct_data_portal_copick(
-    output_dir: Union[str, Path],
+    output_dir: str | Path,
     copick_config: Path,
     copick_name: str,
     copick_session_id: str,

@@ -27,12 +27,11 @@ Everything below resolves from the portal alone — no local pick files — so i
 once you have the [prerequisites](#prerequisites-for-the-pipeline) and a reference template.
 
 It targets dataset **10426** with the automated `cytosolic ribosome` picks from deposition **10358**:
-5,246 oriented picks across 38 tilt series at a single 2.165 Å/px, every one carrying the alignment and
-per-tilt CTF metadata that STA needs. The science parameters (330 Å diameter, 1.65 box scaling, C1,
-bin 4→2→1) are those of an earlier RELION run on the same data.
+5,246 oriented picks across 38 tilt series at a single 2.165 Å/px, each carrying the alignment and
+per-tilt CTF metadata that STA needs.
 
 ```bash
-export TEMPLATE=/path/to/ribo80s_emd_3883_866_64_resized.mrc
+export TEMPLATE=tests/templates/ribo80s_emd_3883_866_64_resized.mrc
 export OUT=10426_ribosome_sta
 
 zarr-particle-pipeline data-portal \
@@ -49,28 +48,30 @@ zarr-particle-pipeline data-portal \
   --prepare-only
 ```
 
-Flags left at their defaults are omitted — `--low-pass 50`, `--binning-list 4,2,1`, `--symmetry C1`,
-`--cpu-constraint 16,12` and `--num-days 14` are all already the defaults, so passing them changes
-nothing. Add `--run-class3d --nclasses 3 --class-selection auto` for 3D classification, and
-`--gpu-constraint a40,a6000,l40s,a100,h100,h200` on a heterogeneous cluster (one architecture, or
-several meaning OR, comma- or pipe-separated; py2rely checks them against the cluster's SLURM features
-and drops any that are unavailable).
+Flags that would only restate a default are omitted: `--low-pass 50`, `--binning-list 4,2,1`,
+`--symmetry C1`, `--cpu-constraint 16,12` and `--num-days 14` are already the defaults.
+
+`--timeout` is the per-SLURM-job limit in hours (py2rely passes it to submitit as `timeout_min`), not a
+budget for the whole pipeline — that is `--num-days`. Add `--run-class3d --nclasses N
+--class-selection auto` for 3D classification, and `--gpu-constraint` on a heterogeneous cluster: one
+architecture, or several meaning OR, comma- or pipe-separated (py2rely checks them against the
+cluster's SLURM features and drops any that are unavailable).
 
 `--prepare-only` stops after writing `all_sta_parameters.json` + `pipeline.sh`; inspect them, then
 submit with `cd "$OUT" && sbatch pipeline.sh`. Drop the flag to submit directly. Star files land in
 `$OUT/input`, and RELION job directories (`Extract/`, `Refine3D/`, `Class3D/`, `CtfRefine/`, `Polish/`,
 `PostProcess/`, …) appear alongside them as the pipeline runs. Expect days on SLURM.
 
-The template is an 80S ribosome map (EMDB [EMD-3883](https://www.ebi.ac.uk/emdb/EMD-3883)) resampled to
-8.66 Å/px — bin 4 of this dataset's 2.165 Å — in a box of 64, which is what `330 × 1.65 / 8.66` works
-out to. Match the voxel size to your own dataset's coarsest binning if you adapt this.
+The template ships with the repo at `tests/templates/`: an 80S ribosome map (EMDB
+[EMD-3883](https://www.ebi.ac.uk/emdb/EMD-3883)) resampled to 8.66 Å/px — bin 4 of this dataset's
+2.165 Å — in a box of 64 (`330 × 1.65 / 8.66` = 62.9, rounded up). Match the voxel size to your
+own dataset's coarsest binning if you adapt this to other data.
 
 > [!NOTE]
-> Picks decide the outcome far more than flags do. A dataset needs enough good picks *and* full
-> alignment/CTF metadata to be a sound STA target; portal ground-truth annotations are often too sparse
-> (dataset 10426's own total ~1,100 over 6 runs). If your picks live in copick instead, use
-> `copick-data-portal` with the same science options — that path produced an 8.22 Å ribosome from 12,676
-> Octopi picks across 170 tomograms of dataset 10476.
+> Choosing the annotation matters more than tuning flags. A usable STA target needs enough good picks
+> *and* per-tilt CTF plus alignment metadata for every tilt series, and a single pixel size across the
+> selection — the orchestrator fails loudly if that last one does not hold. A dataset's ground-truth
+> annotation is often far sparser than an automated deposition's, so check before committing to one.
 
 ## Installation
 
@@ -134,27 +135,30 @@ The generated `input/tomograms.star` carries a `tomoTiltSeriesURI` column, and t
 py2rely auto-select the four zarr jobs (extract / reconstruct / ctf-refine / polish) instead of stock
 RELION. Refine3D / Class3D / MaskCreate / PostProcess stay stock.
 
-The copick-backed form is shown in [A full STA run](#a-full-sta-run) above. The `data-portal` form takes
-a portal annotation instead of copick picks, and is worth using only where the dataset's annotation
-holds enough good picks — check the count first, e.g. with
-`zarr-particle-tomograms data-portal --dataset-ids <id> --output-dir /tmp/check`:
+The `data-portal` form is shown in [A full STA run](#a-full-sta-run) above. `--protein-diameter` is
+required, and `--reference-template` is required unless `--run-denovo-generation`. Add `--run-ids` to
+restrict to a subset of runs, `--pixel-size` to override the derived pixel size, or `--pixel-size-tol`
+to loosen the header check. Every filter `zarr-particle-extract data-portal` accepts works here too
+(deposition, dataset, organism, run, tiltseries, alignment, tomogram and annotation IDs or names), which
+is how the headline run narrows dataset 10426 to one deposition's annotation.
+
+When the picks live in copick instead, `copick-data-portal` takes them from there and the tilt series
+from the portal (the copick run names must be portal run IDs):
 
 ```bash
-zarr-particle-pipeline data-portal \
-  --dataset-ids 10310 \
-  --annotation-names "cytosolic ribosome" --ground-truth \
+zarr-particle-pipeline copick-data-portal \
+  --copick-config config.json \
+  --copick-name ribosome --copick-user-id picker --copick-session-id 1 \
+  --copick-dataset-ids 10426 \
   --output-dir ribosome_sta \
+  --reference-template template.mrc \
   --protein-diameter 330 \
-  --reference-template ribo80s_emd_3883_925_128_resized.mrc \
-  --num-gpus 4 \
-  --prepare-only
+  --box-scaling 1.65 \
+  --num-gpus 4 --nthreads 4 --timeout 12
 ```
 
-`--protein-diameter` is required, and `--reference-template` is required unless
-`--run-denovo-generation`. Add `--run-ids 16848,16851` to restrict to a subset of runs, `--pixel-size` to
-override the derived pixel size, or `--pixel-size-tol` to loosen the header check. Every filter that
-`zarr-particle-extract data-portal` accepts works here too (deposition, dataset, organism, run,
-tiltseries, alignment, tomogram and annotation IDs or names).
+The science options are the same as the `data-portal` form; only the pick source differs. Match the
+template's voxel size to your dataset's coarsest binning.
 
 Or from star files you already have. Both must live inside `--output-dir`, because py2rely resolves star
 paths relative to the project directory; the pixel size is read from `rlnTomoTiltSeriesPixelSize`. Zarr jobs

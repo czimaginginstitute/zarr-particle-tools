@@ -8,12 +8,12 @@ access, no copick project, no RELION binaries, no /dev/shm.
 """
 
 import importlib
+import re
 from pathlib import Path
 
 import pandas as pd
 import pytest
 import starfile
-import tomllib
 from click.testing import CliRunner
 
 import zarr_particle_tools.generate_tomograms as gt
@@ -36,10 +36,23 @@ EXPECTED_SUBCOMMANDS = {
 }
 
 
+def _declared_scripts() -> dict[str, str]:
+    """
+    Read [project.scripts] straight out of pyproject.toml.
+
+    Deliberately a small regex rather than tomllib (3.11+, and the CI matrix starts at 3.10) and
+    rather than importlib.metadata (whose console_scripts go stale until the package is reinstalled,
+    which would make this fail for the wrong reason).
+    """
+    text = Path("pyproject.toml").read_text()
+    block = re.search(r"^\[project\.scripts\]\s*$(.*?)^\[", text, re.M | re.S)
+    assert block, "[project.scripts] not found in pyproject.toml"
+    return dict(re.findall(r'^\s*([\w.-]+)\s*=\s*"([^"]+)"\s*$', block.group(1), re.M))
+
+
 def _entry_point_clis():
-    scripts = tomllib.load(open("pyproject.toml", "rb"))["project"]["scripts"]
     out = {}
-    for name, target in scripts.items():
+    for name, target in _declared_scripts().items():
         mod, attr = target.split(":")
         out[name] = getattr(importlib.import_module(mod), attr)
     return out
