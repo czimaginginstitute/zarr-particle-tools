@@ -16,7 +16,7 @@ concurrency:
 env:
   # Zenodo record hosting the test data tarballs. Bump this when publishing a new version; it also
   # keys the cache, so a stale cache is not reused across record versions.
-  ZENODO_RECORD: "21780175"
+  ZENODO_RECORD: "21797985"
 
 jobs:
   test:

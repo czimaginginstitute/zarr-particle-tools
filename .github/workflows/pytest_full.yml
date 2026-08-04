@@ -11,7 +11,7 @@ concurrency:
 
 env:
   # Zenodo record hosting the test data tarballs. Bump this when publishing a new version.
-  ZENODO_RECORD: "21780175"
+  ZENODO_RECORD: "21797985"
 
 jobs:
   test:
