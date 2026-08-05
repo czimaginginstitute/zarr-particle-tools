@@ -251,7 +251,7 @@ def mrc_headers_match(file1: Path, file2: Path, float_atol: float = 1e-3) -> boo
             ("cella", (h1.cella.x, h1.cella.y, h1.cella.z), (h2.cella.x, h2.cella.y, h2.cella.z)),
             ("origin", (h1.origin.x, h1.origin.y, h1.origin.z), (h2.origin.x, h2.origin.y, h2.origin.z)),
         ]:
-            if not all(abs(float(a) - float(b)) <= float_atol for a, b in zip(r1, r2)):
+            if not all(abs(float(a) - float(b)) <= float_atol for a, b in zip(r1, r2, strict=True)):
                 diffs.append(f"{name}: {tuple(float(a) for a in r1)} != {tuple(float(b) for b in r2)}")
     if diffs:
         print(f"MRC header mismatch {file1.name} vs {file2.name}: " + "; ".join(diffs))

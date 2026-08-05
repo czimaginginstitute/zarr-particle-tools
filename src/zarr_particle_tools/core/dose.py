@@ -51,7 +51,7 @@ def calculate_dose_weight_image(
         cutoff_fraction (float, optional): Set weights below this dose weight fraction to zero. Defaults to 0 (i.e., no cutoff).
 
     Returns:
-        np.ndarray: A 2D array (box_size // 2 + 1, box_size) representing the dose-weighting filter in Fourier space.
+        np.ndarray: A 2D array (box_size, box_size // 2 + 1) representing the dose-weighting filter in Fourier space.
     """
     s = box_size
 

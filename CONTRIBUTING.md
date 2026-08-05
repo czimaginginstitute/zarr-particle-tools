@@ -53,10 +53,10 @@ cd tests/data
 # Download test data from Zenodo
 curl -L --fail --retry 5 --retry-delay 5 --continue-at - \
   -o zarr_particle_tools_test_data_large.tar.gz \
-  "https://zenodo.org/records/17338016/files/zarr_particle_tools_test_data_large.tar.gz?download=1"
+  "https://zenodo.org/records/21797985/files/zarr_particle_tools_test_data_large.tar.gz?download=1"
 curl -L --fail --retry 5 --retry-delay 5 --continue-at - \
   -o zarr_particle_tools_test_data_small.tar.gz \
-  "https://zenodo.org/records/17338016/files/zarr_particle_tools_test_data_small.tar.gz?download=1"
+  "https://zenodo.org/records/21797985/files/zarr_particle_tools_test_data_small.tar.gz?download=1"
 
 # Extract
 for f in *.tar.gz; do tar -xzf "$f"; done
@@ -78,10 +78,11 @@ for f in *.tar.gz; do tar -xzf "$f"; done
    pytest
    ```
 
-4. **Commit your changes** with a clear, descriptive commit message:
+4. **Commit your changes** using a [conventional commit](https://www.conventionalcommits.org/)
+   message — CI checks the PR title against this, and release-please builds the changelog from it:
    ```bash
    git add .
-   git commit -m "Add feature X" -m "Detailed description of changes"
+   git commit -m "feat: add feature X" -m "Detailed description of changes"
    ```
 
 5. **Push to your fork**:
@@ -120,8 +121,13 @@ ruff check src/ tests/ --fix
 - Write tests for new features or bug fixes
 - Place tests in the `tests/` directory
 - Run the test suite with `pytest`
-- Run tests in parallel with `pytest -n auto` (requires pytest-xdist)
+- Run tests in parallel with `pytest -n 4` (requires pytest-xdist). Avoid `-n auto` on shared or
+  login nodes: it spawns a worker per core and each worker's BLAS pool adds threads on top
 - Ensure all tests pass before submitting a pull request
+- Tests needing external tooling skip themselves: the ctf-refine / polish comparisons need the
+  `relion_tomo_*` binaries and a `/dev/shm` tmpfs, and the pipeline smoke tests need py2rely.
+  Set `ZPT_SMOKE_COPICK_CONFIG` to include the copick-backed smoke tests
+- CI runs `pytest -n 1 -k "not (local and unroofing)"`; the excluded cases need the large tarball
 
 The test suite compares output with RELION 5.0 to ensure numerical precision. Different tolerance levels are used for:
 - float16 data (relaxed tolerance due to reduced precision)
@@ -132,7 +138,7 @@ The test suite compares output with RELION 5.0 to ensure numerical precision. Di
 - Update the README.md if you add new features or change existing behavior
 - Add examples for new command-line options
 - Update docstrings for modified functions
-- Add entries to CHANGELOG.md for notable changes
+- Do not edit CHANGELOG.md; release-please generates it from conventional-commit messages
 
 ## Submitting a Pull Request
 

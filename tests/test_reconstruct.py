@@ -15,12 +15,14 @@ from zarr_particle_tools.subtomo_reconstruct import cli, reconstruct_local
 # baseline_OH is the sole exception: RELION's improper-group symmetrization is non-Hermitian on kx=0
 # (a RELION bug; Python is correct), so it keeps a loose ulp_factor.
 DEFAULT_ULP_FACTOR = 64.0
-# data_half* (pre-gridding-correction) runs highest (~72x ULP); final/full halves ~3-4x.
+# data_half* (post-gridding, pre-CTF-correction) runs highest (~72x ULP); final/full halves ~3-4x.
 HALF_ULP_FACTOR = 128.0
 
-# TODO: need to add real datasets
 SYNTHETIC_RECONSTRUCT_PARAMETERS = {
     "baseline": {"box_size": 64},
+    # RELION-parity for the flags that pick its Wiener CTF correction and the sphere taper
+    "snr10": {"box_size": 64, "snr": 10.0},
+    "taper20": {"box_size": 64, "taper": 20.0},
     "baseline_C2": {"box_size": 64, "symmetry": "C2"},
     "baseline_C3": {"box_size": 64, "symmetry": "C3"},
     "baseline_C4": {"box_size": 64, "symmetry": "C4"},
@@ -121,6 +123,8 @@ def test_reconstruct_local_parametrized(
         tiltseries_relative_dir=data_root,
         tomograms_starfile=reconstruct_arguments.get("tomograms_starfile", data_root / "tomograms.star"),
         no_ctf=no_ctf,
+        snr=reconstruct_arguments.get("snr"),
+        taper=reconstruct_arguments.get("taper", 10.0),
     )
 
     reconstruct_dir = output_dir

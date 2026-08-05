@@ -29,11 +29,6 @@ class PythonRelionSubtomoReconstructJob(PipelinerJob):
         self.jobinfo.short_desc = "Reconstruct a 3D particle density map using zarr-particle-reconstruct (Python reimplementation of RELION job)."
         self.joboptions = copy.deepcopy(RelionReconstructParticleJob().joboptions)
 
-        # remove options not supported by the Python implementation
-        for k in ("Wiener_SNR", "point_group", "do_helical"):
-            if k in self.joboptions:
-                del self.joboptions[k]
-
     def create_output_nodes(self):
         self.add_output_node("merged.mrc", NODE_DENSITYMAP, ["relion", "tomo", "reconstruct", "python"])
         self.add_output_node("half1.mrc", NODE_DENSITYMAP, ["relion", "halfmap", "reconstruct", "python"])
@@ -58,6 +53,15 @@ class PythonRelionSubtomoReconstructJob(PipelinerJob):
         crop_size = self.joboptions["crop_size"].get_string()
         if crop_size != "-1":
             cmd += ["--crop-size", crop_size]
+
+        symmetry = self.joboptions["point_group"].get_string()
+        if symmetry:
+            cmd += ["--symmetry", symmetry]
+        # Wiener_SNR defaults to 0 here (RELION uses a negative default); either way, only a positive
+        # value selects the Wiener CTF correction over the radial-average heuristic
+        snr = self.joboptions["Wiener_SNR"].get_number()
+        if snr > 0:
+            cmd += ["--snr", str(snr)]
 
         return [PipelinerCommand(cmd)]
 

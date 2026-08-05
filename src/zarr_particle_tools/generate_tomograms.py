@@ -4,14 +4,17 @@ Data Portal or a copick project, for feeding `zarr-particle-ctfrefine`/`zarr-par
 
 CTF-refine / polish need the tomograms.star (portal/copick-derived) plus your OWN refined particles.star
 and reference half-maps (from a prior Refine3D) — so this emits only the tomograms.star (+ per-tomogram
-tilt stars), not particles. The job driver hard-errors if the generated rlnTomoName scheme doesn't
-overlap your particles, so a mismatch surfaces immediately instead of silently processing nothing.
+tilt stars). The data-portal variant also writes a particles.star into the same directory, which
+ctf-refine / polish ignore in favour of your own. The job driver hard-errors if the generated
+rlnTomoName scheme doesn't overlap your particles, so a mismatch surfaces immediately instead of
+silently processing nothing.
 """
 
 import logging
 from pathlib import Path
 
 import click
+import starfile
 
 import zarr_particle_tools.cli.options as cli_options
 import zarr_particle_tools.generate.cdp_generate_starfiles as cdp_generate
@@ -60,7 +63,68 @@ def generate_copick_data_portal_tomograms(
     return tomograms_path
 
 
-@click.group("Generate a tomograms.star (S3-zarr tilt series) for CTF-refine / polish.")
+JOB_INPUT_SUBDIR = "input"
+
+
+def tomograms_star_for_job(output_dir, data_portal_args=None, copick_args=None) -> Path:
+    """
+    Generate a tomograms.star under <output_dir>/input for a CTF-refine / polish run, so the
+    generated inputs sit alongside (not inside) the RELION results. Returns its path.
+    """
+    input_dir = Path(output_dir) / JOB_INPUT_SUBDIR
+    if copick_args is not None:
+        path = generate_copick_data_portal_tomograms(output_dir=input_dir, **copick_args)
+    else:
+        path = generate_data_portal_tomograms(output_dir=input_dir, **(data_portal_args or {}))
+    return _absolutize_tiltseries_paths(path)
+
+
+def _absolutize_tiltseries_paths(tomograms_star: Path) -> Path:
+    """
+    Rewrite rlnTomoTiltSeriesStarFile to absolute paths.
+
+    The generator writes it relative to the *project root* (<output_dir>.parent), which is right for
+    the pipeline (py2rely runs with cwd=<output_dir>). The CTF-refine / polish jobs get no such cwd:
+    they try the value cwd-relative and then relative to the tomograms.star's own directory, so a
+    relative value either misses entirely (landing on <output_dir>/input/input/tiltseries/...) or, if
+    a same-named tiltseries/ exists under the cwd, silently resolves to the wrong job's tilt star.
+    Absolute paths remove both hazards; the job driver rewrites this column for its own outputs
+    anyway, so nothing downstream depends on it staying relative.
+    """
+    data = starfile.read(tomograms_star)
+    blocks = data if isinstance(data, dict) else {getattr(data, "name", "global") or "global": data}
+    base = tomograms_star.parent
+    changed = False
+    for key, df in blocks.items():
+        if df is None or "rlnTomoTiltSeriesStarFile" not in getattr(df, "columns", []):
+            continue
+
+        def absolutize(value, base=base):
+            p = Path(str(value))
+            if p.is_absolute():
+                return str(p)
+            # the generator prefixes the output dir's own name, so that prefix is relative to base.parent
+            root = base.parent if p.parts and p.parts[0] == base.name else base
+            return str((root / p).resolve())
+
+        blocks[key] = df.assign(rlnTomoTiltSeriesStarFile=df["rlnTomoTiltSeriesStarFile"].map(absolutize))
+        changed = True
+    if changed:
+        # write back through the block dict so the RELION-required `global` block name survives
+        starfile.write(blocks, tomograms_star)
+    return tomograms_star
+
+
+def reject_optimisation_set(optimisation_set_starfile, subcommand: str) -> None:
+    """An optimisation set already names its own tomograms.star, so it cannot take a generated one."""
+    if optimisation_set_starfile is not None:
+        raise click.UsageError(
+            f"--optimisation-set-starfile is not supported by `{subcommand}`, because it already "
+            "references its own tomograms.star. Use the `local` subcommand for an optimisation set."
+        )
+
+
+@click.group(help="Generate a tomograms.star (S3-zarr tilt series) for CTF-refine / polish.")
 def cli():
     pass
 

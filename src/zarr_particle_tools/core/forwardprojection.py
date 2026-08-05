@@ -88,7 +88,7 @@ def project_3d_point_to_2d(point_3d: np.ndarray, projection_matrix: np.ndarray) 
         projection_matrix (np.ndarray): A 4x4 projection matrix.
 
     Returns:
-        np.ndarray: The projected 2D point as a numpy array of shape (2,).
+        np.ndarray: The projected point as a homogeneous numpy array of shape (4,); callers slice [:2] for the 2D coordinate and [2] for the depth.
     """
     if point_3d.shape != (3,):
         raise ValueError("point_3d must be a 1D array with 3 elements.")

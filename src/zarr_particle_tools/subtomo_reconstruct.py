@@ -9,7 +9,6 @@ Regarding output files:
 The same applies for half1 and half2 if random subsets are present.
 """
 
-# TODO: write tests (at least for local)
 import ast
 import logging
 import multiprocessing as mp
@@ -17,7 +16,6 @@ import os
 import shutil
 import time
 from pathlib import Path
-from typing import Union
 
 import click
 import mrcfile
@@ -30,6 +28,7 @@ import zarr_particle_tools.cli.options as cli_options
 from zarr_particle_tools.core.backprojection import (
     backproject_slice_backward,
     ctf_correct_3d_heuristic,
+    ctf_correct_3d_wiener,
     get_rotation_matrix_from_euler,
     gridding_correct_3d_sinc2,
 )
@@ -51,9 +50,9 @@ from zarr_particle_tools.core.symmetry import (
     symmetrise_fs_real,
 )
 from zarr_particle_tools.subtomo_extract import (
+    parse_extract_copick_local_subtomograms,
     parse_extract_data_portal_copick_subtomograms,
     parse_extract_data_portal_subtomograms,
-    parse_extract_local_copick_subtomograms,
     parse_extract_local_subtomograms,
 )
 
@@ -94,6 +93,7 @@ def process_particle(
     spherical_aberration: float,
     amplitude_contrast: float,
     handedness: int,
+    defocus_slope: float,
     tiltseries_pixel_size: float,
     phase_shift: list[float],
     defocus_u: list[float],
@@ -148,6 +148,7 @@ def process_particle(
                     spherical_aberration=spherical_aberration,
                     amplitude_contrast=amplitude_contrast,
                     handedness=handedness,
+                    defocus_slope=defocus_slope,
                     tiltseries_pixel_size=tiltseries_pixel_size,
                     phase_shift=phase_shift[section_index],
                     defocus_u=defocus_u[section_index],
@@ -243,6 +244,9 @@ def reconstruct_single_tiltseries(
     spherical_aberration = tiltseries_row_entry["rlnSphericalAberration"]
     amplitude_contrast = tiltseries_row_entry["rlnAmplitudeContrast"]
     handedness = tiltseries_row_entry["rlnTomoHand"]
+    defocus_slope = (
+        float(tiltseries_row_entry["rlnTomoDefocusSlope"]) if "rlnTomoDefocusSlope" in tiltseries_row_entry else 1.0
+    )
     phase_shift = (
         individual_tiltseries_df["rlnPhaseShift"].values
         if "rlnPhaseShift" in individual_tiltseries_df.columns
@@ -253,7 +257,7 @@ def reconstruct_single_tiltseries(
     defocus_angle = individual_tiltseries_df["rlnDefocusAngle"].values
     doses = individual_tiltseries_df["rlnMicrographPreExposure"].values
     ctf_scalefactor = (
-        individual_tiltseries_df["rlnCtfScalefactor"]
+        individual_tiltseries_df["rlnCtfScalefactor"].values
         if "rlnCtfScalefactor" in individual_tiltseries_df.columns
         else [1.0] * len(individual_tiltseries_df)
     )
@@ -272,7 +276,7 @@ def reconstruct_single_tiltseries(
     dose_weights = np.stack(
         [
             calculate_dose_weight_image(dose, tiltseries_pixel_size * bin, box_size, bfactor, cutoff_fraction)
-            for dose, bfactor in zip(doses, bfactor_per_electron_dose)
+            for dose, bfactor in zip(doses, bfactor_per_electron_dose, strict=True)
         ],
         dtype=np.complex128,
     )
@@ -297,6 +301,7 @@ def reconstruct_single_tiltseries(
         "spherical_aberration": spherical_aberration,
         "amplitude_contrast": amplitude_contrast,
         "handedness": handedness,
+        "defocus_slope": defocus_slope,
         "tiltseries_pixel_size": tiltseries_pixel_size,
         "phase_shift": phase_shift,
         "defocus_u": defocus_u,
@@ -326,11 +331,13 @@ def reconstruct_single_tiltseries_wrapper(arg):
 def finalise_volume(
     data_fourier_volume: np.ndarray,
     weight_fourier_volume: np.ndarray,
-    output_dir: Union[str, Path],
+    output_dir: str | Path,
     voxel_size: float,
     crop_size: int,
     symmetry: str,
     tag: str,
+    snr: float = None,
+    taper: float = 10.0,
 ) -> tuple[Path, Path, Path]:
     """
     Finalise the volume by applying symmetry, gridding correction, CTF correction, and spherical masking with mean subtraction.
@@ -346,9 +353,17 @@ def finalise_volume(
         weight_fourier_volume = symmetrise_fs_real(weight_fourier_volume, transforms)
 
     gridding_corrected_volume = gridding_correct_3d_sinc2(particle_fourier_volume=data_fourier_volume)
-    ctf_corrected_real_volume = ctf_correct_3d_heuristic(
-        real_space_volume=gridding_corrected_volume, weights_fourier_volume=weight_fourier_volume
-    )
+    # RELION uses the Wiener correction when an explicit SNR is given, else the heuristic
+    if snr is not None and snr > 0:
+        ctf_corrected_real_volume = ctf_correct_3d_wiener(
+            real_space_volume=gridding_corrected_volume,
+            weights_fourier_volume=weight_fourier_volume,
+            wiener_offset=1.0 / snr,
+        )
+    else:
+        ctf_corrected_real_volume = ctf_correct_3d_heuristic(
+            real_space_volume=gridding_corrected_volume, weights_fourier_volume=weight_fourier_volume
+        )
 
     data_path = Path(output_dir) / f"data_{tag}.mrc"
     with mrcfile.new(data_path, overwrite=True) as mrc:
@@ -369,7 +384,7 @@ def finalise_volume(
         end = start + crop_size
         final_volume = ctf_corrected_real_volume[start:end, start:end, start:end]
 
-    soft_mask = spherical_soft_mask(box_size=crop_size, crop_size=crop_size, falloff=10.0)
+    soft_mask = spherical_soft_mask(box_size=crop_size, crop_size=crop_size, falloff=taper)
     inner_mask = soft_mask > 0
     inner_mean = (final_volume[inner_mask] * soft_mask[inner_mask]).sum() / soft_mask[inner_mask].sum()
     final_volume[~inner_mask] = 0.0
@@ -387,19 +402,24 @@ def finalise_volume(
 
 # TODO: write out weight*.mrc files
 # TODO: implement tiltseries relative dir but for particles
-# TODO: support no_circle_crop
 # TODO: support multiple box sizes / crop sizes / pixel sizes
+# TODO: support circle cropping (RELION reconstruct_particle's default; we only implement its
+# --no_circle_crop mode, which is how our references were generated). Blocked on precision, not
+# wiring: this path needs write_fourier=True, which raises unless no_circle_crop=True, because
+# real-space cropping forces an irfft2->rfft2 round trip that drops the Nyquist-bin phase.
 def reconstruct(
-    output_dir: Union[str, Path],
+    output_dir: str | Path,
     box_size: int,
     crop_size: int = None,
     symmetry: str = "C1",
     no_ctf: bool = False,
     cutoff_fraction: float = 0.01,
-    particles_starfile: Union[str, Path] = None,
-    trajectories_starfile: Union[str, Path] = None,
-    tiltseries_relative_dir: Union[str, Path] = None,
-    tomograms_starfile: Union[str, Path] = None,
+    snr: float = None,
+    taper: float = 10.0,
+    particles_starfile: str | Path = None,
+    trajectories_starfile: str | Path = None,
+    tiltseries_relative_dir: str | Path = None,
+    tomograms_starfile: str | Path = None,
 ) -> None:
     """
     Reconstruct a particle map from particles and tiltseries.
@@ -499,6 +519,8 @@ def reconstruct(
             crop_size,
             symmetry,
             tag="half1",
+            snr=snr,
+            taper=taper,
         )
         finalise_volume(
             output_data_fourier_volume_half2,
@@ -508,6 +530,8 @@ def reconstruct(
             crop_size,
             symmetry,
             tag="half2",
+            snr=snr,
+            taper=taper,
         )
     finalise_volume(
         output_data_fourier_volume,
@@ -517,6 +541,8 @@ def reconstruct(
         crop_size,
         symmetry,
         tag="merged",
+        snr=snr,
+        taper=taper,
     )
 
     # remove bulky intermediate subtomograms; keep the star files (optimisation_set.star is a pipeliner output)
@@ -530,17 +556,19 @@ def reconstruct(
 
 def reconstruct_local(
     box_size: int,
-    output_dir: Union[str, Path],
+    output_dir: str | Path,
     bin: int = 1,
     crop_size: int = None,
     symmetry: str = "C1",
     no_ctf: bool = False,
     cutoff_fraction: float = 0.01,
-    particles_starfile: Union[str, Path] = None,
-    trajectories_starfile: Union[str, Path] = None,
-    tiltseries_relative_dir: Union[str, Path] = None,
-    tomograms_starfile: Union[str, Path] = None,
-    optimisation_set_starfile: Union[str, Path] = None,
+    snr: float = None,
+    taper: float = 10.0,
+    particles_starfile: str | Path = None,
+    trajectories_starfile: str | Path = None,
+    tiltseries_relative_dir: str | Path = None,
+    tomograms_starfile: str | Path = None,
+    optimisation_set_starfile: str | Path = None,
     overwrite: bool = False,
 ):
     """
@@ -579,6 +607,8 @@ def reconstruct_local(
         symmetry=symmetry,
         no_ctf=no_ctf,
         cutoff_fraction=cutoff_fraction,
+        snr=snr,
+        taper=taper,
         particles_starfile=new_particles_starfile,
         trajectories_starfile=trajectories_starfile,
         tiltseries_relative_dir=tiltseries_relative_dir,
@@ -586,9 +616,9 @@ def reconstruct_local(
     )
 
 
-def reconstruct_local_copick(
+def reconstruct_copick_local(
     box_size: int,
-    output_dir: Union[str, Path],
+    output_dir: str | Path,
     copick_config: Path,
     copick_name: str,
     copick_session_id: str,
@@ -598,6 +628,8 @@ def reconstruct_local_copick(
     symmetry: str = "C1",
     no_ctf: bool = False,
     cutoff_fraction: float = 0.01,
+    snr: float = None,
+    taper: float = 10.0,
     copick_run_names: list[str] = None,
     tiltseries_relative_dir: Path = None,
     tomograms_starfile: Path = None,
@@ -612,7 +644,7 @@ def reconstruct_local_copick(
         tiltseries_relative_dir,
         tomograms_starfile,
         _,
-    ) = parse_extract_local_copick_subtomograms(
+    ) = parse_extract_copick_local_subtomograms(
         box_size=box_size,
         output_dir=output_dir,
         copick_config=copick_config,
@@ -641,6 +673,8 @@ def reconstruct_local_copick(
         symmetry=symmetry,
         no_ctf=no_ctf,
         cutoff_fraction=cutoff_fraction,
+        snr=snr,
+        taper=taper,
         particles_starfile=particles_starfile,
         trajectories_starfile=trajectories_starfile,
         tiltseries_relative_dir=tiltseries_relative_dir,
@@ -649,13 +683,15 @@ def reconstruct_local_copick(
 
 
 def reconstruct_data_portal(
-    output_dir: Union[str, Path],
+    output_dir: str | Path,
     box_size: int = None,
     bin: int = 1,
     crop_size: int = None,
     symmetry: str = "C1",
     no_ctf: bool = False,
     cutoff_fraction: float = 0.01,
+    snr: float = None,
+    taper: float = 10.0,
     overwrite: bool = False,
     **data_portal_args,
 ):
@@ -691,6 +727,8 @@ def reconstruct_data_portal(
         symmetry=symmetry,
         no_ctf=no_ctf,
         cutoff_fraction=cutoff_fraction,
+        snr=snr,
+        taper=taper,
         particles_starfile=particles_starfile,
         trajectories_starfile=trajectories_starfile,
         tiltseries_relative_dir=tiltseries_relative_dir,
@@ -699,7 +737,7 @@ def reconstruct_data_portal(
 
 
 def reconstruct_data_portal_copick(
-    output_dir: Union[str, Path],
+    output_dir: str | Path,
     copick_config: Path,
     copick_name: str,
     copick_session_id: str,
@@ -712,6 +750,8 @@ def reconstruct_data_portal_copick(
     symmetry: str = "C1",
     no_ctf: bool = False,
     cutoff_fraction: float = 0.01,
+    snr: float = None,
+    taper: float = 10.0,
     overwrite: bool = False,
     **extra_kwargs,
 ):
@@ -753,6 +793,8 @@ def reconstruct_data_portal_copick(
         symmetry=symmetry,
         no_ctf=no_ctf,
         cutoff_fraction=cutoff_fraction,
+        snr=snr,
+        taper=taper,
         particles_starfile=particles_starfile,
         trajectories_starfile=trajectories_starfile,
         tiltseries_relative_dir=tiltseries_relative_dir,
@@ -760,7 +802,7 @@ def reconstruct_data_portal_copick(
     )
 
 
-@click.group("Reconstruct a particle map from particles and tiltseries.")
+@click.group(help="Reconstruct a particle map from particles and tiltseries.")
 def cli():
     pass
 
@@ -775,15 +817,15 @@ def cmd_local(**kwargs):
     reconstruct_local(**kwargs)
 
 
-@cli.command("local-copick", help="Reconstruct a particle map from local tiltseries with copick particles.")
+@cli.command("copick-local", help="Reconstruct a particle map from local tiltseries with copick particles.")
 @cli_options.local_shared_options()
 @cli_options.copick_options()
 @cli_options.common_options()
 @cli_options.reconstruct_options()
-def cmd_local_copick(**kwargs):
+def cmd_copick_local(**kwargs):
     setup_logging(debug=kwargs.pop("debug", False))
     kwargs["copick_run_names"] = cli_options.flatten(kwargs["copick_run_names"])
-    reconstruct_local_copick(**kwargs)
+    reconstruct_copick_local(**kwargs)
 
 
 @cli.command("data-portal", help="Reconstruct a particle map using picks and tiltseries from the CryoET Data Portal.")

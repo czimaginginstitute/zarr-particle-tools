@@ -3,17 +3,17 @@ Run RELION's CTF refinement (relion_tomo_refine_ctf) on tilt series stored as OM
 
 Thin wrapper over subtomo_relion_job: it only supplies the binary name and the CTF-refine flag
 builder. Reference half-maps (--ref1/--ref2) from a prior Refine3D are mandatory (RELION requires
-them). See docs/audit/phase3_4_ctfrefine_polish_design.md.
+them).
 """
 
 import logging
 from pathlib import Path
-from typing import Optional, Union
 
 import click
 
 import zarr_particle_tools.cli.options as cli_options
 from zarr_particle_tools.core.helpers import setup_logging
+from zarr_particle_tools.generate_tomograms import reject_optimisation_set, tomograms_star_for_job
 from zarr_particle_tools.subtomo_relion_job import run_relion_tomo_job
 
 logger = logging.getLogger(__name__)
@@ -63,17 +63,17 @@ def build_ctf_cmd(relion_bin, opt_set, output_dir, box_size, ref1, ref2, mask, f
 
 
 def run_ctf_refine(
-    output_dir: Union[str, Path],
+    output_dir: str | Path,
     box_size: int,
-    ref1: Union[str, Path],
-    ref2: Union[str, Path],
-    particles_starfile: Optional[Path] = None,
-    tomograms_starfile: Optional[Path] = None,
-    trajectories_starfile: Optional[Path] = None,
-    optimisation_set_starfile: Optional[Path] = None,
-    tiltseries_relative_dir: Optional[Path] = None,
-    mask: Optional[Path] = None,
-    fsc: Optional[Path] = None,
+    ref1: str | Path,
+    ref2: str | Path,
+    particles_starfile: Path | None = None,
+    tomograms_starfile: Path | None = None,
+    trajectories_starfile: Path | None = None,
+    optimisation_set_starfile: Path | None = None,
+    tiltseries_relative_dir: Path | None = None,
+    mask: Path | None = None,
+    fsc: Path | None = None,
     do_defocus: bool = False,
     do_reg_defocus: bool = False,
     lambda_reg: float = 0.1,
@@ -85,7 +85,7 @@ def run_ctf_refine(
     focus_range: float = 3000.0,
     threads: int = 6,
     relion_bin: str = RELION_BIN,
-    shm_dir: Union[str, Path] = "/dev/shm",
+    shm_dir: str | Path = "/dev/shm",
     keep_shm: bool = False,
     per_tomogram: bool = True,
     n_workers: int = 0,
@@ -131,7 +131,7 @@ def run_ctf_refine(
     )
 
 
-@click.group("Run RELION CTF refinement on zarr tilt series.")
+@click.group(help="Run RELION CTF refinement on zarr tilt series.")
 def cli():
     pass
 
@@ -142,6 +142,49 @@ def cli():
 @cli_options.ctfrefine_options()
 def cmd_local(**kwargs):
     setup_logging(kwargs.pop("debug", False))
+    run_ctf_refine(**kwargs)
+
+
+@cli.command(
+    "data-portal",
+    help="CTF-refine with a tomograms.star generated from the CryoET Data Portal (still needs your "
+    "refined --particles-starfile and --ref1/--ref2).",
+)
+@cli_options.local_options()
+@cli_options.ctfrefine_options()
+@cli_options.data_portal_options()
+@cli_options.job_dry_run_option
+def cmd_data_portal(**kwargs):
+    setup_logging(kwargs.pop("debug", False))
+    dry_run = kwargs.pop("dry_run", False)
+    reject_optimisation_set(kwargs.pop("optimisation_set_starfile", None), "data-portal")
+    portal_args, kwargs = cli_options.split_data_portal_args(kwargs)
+    kwargs["tomograms_starfile"] = tomograms_star_for_job(kwargs["output_dir"], data_portal_args=portal_args)
+    if dry_run:
+        logger.info("Dry run: generated %s; skipping RELION.", kwargs["tomograms_starfile"])
+        return kwargs["tomograms_starfile"]
+    run_ctf_refine(**kwargs)
+
+
+@cli.command(
+    "copick-data-portal",
+    help="CTF-refine with a tomograms.star generated for a copick project's Data Portal runs (still "
+    "needs your refined --particles-starfile and --ref1/--ref2).",
+)
+@cli_options.local_options()
+@cli_options.ctfrefine_options()
+@cli_options.copick_options()
+@cli_options.data_portal_copick_options()
+@cli_options.job_dry_run_option
+def cmd_copick_data_portal(**kwargs):
+    setup_logging(kwargs.pop("debug", False))
+    dry_run = kwargs.pop("dry_run", False)
+    reject_optimisation_set(kwargs.pop("optimisation_set_starfile", None), "copick-data-portal")
+    copick_args, kwargs = cli_options.split_copick_args(kwargs)
+    kwargs["tomograms_starfile"] = tomograms_star_for_job(kwargs["output_dir"], copick_args=copick_args)
+    if dry_run:
+        logger.info("Dry run: generated %s; skipping RELION.", kwargs["tomograms_starfile"])
+        return kwargs["tomograms_starfile"]
     run_ctf_refine(**kwargs)
 
 

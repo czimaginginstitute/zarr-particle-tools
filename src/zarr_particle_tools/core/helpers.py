@@ -2,7 +2,6 @@ import logging
 import os
 import shutil
 from pathlib import Path
-from typing import Union
 
 import pandas as pd
 import starfile
@@ -116,12 +115,12 @@ def get_tomo_name(run_id: int, tiltseries_id: int, alignment_id: int, voxel_spac
 
 def validate_and_setup(
     box_size: int,
-    output_dir: Union[str, Path],
-    particles_starfile: Union[str, Path, None] = None,
-    trajectories_starfile: Union[str, Path, None] = None,
-    tiltseries_relative_dir: Union[str, Path, None] = None,
-    tomograms_starfile: Union[str, Path, None] = None,
-    optimisation_set_starfile: Union[str, Path, None] = None,
+    output_dir: str | Path,
+    particles_starfile: str | Path | None = None,
+    trajectories_starfile: str | Path | None = None,
+    tiltseries_relative_dir: str | Path | None = None,
+    tomograms_starfile: str | Path | None = None,
+    optimisation_set_starfile: str | Path | None = None,
     crop_size: int = None,
     overwrite: bool = False,
     dry_run: bool = False,

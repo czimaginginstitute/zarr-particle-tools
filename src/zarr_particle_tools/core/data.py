@@ -17,7 +17,32 @@ logger = logging.getLogger(__name__)
 # S3 timeouts + retries so a stalled read fails/retries instead of hanging
 S3_CONFIG_KWARGS = {"connect_timeout": 20, "read_timeout": 60, "retries": {"max_attempts": 5, "mode": "adaptive"}}
 
-global_fs = s3fs.S3FileSystem(anon=True, config_kwargs=S3_CONFIG_KWARGS)
+# Anonymous S3 (prod public bucket); --staging flips to False for the private bucket.
+_s3_anon = True
+
+global_fs = s3fs.S3FileSystem(anon=_s3_anon, config_kwargs=S3_CONFIG_KWARGS)
+
+
+def set_s3_anon(anon: bool) -> None:
+    """Set S3 anonymous access and rebuild the shared filesystem."""
+    global _s3_anon, global_fs
+    _s3_anon = anon
+    global_fs = s3fs.S3FileSystem(anon=anon, config_kwargs=S3_CONFIG_KWARGS)
+
+
+def _is_forbidden(exc: Exception) -> bool:
+    """True if the exception looks like an S3 403 / AccessDenied."""
+    s = str(exc)
+    return isinstance(exc, PermissionError) or "403" in s or "AccessDenied" in s or "Forbidden" in s
+
+
+def _s3_access_error(s3_uri: str, exc: Exception) -> RuntimeError:
+    mode = "anonymous" if _s3_anon else "authenticated"
+    return RuntimeError(
+        f"S3 access denied (403/Forbidden) for {s3_uri} using {mode} access. "
+        f"If this is staging, the credentials lack read permission on that bucket. "
+        f"Original error: {exc}"
+    )
 
 
 class DataReader:
@@ -60,20 +85,25 @@ class DataReader:
 
     def _get_s3fs(self):
         if not self._s3fs:
-            self._s3fs = s3fs.S3FileSystem(anon=True, config_kwargs=S3_CONFIG_KWARGS)
+            self._s3fs = s3fs.S3FileSystem(anon=_s3_anon, config_kwargs=S3_CONFIG_KWARGS)
         return self._s3fs
 
     def _load_data(self):
         if self.is_s3:
-            if self.is_zarr:
-                logger.debug(f"Loading S3 Zarr store: {self.locator}")
-                s3_map = s3fs.S3Map(root=self.locator, s3=self._get_s3fs(), check=False)
-                return da.from_zarr(s3_map)
-            else:
-                logger.debug(f"Loading S3 MRC file: {self.locator}")
-                with self._get_s3fs().open(self.locator, "rb") as f:
-                    with mrcfile.mmap(f, mode="r") as mrc:
-                        return mrc.data
+            try:
+                if self.is_zarr:
+                    logger.debug(f"Loading S3 Zarr store: {self.locator}")
+                    s3_map = s3fs.S3Map(root=self.locator, s3=self._get_s3fs(), check=False)
+                    return da.from_zarr(s3_map)
+                else:
+                    logger.debug(f"Loading S3 MRC file: {self.locator}")
+                    with self._get_s3fs().open(self.locator, "rb") as f:
+                        with mrcfile.mmap(f, mode="r") as mrc:
+                            return mrc.data
+            except Exception as exc:
+                if _is_forbidden(exc):
+                    raise _s3_access_error(self.locator, exc) from exc
+                raise
         else:
             if self.is_zarr:
                 logger.debug(f"Loading local Zarr store: {self.locator}")
@@ -181,8 +211,13 @@ def chunks_per_crop(crops: dict) -> dict:
 @cache
 def get_data(s3_uri: str, as_bytes: bool = False) -> bytes | str:
     mode = "rb" if as_bytes else "r"
-    with global_fs.open(s3_uri, mode) as f:
-        return f.read()
+    try:
+        with global_fs.open(s3_uri, mode) as f:
+            return f.read()
+    except Exception as exc:
+        if _is_forbidden(exc):
+            raise _s3_access_error(s3_uri, exc) from exc
+        raise
 
 
 def write_tiltseries_to_mrc(
@@ -190,6 +225,7 @@ def write_tiltseries_to_mrc(
     out_path: str | Path,
     voxel_size: float | None = None,
     overwrite: bool = True,
+    sections: "list[int] | None" = None,
 ) -> Path:
     """
     Stream a tilt-series ``DataReader`` into an MRC image stack (float32, MRC mode 2) written to
@@ -210,12 +246,18 @@ def write_tiltseries_to_mrc(
         The output path as a ``Path``.
     """
     out_path = Path(out_path)
-    nz, ny, nx = (int(d) for d in reader.data.shape)
+    full_nz, ny, nx = (int(d) for d in reader.data.shape)
+    # sections: 0-based section indices to write, in order (for dark-frame-trimmed tilt series). None = all.
+    idx = list(range(full_nz)) if sections is None else [int(s) for s in sections]
+    subset = idx != list(range(full_nz))
+    nz = len(idx)
     with mrcfile.new_mmap(str(out_path), shape=(nz, ny, nx), mrc_mode=2, overwrite=overwrite) as mrc:
         # Mark as an image stack (ispg=0, mz=1), matching how a tilt series is stored.
         mrc.set_image_stack()
         if reader.is_zarr and isinstance(reader.data, da.Array):
             source = reader.data
+            if subset:  # keep only the referenced sections, in row order
+                source = source[np.array(idx)]
             if source.dtype != np.float32:
                 logger.warning(
                     f"Tilt series {reader.locator} is stored as {source.dtype}; casting to float32 "
@@ -226,6 +268,8 @@ def write_tiltseries_to_mrc(
             da.store(source, mrc.data)
         else:
             arr = np.asarray(reader.data)
+            if subset:
+                arr = arr[np.array(idx)]
             if arr.dtype != np.float32:
                 logger.warning(
                     f"Tilt series {reader.locator} is stored as {arr.dtype}; casting to float32 "

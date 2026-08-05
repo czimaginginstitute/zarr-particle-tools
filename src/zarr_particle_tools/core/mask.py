@@ -2,14 +2,14 @@ import numpy as np
 
 
 def circular_mask(box_size: int, crop_size: float) -> np.ndarray:
-    """Return a centered circular mask of radius crop_size within a square of length box_size (in pixels)."""
+    """Return a centered circular mask of diameter crop_size within a square of length box_size (in pixels)."""
     y, x = np.ogrid[-box_size // 2 : box_size // 2, -box_size // 2 : box_size // 2]
     mask = (x * x + y * y) <= (crop_size // 2) ** 2
     return mask
 
 
 def circular_soft_mask(box_size: int, crop_size: float, falloff: float) -> np.ndarray:
-    """Return a centered circular soft mask of radius crop_size within a square of length box_size (in pixels) (based on RELION soft mask)."""
+    """Return a centered circular soft mask of diameter crop_size within a square of length box_size (in pixels) (based on RELION soft mask)."""
     y, x = np.ogrid[-box_size // 2 : box_size // 2, -box_size // 2 : box_size // 2]
     mask = np.zeros((box_size, box_size))
     r = np.sqrt(x * x + y * y)
@@ -20,7 +20,7 @@ def circular_soft_mask(box_size: int, crop_size: float, falloff: float) -> np.nd
 
 
 def spherical_soft_mask(box_size: int, crop_size: float, falloff: float) -> np.ndarray:
-    """Return a centered spherical soft mask of radius crop_size within a cube of length box_size (in pixels) (based on RELION's Reconstruction::taper)."""
+    """Return a centered spherical soft mask of diameter crop_size within a cube of length box_size (in pixels) (based on RELION's Reconstruction::taper)."""
     z, y, x = np.ogrid[-box_size // 2 : box_size // 2, -box_size // 2 : box_size // 2, -box_size // 2 : box_size // 2]
     mask = np.zeros((box_size, box_size, box_size))
     r = np.sqrt(x * x + y * y + z * z)

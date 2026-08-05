@@ -86,6 +86,7 @@ def calculate_ctf(
     bfactor: float,
     box_size: int,
     bin: int,
+    defocus_slope: float = 1.0,
     debug: bool = False,
 ) -> np.ndarray:
     """
@@ -122,8 +123,8 @@ def calculate_ctf(
         raise ValueError("CTF parameters are 0, please check your inputs.")
 
     depth_offset = get_depth_offset(tilt_projection_matrix, coordinate)
-    # TODO: implement defocus slope (rlnTomoDefocusSlope), for now just assume 1
-    defocus_offset = handedness * depth_offset
+    # rlnTomoDefocusSlope, as in RELION's Tomogram::getCtf (defaults to 1.0 when the column is absent)
+    defocus_offset = handedness * defocus_slope * depth_offset
     defocus_u_corrected = defocus_u + defocus_offset
     defocus_v_corrected = defocus_v + defocus_offset
     if debug:

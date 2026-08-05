@@ -1,4 +1,3 @@
-# TODO: fuzzy matching for name fields?
 # TODO: globbing for all fields?
 from pathlib import Path
 from typing import Any
@@ -19,20 +18,25 @@ def compose_options(opts: list[click.Option]) -> callable:
 
 def common_options():
     opts = [
-        click.option("--box-size", type=int, help="Box size of the extracted subtomograms in pixels."),
+        click.option("--box-size", type=int, help="Box size in pixels; must be even."),
         click.option(
             "--crop-size",
             type=int,
             default=None,
-            help="Crop size of the extracted subtomograms in pixels. If not specified, defaults to box-size.",
+            help="Crop size in pixels, even and no larger than box-size; defaults to box-size. For "
+            "reconstruct this crops the output map (RELION --crop), not the extracted particles.",
         ),
         click.option("--bin", type=int, default=1, show_default=True, help="Binning factor for the subtomograms."),
-        click.option("--no-ctf", is_flag=True, help="Disable CTF premultiplication."),
+        click.option(
+            "--no-ctf",
+            is_flag=True,
+            help="Disable CTF premultiplication (for reconstruct: CTF weighting during backprojection).",
+        ),
         click.option(
             "--output-dir",
             type=click.Path(file_okay=False, path_type=Path),
             required=True,
-            help="Path to the output directory where the extracted subtomograms will be saved.",
+            help="Output directory.",
         ),
         click.option(
             "--overwrite", is_flag=True, help="If set, existing output files will be overwritten. Default is False."
@@ -54,7 +58,15 @@ def extract_options():
         click.option("--no-circle-crop", is_flag=True, help="Disable circular cropping of the subtomograms."),
         click.option("--no-ic", is_flag=True, help="Do not invert contrast of the subtomograms."),
         click.option(
-            "--write-fourier", is_flag=True, help="Write Fourier space stacks (.npy) in addition to real space (.mrcs)."
+            "--write-fourier",
+            is_flag=True,
+            help="Also write Fourier space stacks (.npy); requires --no-circle-crop and crop-size == box-size.",
+        ),
+        click.option(
+            "--dont-apply-offsets",
+            is_flag=True,
+            help="Do not fold rlnOriginX/Y/ZAngst into the particle coordinates (RELION "
+            "--dont_apply_offsets); by default they are applied.",
         ),
     ]
     return compose_options(opts)
@@ -109,6 +121,14 @@ def dry_run_option(f):
         "--dry-run",
         is_flag=True,
         help="If set, do not extract subtomograms, only generate the starfiles needed for extraction.",
+    )(f)
+
+
+def job_dry_run_option(f):
+    return click.option(
+        "--dry-run",
+        is_flag=True,
+        help="If set, only generate the tomograms.star and stop before running RELION.",
     )(f)
 
 
@@ -174,8 +194,15 @@ def arg_flags(plural: str) -> tuple[str, str]:
 
 
 def help_text(field_name: str, field_type: str, arg_type: type) -> str:
-    return f"CryoET Data Portal {field_name} {field_type}(s) to filter picks (comma or space separated). \
-        {' If --inexact-match is specified, filtering is case insensitive, contains search is used. NOTE: Not necessarily a unique identifier, results can span different datasets.' if arg_type is str else ''}"
+    """Help for one portal filter. Strings split on commas only; numbers also split on whitespace."""
+    separators = "comma-separated" if arg_type is str else "comma- or space-separated"
+    text = f"CryoET Data Portal {field_name} {field_type}(s) to filter on ({separators})."
+    if arg_type is str:
+        text += (
+            " With --inexact-match, matching is case-insensitive and by substring."
+            " Not necessarily unique: results can span datasets."
+        )
+    return text
 
 
 def data_portal_options():
@@ -208,6 +235,14 @@ def data_portal_options():
             help="Zero particle orientations (rlnAngleRot/Tilt/Psi) so poses are determined de novo.",
         )
     )
+    options.append(
+        click.option(
+            "--staging",
+            is_flag=True,
+            help="Query the staging CryoET Data Portal (GraphQL + authenticated S3) instead of prod. "
+            "Omit for prod. Fails hard with a 403 message if staging S3 access is denied.",
+        )
+    )
 
     for arg, py_type in DATA_PORTAL_ARGS:
         field_name = arg.removeprefix("--").split("-")[0]
@@ -230,6 +265,19 @@ def data_portal_options():
     return compose_options(options)
 
 
+def configure_portal_endpoint(staging: bool) -> None:
+    """Point the shared client + S3 at staging (GraphQL + authenticated S3) or prod."""
+    import zarr_particle_tools.core.data as data
+    import zarr_particle_tools.generate.cdp_cache as cdp_cache
+
+    if staging:
+        cdp_cache.set_api_url(cdp_cache.STAGING_GRAPHQL_URL)
+        data.set_s3_anon(False)
+    else:
+        cdp_cache.set_api_url(None)
+        data.set_s3_anon(True)
+
+
 def flatten(val: Any) -> list:
     "Flattens a list of lists to a single list."
     if isinstance(val, (list, tuple)) and val and isinstance(val[0], (list, tuple)):
@@ -239,12 +287,42 @@ def flatten(val: Any) -> list:
 
 
 def flatten_data_portal_args(kwargs: dict) -> dict:
-    "Flattens the data portal arguments from lists of lists to a single list."
+    "Flatten the data portal list args and point client/S3 at staging or prod (--staging)."
+    configure_portal_endpoint(kwargs.pop("staging", False))
     for ref in DATA_PORTAL_ARG_REFS:
         if val := kwargs.get(ref):
             kwargs[ref] = flatten(val)
 
     return kwargs
+
+
+# Everything generate_starfiles() accepts, i.e. the portal query + how to render the picks.
+DATA_PORTAL_GENERATION_KEYS = DATA_PORTAL_ARG_REFS + ["ground_truth", "automated_only", "no_orientations"]
+COPICK_GENERATION_KEYS = [
+    "copick_config",
+    "copick_name",
+    "copick_session_id",
+    "copick_user_id",
+    "copick_run_names",
+    "copick_dataset_ids",
+]
+
+
+def split_data_portal_args(kwargs: dict) -> tuple[dict, dict]:
+    """Split a command's kwargs into (portal generation args, everything else)."""
+    kwargs = flatten_data_portal_args(dict(kwargs))
+    portal = {k: kwargs.pop(k) for k in DATA_PORTAL_GENERATION_KEYS if k in kwargs}
+    return portal, kwargs
+
+
+def split_copick_args(kwargs: dict) -> tuple[dict, dict]:
+    """Split a command's kwargs into (copick generation args, everything else)."""
+    kwargs = dict(kwargs)
+    copick = {k: kwargs.pop(k) for k in COPICK_GENERATION_KEYS if k in kwargs}
+    for k in ("copick_run_names", "copick_dataset_ids"):
+        if k in copick:
+            copick[k] = flatten(copick[k])
+    return copick, kwargs
 
 
 def ctfrefine_options():
@@ -284,12 +362,18 @@ def ctfrefine_options():
         click.option("--do-reg-defocus", is_flag=True, help="Regularise defocus across tilts (needs --do-defocus)."),
         click.option("--lambda-reg", type=float, default=0.1, show_default=True, help="Defocus regularisation weight."),
         click.option("--do-scale", is_flag=True, help="Refine contrast scale."),
-        click.option("--per-frame-scale", is_flag=True, help="Scale per frame (no Lambert model)."),
-        click.option("--per-tomogram-scale", is_flag=True, help="Scale per tomogram."),
+        click.option(
+            "--per-frame-scale", is_flag=True, help="Scale per frame (no Lambert model); excludes --per-tomogram-scale."
+        ),
+        click.option("--per-tomogram-scale", is_flag=True, help="Scale per tomogram; excludes --per-frame-scale."),
         click.option("--do-even-aberrations", is_flag=True, help="Refine even higher-order aberrations."),
         click.option("--do-odd-aberrations", is_flag=True, help="Refine odd higher-order aberrations."),
         click.option(
-            "--focus-range", type=float, default=3000.0, show_default=True, help="Defocus search range [A] (--d0/--d1)."
+            "--focus-range",
+            type=float,
+            default=3000.0,
+            show_default=True,
+            help="Defocus search half-range [A]; searches +/- this (RELION --d0/--d1).",
         ),
         click.option("--threads", "-j", type=int, default=6, show_default=True, help="OMP threads (RELION --j)."),
         click.option(
@@ -379,7 +463,9 @@ def polish_options():
             help="Deformation model.",
         ),
         click.option(
-            "--shift-only", is_flag=True, help="Only apply a rigid shift per frame (no iterative optimisation)."
+            "--shift-only",
+            is_flag=True,
+            help="Only apply a rigid shift per frame; use with --no-motion, as RELION rejects it alongside --motion.",
         ),
         click.option(
             "--align-range", type=int, default=20, show_default=True, help="Max particle shift [px] (RELION --r)."
@@ -426,6 +512,20 @@ def reconstruct_options():
             default=0.01,
             show_default=True,
             help="Ignore shells for which the dose weight falls below this value.",
+        ),
+        click.option(
+            "--snr",
+            type=float,
+            default=None,
+            help="Assumed signal-to-noise ratio (RELION --SNR). Given, CTF correction uses a Wiener "
+            "offset of 1/SNR; omitted, it uses RELION's radial-average heuristic.",
+        ),
+        click.option(
+            "--taper",
+            type=float,
+            default=10.0,
+            show_default=True,
+            help="Spherical soft-mask falloff in pixels for the final volume (RELION --taper).",
         ),
         click.option(
             "--symmetry",

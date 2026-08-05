@@ -1,7 +1,9 @@
 import logging
+import threading
 from collections import defaultdict
+from collections.abc import Callable
 from functools import lru_cache, wraps
-from typing import Any, Callable, Union
+from typing import Any
 
 from cryoet_data_portal import (
     Alignment,
@@ -47,14 +49,69 @@ alignment_to_tomograms_cache: dict[int, list[int]] = defaultdict(list)
 # tomogram voxel spacing id to tomogram id
 tomogram_voxel_spacing_to_tomograms_cache: dict[int, list[int]] = defaultdict(list)
 
-client = Client()
+# Dict caches, cleared together on an API-URL switch.
+_ALL_DICT_CACHES = [
+    run_cache,
+    tiltseries_cache,
+    alignment_cache,
+    voxel_spacing_cache,
+    tomograms_cache,
+    per_section_alignments_cache,
+    per_section_parameters_cache,
+    run_to_frames_cache,
+    dataset_id_to_runs_cache,
+    run_id_to_alignment_ids_cache,
+    run_id_to_voxel_spacing_ids_cache,
+    alignment_to_tomograms_cache,
+    tomogram_voxel_spacing_to_tomograms_cache,
+]
+# lru-wrapped getters, registered at import for clear_caches().
+_lru_wrapped: list[Callable] = []
+
+# Staging GraphQL endpoint; prod is the default when url is None.
+STAGING_GRAPHQL_URL = "https://graphql.cryoet.staging.si.czi.technology/graphql"
+
+# Lazy shared client so --staging can set the URL before the first query.
+_api_url: str | None = None
+_client: Client | None = None
+_client_lock = threading.Lock()
+# Guards shared-cache access; reentrant for nested derived-cache getters.
+_cache_lock = threading.RLock()
+
+
+def get_client() -> Client:
+    """Return the shared cryoet_data_portal Client, creating it on first use."""
+    global _client
+    if _client is None:
+        with _client_lock:
+            if _client is None:
+                _client = Client(_api_url)  # url=None -> prod default
+    return _client
+
+
+def clear_caches() -> None:
+    """Clear all lru_caches and module dict caches (e.g. after switching API URL)."""
+    for getter in _lru_wrapped:
+        getter.cache_clear()
+    for cache in _ALL_DICT_CACHES:
+        cache.clear()
+
+
+def set_api_url(url: str | None) -> None:
+    """Point the shared client at `url` (None=prod); reset it and clear caches."""
+    global _api_url, _client
+    with _client_lock:
+        _api_url = url
+        _client = None
+    clear_caches()
+
 
 CACHE_DEBUG = False
 
 
 # TODO: Does this really need to return a dict? Could just return the list of values, and determine the key from the values' foreign key attributes.
 def get_items_by_ids(
-    ids: Union[tuple[int], list[int], int],
+    ids: tuple[int] | list[int] | int,
     cache: dict,
     query_field,
     model_cls,
@@ -63,7 +120,7 @@ def get_items_by_ids(
     derived_cache_callable: Callable[[Any], Any] = None,
     derived_cache: dict = None,
     as_dict: bool = False,
-) -> Union[Union[list[Any], Any], dict[int, Union[list[Any], Any]]]:
+) -> list[Any] | Any | dict[int, list[Any] | Any]:
     """
     Fetch items from the cache or database by their IDs.
 
@@ -99,55 +156,57 @@ def get_items_by_ids(
     if isinstance(ids, int):
         ids = [ids]
 
-    if derived_cache is not None:
-        # will later be used to fetch items from the derived cache
-        result_ids: dict[int, list[int]] = defaultdict(list)
-    else:
-        result_items: dict[int, Any] = defaultdict(list) if multiple_results else {}
-    missing_ids = []
-
-    # for every item, check the cache first
-    for item_id in ids:
-        if item_id in cache:
-            if derived_cache is not None:
-                result_ids[item_id] = cache[item_id]
-            else:
-                result_items[item_id] = cache[item_id]
+    # Lock shared-cache access; fetch stays inside so check->fetch->populate is atomic.
+    with _cache_lock:
+        if derived_cache is not None:
+            # will later be used to fetch items from the derived cache
+            result_ids: dict[int, list[int]] = defaultdict(list)
         else:
-            missing_ids.append(item_id)
+            result_items: dict[int, Any] = defaultdict(list) if multiple_results else {}
+        missing_ids = []
 
-    # if there are ids missing from the cache, fetch them from the database
-    if missing_ids:
-        if CACHE_DEBUG:
-            logger.debug(f"Fetching items by IDS: {ids}, model: {model_cls.__name__}, missing ids: {missing_ids}")
-        fetched_items = model_cls.find(client, query_filters=[query_field._in(missing_ids)])
-        for item in fetched_items:
-            item_key = key_extractor(item)
-            # first add them to the results being returned
-            if derived_cache is not None:
-                result_ids[item_key].append(item.id)
+        # for every item, check the cache first
+        for item_id in ids:
+            if item_id in cache:
+                if derived_cache is not None:
+                    result_ids[item_id] = cache[item_id]
+                else:
+                    result_items[item_id] = cache[item_id]
             else:
-                if multiple_results:
-                    result_items[item_key].append(item)
-                else:
-                    result_items[item_key] = item
+                missing_ids.append(item_id)
 
-            # if there is a derived cache, that means this cache just holds the ids, while we need to add the actual item to the derived cache
-            if derived_cache is not None:
-                if multiple_results:
-                    cache[item_key].append(item.id)
+        # if there are ids missing from the cache, fetch them from the database
+        if missing_ids:
+            if CACHE_DEBUG:
+                logger.debug(f"Fetching items by IDS: {ids}, model: {model_cls.__name__}, missing ids: {missing_ids}")
+            fetched_items = model_cls.find(get_client(), query_filters=[query_field._in(missing_ids)])
+            for item in fetched_items:
+                item_key = key_extractor(item)
+                # first add them to the results being returned
+                if derived_cache is not None:
+                    result_ids[item_key].append(item.id)
                 else:
-                    cache[item_key] = item.id
-                derived_cache[item.id] = item  # this is always a one-to-one mapping
-            else:
-                if multiple_results:
-                    cache[item_key].append(item)
-                else:
-                    cache[item_key] = item
+                    if multiple_results:
+                        result_items[item_key].append(item)
+                    else:
+                        result_items[item_key] = item
 
-    # derived cache means that the result_items are actually ids of the derived cache, must hit the derived cache to get the actual items
-    if derived_cache is not None:
-        result_items = {item_id: derived_cache_callable(item_ids) for item_id, item_ids in result_ids.items()}
+                # if there is a derived cache, that means this cache just holds the ids, while we need to add the actual item to the derived cache
+                if derived_cache is not None:
+                    if multiple_results:
+                        cache[item_key].append(item.id)
+                    else:
+                        cache[item_key] = item.id
+                    derived_cache[item.id] = item  # this is always a one-to-one mapping
+                else:
+                    if multiple_results:
+                        cache[item_key].append(item)
+                    else:
+                        cache[item_key] = item
+
+        # derived cache means that the result_items are actually ids of the derived cache, must hit the derived cache to get the actual items
+        if derived_cache is not None:
+            result_items = {item_id: derived_cache_callable(item_ids) for item_id, item_ids in result_ids.items()}
 
     if as_dict:
         return result_items
@@ -159,7 +218,7 @@ def get_items_by_ids(
 # Designed only for the case of the get functions, where the arguments are lists or integers
 def make_args_hashable(func: Callable) -> Callable:
     @wraps(func)
-    def wrapper(arg: Union[list, int]):
+    def wrapper(arg: list | int):
         if isinstance(arg, zip):
             arg = list(arg)
         if isinstance(arg, list):
@@ -175,20 +234,24 @@ def hashable_lru_cache(maxsize: int = None) -> Callable:
         def cached_func(*args, **kwargs):
             return func(*args, **kwargs)
 
-        return make_args_hashable(cached_func)
+        wrapper = make_args_hashable(cached_func)
+        # expose cache_clear + register for clear_caches()
+        wrapper.cache_clear = cached_func.cache_clear
+        _lru_wrapped.append(wrapper)
+        return wrapper
 
     return decorator
 
 
 @hashable_lru_cache(maxsize=None)
-def get_runs(run_ids: Union[list[int], int]) -> list[Run]:
+def get_runs(run_ids: list[int] | int) -> list[Run]:
     return get_items_by_ids(
         ids=run_ids, cache=run_cache, query_field=Run.id, model_cls=Run, key_extractor=lambda r: r.id
     )
 
 
 @hashable_lru_cache(maxsize=None)
-def get_runs_by_dataset_id(dataset_ids: Union[list[int], int]) -> dict[int, list[Run]]:
+def get_runs_by_dataset_id(dataset_ids: list[int] | int) -> dict[int, list[Run]]:
     return get_items_by_ids(
         ids=dataset_ids,
         cache=dataset_id_to_runs_cache,
@@ -203,7 +266,7 @@ def get_runs_by_dataset_id(dataset_ids: Union[list[int], int]) -> dict[int, list
 
 
 @hashable_lru_cache(maxsize=None)
-def get_tiltseries(tiltseries_ids: Union[list[int], int]) -> list[TiltSeries]:
+def get_tiltseries(tiltseries_ids: list[int] | int) -> list[TiltSeries]:
     return get_items_by_ids(
         ids=tiltseries_ids,
         cache=tiltseries_cache,
@@ -214,7 +277,7 @@ def get_tiltseries(tiltseries_ids: Union[list[int], int]) -> list[TiltSeries]:
 
 
 @hashable_lru_cache(maxsize=None)
-def get_alignments(alignment_ids: Union[list[int], int]) -> list[Alignment]:
+def get_alignments(alignment_ids: list[int] | int) -> list[Alignment]:
     return get_items_by_ids(
         ids=alignment_ids,
         cache=alignment_cache,
@@ -225,7 +288,7 @@ def get_alignments(alignment_ids: Union[list[int], int]) -> list[Alignment]:
 
 
 @hashable_lru_cache(maxsize=None)
-def get_alignments_by_run_id(run_ids: Union[list[int], int]) -> dict[int, list[Alignment]]:
+def get_alignments_by_run_id(run_ids: list[int] | int) -> dict[int, list[Alignment]]:
     return get_items_by_ids(
         ids=run_ids,
         cache=run_id_to_alignment_ids_cache,
@@ -240,7 +303,7 @@ def get_alignments_by_run_id(run_ids: Union[list[int], int]) -> dict[int, list[A
 
 
 @hashable_lru_cache(maxsize=None)
-def get_voxel_spacings(voxel_spacing_ids: Union[list[int], int]) -> list[TomogramVoxelSpacing]:
+def get_voxel_spacings(voxel_spacing_ids: list[int] | int) -> list[TomogramVoxelSpacing]:
     return get_items_by_ids(
         ids=voxel_spacing_ids,
         cache=voxel_spacing_cache,
@@ -251,7 +314,7 @@ def get_voxel_spacings(voxel_spacing_ids: Union[list[int], int]) -> list[Tomogra
 
 
 @hashable_lru_cache(maxsize=None)
-def get_voxel_spacings_by_run_id(run_ids: Union[list[int], int]) -> dict[int, list[TomogramVoxelSpacing]]:
+def get_voxel_spacings_by_run_id(run_ids: list[int] | int) -> dict[int, list[TomogramVoxelSpacing]]:
     return get_items_by_ids(
         ids=run_ids,
         cache=run_id_to_voxel_spacing_ids_cache,
@@ -266,7 +329,7 @@ def get_voxel_spacings_by_run_id(run_ids: Union[list[int], int]) -> dict[int, li
 
 
 @hashable_lru_cache(maxsize=None)
-def get_tomograms(tomogram_ids: Union[list[int], int]) -> list[Tomogram]:
+def get_tomograms(tomogram_ids: list[int] | int) -> list[Tomogram]:
     return get_items_by_ids(
         ids=tomogram_ids,
         cache=tomograms_cache,
@@ -277,7 +340,7 @@ def get_tomograms(tomogram_ids: Union[list[int], int]) -> list[Tomogram]:
 
 
 @hashable_lru_cache(maxsize=None)
-def get_tomograms_by_alignment_id(alignment_ids: Union[list[int], int]) -> dict[int, list[Tomogram]]:
+def get_tomograms_by_alignment_id(alignment_ids: list[int] | int) -> dict[int, list[Tomogram]]:
     return get_items_by_ids(
         ids=alignment_ids,
         cache=alignment_to_tomograms_cache,
@@ -292,7 +355,7 @@ def get_tomograms_by_alignment_id(alignment_ids: Union[list[int], int]) -> dict[
 
 
 @hashable_lru_cache(maxsize=None)
-def get_tomograms_by_voxel_spacing_id(voxel_spacing_ids: Union[list[int], int]) -> dict[int, list[Tomogram]]:
+def get_tomograms_by_voxel_spacing_id(voxel_spacing_ids: list[int] | int) -> dict[int, list[Tomogram]]:
     return get_items_by_ids(
         ids=voxel_spacing_ids,
         cache=tomogram_voxel_spacing_to_tomograms_cache,
@@ -308,7 +371,7 @@ def get_tomograms_by_voxel_spacing_id(voxel_spacing_ids: Union[list[int], int]) 
 
 @hashable_lru_cache(maxsize=None)
 def get_tomograms_by_alignment_id_and_voxel_spacing_id(
-    alignment_and_voxel_spacing_ids: Union[list[tuple[int, int]], tuple[int, int]],
+    alignment_and_voxel_spacing_ids: list[tuple[int, int]] | tuple[int, int],
 ) -> dict[tuple[int, int], list[Tomogram]]:
     """
     Fetch tomograms by alignment ID and voxel spacing ID (tuple of alignment ID and voxel spacing ID).
@@ -356,7 +419,7 @@ def get_tomograms_by_alignment_id_and_voxel_spacing_id(
 
 @hashable_lru_cache(maxsize=None)
 def get_per_section_alignments_by_alignment_id(
-    alignment_ids: Union[list[int], int],
+    alignment_ids: list[int] | int,
 ) -> dict[int, list[PerSectionAlignmentParameters]]:
     return get_items_by_ids(
         ids=alignment_ids,
@@ -371,7 +434,7 @@ def get_per_section_alignments_by_alignment_id(
 
 @hashable_lru_cache(maxsize=None)
 def get_per_section_parameters_by_tiltseries_id(
-    tiltseries_ids: Union[list[int], int],
+    tiltseries_ids: list[int] | int,
 ) -> dict[int, list[PerSectionParameters]]:
     """Fetches per-section parameters (CTF information) by tiltseries ID. tiltseries with invalid / incomplete CTF parameters will have a None value in the returned dictionary."""
     tiltseries_id_to_psp: dict[int, list[PerSectionParameters]] = get_items_by_ids(
@@ -392,7 +455,7 @@ def get_per_section_parameters_by_tiltseries_id(
 
 
 @hashable_lru_cache(maxsize=None)
-def get_frames_by_run_id(run_ids: Union[list[int], int]) -> dict[int, list[Frame]]:
+def get_frames_by_run_id(run_ids: list[int] | int) -> dict[int, list[Frame]]:
     return get_items_by_ids(
         ids=run_ids,
         cache=run_to_frames_cache,

@@ -4,7 +4,7 @@ Golden unit test for the CTF B-factor damping envelope (Phase 0 D4).
 RELION's `CTF::getCTF` multiplies the CTF by `E = exp(K4 * u2)` with `K4 = -rlnCtfBfactor / 4`,
 applied before the scale and the +/-1e-8 near-zero clamp. The Python code previously computed K4
 but never applied the envelope (and read the wrong B-factor field). These tests verify the envelope
-is now applied as RELION's K5/K4 term, and that it is an exact no-op when `bfactor == 0` (so data
+is now applied as RELION's K4 term, and that it is an exact no-op when `bfactor == 0` (so data
 without `rlnCtfBfactor` does not regress). No RELION binary is required.
 """
 

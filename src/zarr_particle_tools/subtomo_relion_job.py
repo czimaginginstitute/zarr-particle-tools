@@ -2,7 +2,7 @@
 Shared harness for running RELION tomography jobs (CTF refinement, Bayesian polish) against tilt
 series stored as OME-Zarr, without modifying RELION.
 
-Strategy (docs/audit/phase3_4_ctfrefine_polish_design.md): reuse the stock RELION binary and replace
+Strategy: reuse the stock RELION binary and replace
 only the pixel source. Per tomogram we stream the zarr tilt series into a RAM-backed MRC (/dev/shm),
 point rlnTomoTiltSeriesName at it, and let RELION read its own format. A two-phase mode keeps at most
 n_workers tilt series in RAM: phase 1 processes each tomogram alone (parallel pool, writes RELION temp
@@ -26,8 +26,8 @@ import subprocess
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Optional, Union
 
 import mrcfile.dtypes as mrc_dtypes
 import numpy as np
@@ -158,7 +158,7 @@ def _slug(name: str, max_len: int = 200) -> str:
     return s
 
 
-def read_single_table(path: Union[str, Path]) -> pd.DataFrame:
+def read_single_table(path: str | Path) -> pd.DataFrame:
     """Read a star file that holds a single (optionally named) data block as a DataFrame."""
     data = starfile.read(str(path))
     if isinstance(data, dict):
@@ -168,7 +168,7 @@ def read_single_table(path: Union[str, Path]) -> pd.DataFrame:
     return data
 
 
-def resolve_optimisation_set(optimisation_set_starfile: Path) -> tuple[Path, Path, Optional[Path]]:
+def resolve_optimisation_set(optimisation_set_starfile: Path) -> tuple[Path, Path, Path | None]:
     """Return (particles, tomograms, trajectories) paths from an optimisation_set.star."""
     opt = read_single_table(optimisation_set_starfile)
     base = Path(optimisation_set_starfile).parent
@@ -215,22 +215,32 @@ def _materialize_tiltseries(global_df, src_base, stage_dir, shm_dir, tiltseries_
         tomo_name = str(row["rlnTomoName"])
         indiv_df, reader = _indiv_reader(row, src_base, tiltseries_relative_dir)
         indiv_out = ts_out_dir / f"{tomo_name}.star"
-        starfile.write({tomo_name: indiv_df}, str(indiv_out), overwrite=True)
 
         if len(reader.data.shape) != 3:
             raise ValueError(f"Tomogram {tomo_name}: tilt series must be 3-D (section,y,x), got {reader.data.shape}.")
-        nz, ny, nx = (int(x) for x in reader.data.shape)
-        if nz != len(indiv_df):
-            raise ValueError(f"Tomogram {tomo_name}: stack sections ({nz}) != tilt rows ({len(indiv_df)}).")
+        acq_nz, ny, nx = (int(x) for x in reader.data.shape)
+        # RELION tomo indexes tilts by ROW POSITION and needs stack_zdim == rlnTomoFrameCount == rows.
+        # Dark-frame-excluded stars reference a section subset via N@, so write only those sections (row
+        # order), rebase @1..N, set FrameCount=N. (Untrimmed / FrameCount=acquired overruns the N-row table
+        # -> "object N out of bounds", metadata_table.cpp:1789.)
+        sec0 = [int(str(s).split("@")[0]) - 1 for s in indiv_df["rlnMicrographName"]]  # 0-based, row order
+        if min(sec0) < 0 or max(sec0) >= acq_nz:
+            raise ValueError(f"Tomogram {tomo_name}: tilt @indices reference sections outside stack range 1..{acq_nz}.")
+        n_tilt = len(sec0)
+        indiv_df = indiv_df.copy()
+        indiv_df["rlnMicrographName"] = [
+            f"{i + 1}@{str(s).split('@', 1)[1]}" for i, s in enumerate(indiv_df["rlnMicrographName"])
+        ]
+        starfile.write({tomo_name: indiv_df}, str(indiv_out), overwrite=True)
         voxel = float(row["rlnTomoTiltSeriesPixelSize"]) if "rlnTomoTiltSeriesPixelSize" in row else None
         shm_path = shm_dir / f"zpt_{run_tag}_{_slug(tomo_name)}.mrc"
-        write_tiltseries_to_mrc(reader, shm_path, voxel_size=voxel)
+        write_tiltseries_to_mrc(reader, shm_path, voxel_size=voxel, sections=sec0)
         _ACTIVE_SHM.add(str(shm_path))
         shm_paths.append(shm_path)
         names.append(str(shm_path))
-        frame_counts.append(nz)
+        frame_counts.append(n_tilt)
         indiv_rel.append(f"tiltseries/{tomo_name}.star")  # relative to CWD (=stage_dir); RELION prepends --o on write
-        logger.info(f"Materialized {tomo_name}: {reader.locator} -> {shm_path} ({nz} tilts).")
+        logger.info(f"Materialized {tomo_name}: {reader.locator} -> {shm_path} ({n_tilt}/{acq_nz} tilts).")
 
     global_df["rlnTomoTiltSeriesName"] = names
     global_df["rlnTomoFrameCount"] = frame_counts
@@ -353,7 +363,8 @@ def _two_phase(
     p1_root = output_dir / "_phase1"
     tasks, processed = [], []
     for name in names:
-        sub_particles = pdf[pdf["rlnTomoName"] == name]
+        # names are str, but starfile parses an all-digit rlnTomoName as int64
+        sub_particles = pdf[pdf["rlnTomoName"].astype(str) == name]
         if len(sub_particles) == 0:  # RELION skips 0-particle tomograms; don't launch a run for one
             logger.info("Skipping tomogram %s in phase 1: no particles.", name)
             continue
@@ -363,7 +374,15 @@ def _two_phase(
         sub = {k: (sub_particles if k == "particles" else v) for k, v in parts.items()}
         starfile.write(sub, str(ps), overwrite=True)
         tasks.append(
-            (build_cmd, relion_bin, global_df[global_df["rlnTomoName"] == name].copy(), ps, trajectories, d, common)
+            (
+                build_cmd,
+                relion_bin,
+                global_df[global_df["rlnTomoName"].astype(str) == name].copy(),
+                ps,
+                trajectories,
+                d,
+                common,
+            )
         )
         processed.append(name)
     if n_workers and n_workers > 1:
@@ -392,15 +411,29 @@ def _two_phase(
     for _, row in global_df.iterrows():
         name = str(row["rlnTomoName"])
         indiv, reader = _indiv_reader(row, src_base, common.get("tiltseries_relative_dir"))
+        acq_nz, ny, nx = (int(x) for x in reader.data.shape)  # acquired section count (zarr metadata)
+        # Trimmed tilts: rebase @1..N and size the stub to the row count (stack_zdim==FrameCount==rows;
+        # see _materialize_tiltseries). Phase-2 merge reads FrameCount + header only, no pixels.
+        sec0 = [int(str(s).split("@")[0]) - 1 for s in indiv["rlnMicrographName"]]
+        if min(sec0) < 0 or max(sec0) >= acq_nz:
+            raise ValueError(f"Tomogram {name}: tilt @indices reference sections outside stack range 1..{acq_nz}.")
+        n_tilt = len(sec0)
+        indiv = indiv.copy()
+        indiv["rlnMicrographName"] = [
+            f"{i + 1}@{str(s).split('@', 1)[1]}" for i, s in enumerate(indiv["rlnMicrographName"])
+        ]
         starfile.write({name: indiv}, str(stage / "tiltseries" / f"{name}.star"), overwrite=True)
-        nz, ny, nx = (int(x) for x in reader.data.shape)  # lazy: zarr metadata only
         stub = stage / f"{name}_stub.mrc"
         _write_header_stub(
-            stub, nx, ny, nz, float(row["rlnTomoTiltSeriesPixelSize"]) if "rlnTomoTiltSeriesPixelSize" in row else 1.0
+            stub,
+            nx,
+            ny,
+            n_tilt,
+            float(row["rlnTomoTiltSeriesPixelSize"]) if "rlnTomoTiltSeriesPixelSize" in row else 1.0,
         )
         r = row.to_dict()
         r["rlnTomoTiltSeriesName"] = str(stub.resolve())
-        r["rlnTomoFrameCount"] = nz
+        r["rlnTomoFrameCount"] = n_tilt
         r["rlnTomoTiltSeriesStarFile"] = f"tiltseries/{name}.star"
         rows.append(r)
     starfile.write({"global": pd.DataFrame(rows)}, str(stage / "tomograms.star"), overwrite=True)
@@ -429,9 +462,13 @@ def _restore_zarr_source(output_dir: Path, global_df, src_base, tiltseries_relat
     if not out_tomo.exists():  # e.g. an aberrations-only run doesn't rewrite tomograms.star
         return
 
-    # original zarr locator per tomogram name (URI column, else the rlnMicrographName path)
+    # zarr locator per tomogram: prefer the global URI column, else the individual tilt star
     locator = {}
+    have_global_uri = TILTSERIES_URI_RELION_COLUMN in global_df.columns
     for _, row in global_df.iterrows():
+        if have_global_uri and pd.notna(row[TILTSERIES_URI_RELION_COLUMN]):
+            locator[str(row["rlnTomoName"])] = str(row[TILTSERIES_URI_RELION_COLUMN])
+            continue
         ip = _resolve_tiltstar(row["rlnTomoTiltSeriesStarFile"], src_base)
         indiv = read_single_table(ip)
         if TILTSERIES_URI_RELION_COLUMN in indiv.columns:
@@ -448,20 +485,20 @@ def _restore_zarr_source(output_dir: Path, global_df, src_base, tiltseries_relat
 def run_relion_tomo_job(
     build_cmd: Callable,
     relion_bin: str,
-    output_dir: Union[str, Path],
+    output_dir: str | Path,
     box_size: int,
-    ref1: Union[str, Path],
-    ref2: Union[str, Path],
+    ref1: str | Path,
+    ref2: str | Path,
     opts: dict,
-    particles_starfile: Optional[Path] = None,
-    tomograms_starfile: Optional[Path] = None,
-    trajectories_starfile: Optional[Path] = None,
-    optimisation_set_starfile: Optional[Path] = None,
-    tiltseries_relative_dir: Optional[Path] = None,
-    mask: Optional[Path] = None,
-    fsc: Optional[Path] = None,
+    particles_starfile: Path | None = None,
+    tomograms_starfile: Path | None = None,
+    trajectories_starfile: Path | None = None,
+    optimisation_set_starfile: Path | None = None,
+    tiltseries_relative_dir: Path | None = None,
+    mask: Path | None = None,
+    fsc: Path | None = None,
     threads: int = 6,
-    shm_dir: Union[str, Path] = "/dev/shm",
+    shm_dir: str | Path = "/dev/shm",
     keep_shm: bool = False,
     per_tomogram: bool = True,
     n_workers: int = 0,

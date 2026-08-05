@@ -10,7 +10,6 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Union
 
 import click
 import mrcfile
@@ -35,13 +34,25 @@ from zarr_particle_tools.core.forwardprojection import (
 )
 from zarr_particle_tools.core.helpers import auto_worker_count, get_tiltseries_data, setup_logging, validate_and_setup
 from zarr_particle_tools.core.mask import circular_mask, circular_soft_mask
-from zarr_particle_tools.generate.copick_generate_starfiles import copick_picks_to_starfile, get_copick_picks
+from zarr_particle_tools.generate.copick_generate_starfiles import (
+    copick_picks_to_starfile,
+    generate_copick_data_portal_starfiles,
+    get_copick_picks,
+)
 
 logger = logging.getLogger(__name__)
 
+# RELION hardcodes the 2D circle-crop falloff (EDGE_FALLOFF in its extraction.h); its --taper
+# option only affects 3D volumes, so there is deliberately no --taper here.
+EDGE_FALLOFF = 5.0
+
 
 def update_particles_df(
-    particles_df: pd.DataFrame, output_folder: Path, all_visible_sections_relion_column: list, skipped_particles: set
+    particles_df: pd.DataFrame,
+    output_folder: Path,
+    all_visible_sections_relion_column: list,
+    skipped_particles: set,
+    offsets_applied: bool = True,
 ) -> pd.DataFrame:
     """Updates the particles DataFrame to include the new columns and values for RELION format."""
     updated_particles_df = particles_df.copy()
@@ -66,10 +77,12 @@ def update_particles_df(
         ]
     )
     updated_particles_df["rlnTomoVisibleFrames"] = all_visible_sections_relion_column
-    # offsets are applied to rlnCenteredCoordinateXAngst/YAngst/ZAngst beforehand if they exist, so they can be removed here
-    updated_particles_df["rlnOriginXAngst"] = 0.0
-    updated_particles_df["rlnOriginYAngst"] = 0.0
-    updated_particles_df["rlnOriginZAngst"] = 0.0
+    if offsets_applied:
+        # already folded into rlnCenteredCoordinate*Angst, so zero them as RELION does. When they were
+        # NOT applied they must be preserved, or the refined translation is lost entirely.
+        updated_particles_df["rlnOriginXAngst"] = 0.0
+        updated_particles_df["rlnOriginYAngst"] = 0.0
+        updated_particles_df["rlnOriginZAngst"] = 0.0
 
     return updated_particles_df
 
@@ -86,6 +99,7 @@ def process_tiltseries(
     no_ctf: bool,
     circle_precrop: bool,
     no_circle_crop: bool,
+    dont_apply_offsets: bool,
     no_ic: bool,
     normalize_bin: bool,
     write_fourier: bool,
@@ -97,7 +111,7 @@ def process_tiltseries(
     tiltseries_relative_dir: Path,
     optics_row: pd.DataFrame,
     debug: bool = False,
-) -> Union[None, tuple[pd.DataFrame, int]]:
+) -> None | tuple[pd.DataFrame, int]:
     """
     Processes a single alignment file to extract subtomograms from the tiltseries.
     Does projection math to map from 3D coordinates to 2D tiltseries coordinates and then applies CTF premultiplication, dose weighting, and background subtraction.
@@ -121,9 +135,9 @@ def process_tiltseries(
 
     # projection-relevant variables
     pre_bin_background_mask = circular_mask(pre_bin_box_size, pre_bin_box_size) == 0.0
-    pre_bin_soft_mask = circular_soft_mask(pre_bin_box_size, pre_bin_box_size, falloff=5.0)
+    pre_bin_soft_mask = circular_soft_mask(pre_bin_box_size, pre_bin_box_size, falloff=EDGE_FALLOFF)
     background_mask = circular_mask(box_size, crop_size) == 0.0
-    soft_mask = circular_soft_mask(box_size, crop_size, falloff=5.0)
+    soft_mask = circular_soft_mask(box_size, crop_size, falloff=EDGE_FALLOFF)
     tiltseries_pixel_size = tiltseries_row_entry["rlnTomoTiltSeriesPixelSize"]
     tiltseries_x = tiltseries_datareader.data.shape[2]
     tiltseries_y = tiltseries_datareader.data.shape[1]
@@ -140,6 +154,9 @@ def process_tiltseries(
     spherical_aberration = tiltseries_row_entry["rlnSphericalAberration"]
     amplitude_contrast = tiltseries_row_entry["rlnAmplitudeContrast"]
     handedness = tiltseries_row_entry["rlnTomoHand"]
+    defocus_slope = (
+        float(tiltseries_row_entry["rlnTomoDefocusSlope"]) if "rlnTomoDefocusSlope" in tiltseries_row_entry else 1.0
+    )
     phase_shift = (
         individual_tiltseries_df["rlnPhaseShift"].values
         if "rlnPhaseShift" in individual_tiltseries_df.columns
@@ -150,7 +167,7 @@ def process_tiltseries(
     defocus_angle = individual_tiltseries_df["rlnDefocusAngle"].values
     doses = individual_tiltseries_df["rlnMicrographPreExposure"].values
     ctf_scalefactor = (
-        individual_tiltseries_df["rlnCtfScalefactor"]
+        individual_tiltseries_df["rlnCtfScalefactor"].values
         if "rlnCtfScalefactor" in individual_tiltseries_df.columns
         else [1.0] * len(individual_tiltseries_df)
     )
@@ -169,7 +186,7 @@ def process_tiltseries(
     dose_weights = np.stack(
         [
             calculate_dose_weight_image(dose, tiltseries_pixel_size * bin, box_size, bfactor)
-            for dose, bfactor in zip(doses, bfactor_per_electron_dose)
+            for dose, bfactor in zip(doses, bfactor_per_electron_dose, strict=True)
         ],
         dtype=np.complex64,
     )
@@ -253,6 +270,7 @@ def process_tiltseries(
                     spherical_aberration=spherical_aberration,
                     amplitude_contrast=amplitude_contrast,
                     handedness=handedness,
+                    defocus_slope=defocus_slope,
                     tiltseries_pixel_size=tiltseries_pixel_size,
                     phase_shift=phase_shift[section_index],
                     defocus_u=defocus_u[section_index],
@@ -309,7 +327,11 @@ def process_tiltseries(
             future.result()
 
     updated_filtered_particles_df = update_particles_df(
-        filtered_particles_df, output_folder, all_visible_sections_relion_column, skipped_particles
+        filtered_particles_df,
+        output_folder,
+        all_visible_sections_relion_column,
+        skipped_particles,
+        offsets_applied=not dont_apply_offsets,
     )
 
     end_time = time.time()
@@ -367,7 +389,7 @@ def write_starfiles(
 
 def extract_subtomograms(
     box_size: int,
-    output_dir: Union[str, Path],
+    output_dir: str | Path,
     particles_starfile: Path,
     tomograms_starfile: Path,
     bin: int = 1,
@@ -375,6 +397,7 @@ def extract_subtomograms(
     no_ctf: bool = False,
     circle_precrop: bool = False,
     no_circle_crop: bool = False,
+    dont_apply_offsets: bool = False,
     no_ic: bool = False,
     normalize_bin: bool = True,
     write_fourier: bool = False,
@@ -396,7 +419,9 @@ def extract_subtomograms(
 
     logger.debug(f"Starting subtomogram extraction, reading file {particles_starfile} and {tomograms_starfile}")
     particles_data = starfile.read(particles_starfile)
-    particles_df = apply_offsets_to_coordinates(particles_data["particles"])
+    particles_df = particles_data["particles"]
+    if not dont_apply_offsets:
+        particles_df = apply_offsets_to_coordinates(particles_df)
     optics_df = particles_data["optics"]
     trajectories_dict = starfile.read(trajectories_starfile) if trajectories_starfile else None
     tomograms_data = starfile.read(tomograms_starfile)
@@ -429,6 +454,7 @@ def extract_subtomograms(
         "no_ctf": no_ctf,
         "circle_precrop": circle_precrop,
         "no_circle_crop": no_circle_crop,
+        "dont_apply_offsets": dont_apply_offsets,
         "no_ic": no_ic,
         "normalize_bin": normalize_bin,
         "write_fourier": write_fourier,
@@ -483,12 +509,13 @@ def extract_subtomograms(
 # TODO: compress all the common options into a model / kwargs?
 def parse_extract_local_subtomograms(
     box_size: int,
-    output_dir: Union[str, Path],
+    output_dir: str | Path,
     bin: int = 1,
     float16: bool = False,
     no_ctf: bool = False,
     circle_precrop: bool = False,
     no_circle_crop: bool = False,
+    dont_apply_offsets: bool = False,
     no_ic: bool = False,
     normalize_bin: bool = True,
     write_fourier: bool = False,
@@ -536,6 +563,7 @@ def parse_extract_local_subtomograms(
         no_ctf=no_ctf,
         circle_precrop=circle_precrop,
         no_circle_crop=no_circle_crop,
+        dont_apply_offsets=dont_apply_offsets,
         no_ic=no_ic,
         normalize_bin=normalize_bin,
         write_fourier=write_fourier,
@@ -561,10 +589,9 @@ def parse_extract_local_subtomograms(
     )
 
 
-# TODO: test that this actually works
-def parse_extract_local_copick_subtomograms(
+def parse_extract_copick_local_subtomograms(
     box_size: int,
-    output_dir: Union[str, Path],
+    output_dir: str | Path,
     copick_config: Path,
     copick_name: str,
     copick_session_id: str,
@@ -574,6 +601,7 @@ def parse_extract_local_copick_subtomograms(
     no_ctf: bool = False,
     circle_precrop: bool = False,
     no_circle_crop: bool = False,
+    dont_apply_offsets: bool = False,
     no_ic: bool = False,
     normalize_bin: bool = True,
     write_fourier: bool = False,
@@ -635,6 +663,7 @@ def parse_extract_local_copick_subtomograms(
         no_ctf=no_ctf,
         circle_precrop=circle_precrop,
         no_circle_crop=no_circle_crop,
+        dont_apply_offsets=dont_apply_offsets,
         no_ic=no_ic,
         normalize_bin=normalize_bin,
         write_fourier=write_fourier,
@@ -665,13 +694,14 @@ def parse_extract_local_copick_subtomograms(
 
 
 def parse_extract_data_portal_subtomograms(
-    output_dir: Union[str, Path],
+    output_dir: str | Path,
     box_size: int = None,
     bin: int = 1,
     float16: bool = False,
     no_ctf: bool = False,
     circle_precrop: bool = False,
     no_circle_crop: bool = False,
+    dont_apply_offsets: bool = False,
     no_ic: bool = False,
     normalize_bin: bool = True,
     write_fourier: bool = False,
@@ -726,7 +756,7 @@ def parse_extract_data_portal_subtomograms(
     particles_count, total_skipped_count, individual_tiltseries_count = extract_subtomograms(
         particles_starfile=particles_path,
         trajectories_starfile=None,  # No trajectories data in Data Portal
-        tiltseries_relative_dir=Path("./"),
+        tiltseries_relative_dir=output_dir.parent,  # star paths are relative to project root, not cwd
         tomograms_starfile=tomograms_path,
         box_size=box_size,
         crop_size=crop_size,
@@ -735,6 +765,7 @@ def parse_extract_data_portal_subtomograms(
         no_ctf=no_ctf,
         circle_precrop=circle_precrop,
         no_circle_crop=no_circle_crop,
+        dont_apply_offsets=dont_apply_offsets,
         no_ic=no_ic,
         normalize_bin=normalize_bin,
         write_fourier=write_fourier,
@@ -750,14 +781,14 @@ def parse_extract_data_portal_subtomograms(
     return (
         output_dir / "particles.star",
         None,
-        Path("./"),  # tiltseries star paths already include output_dir; resolve from cwd
+        output_dir.parent,
         tomograms_path,
         output_dir / "optimisation_set.star",
     )
 
 
 def parse_extract_data_portal_copick_subtomograms(
-    output_dir: Union[str, Path],
+    output_dir: str | Path,
     copick_config: Path,
     copick_name: str,
     copick_session_id: str,
@@ -770,6 +801,7 @@ def parse_extract_data_portal_copick_subtomograms(
     no_ctf: bool = False,
     circle_precrop: bool = False,
     no_circle_crop: bool = False,
+    dont_apply_offsets: bool = False,
     no_ic: bool = False,
     normalize_bin: bool = True,
     write_fourier: bool = False,
@@ -794,54 +826,15 @@ def parse_extract_data_portal_copick_subtomograms(
         copick_data_portal=True,
     )
 
-    if not copick_run_names:
-        picks = get_copick_picks(copick_config, copick_name, copick_session_id, copick_user_id, copick_run_names)
-        copick_run_names = [p.run.name for p in picks]
-
-    # convert copick_run_names to ints and fail if not possible
-    copick_run_ids = [int(s) for s in copick_run_names if s.isdigit()]
-    if len(copick_run_ids) != len(copick_run_names):
-        raise ValueError("All copick runs must be nonnegative integers")
-
-    # generate a tomograms starfile with cdp_generate
-    filtered_copick_run_ids, optics_df, tomograms_path, tiltseries_folder = cdp_generate.generate_tomograms_from_runs(
-        run_ids=copick_run_ids,
-        dataset_ids=copick_dataset_ids,
+    particles_path, tomograms_path, tiltseries_folder, _, _ = generate_copick_data_portal_starfiles(
         output_dir=output_dir,
+        copick_config=copick_config,
+        copick_name=copick_name,
+        copick_session_id=copick_session_id,
+        copick_user_id=copick_user_id,
+        copick_run_names=copick_run_names,
+        copick_dataset_ids=copick_dataset_ids,
     )
-
-    filtered_copick_run_names = [str(run_id) for run_id in filtered_copick_run_ids]
-
-    # add optics and copick particles to particles.star file
-    particles_df = copick_picks_to_starfile(
-        copick_config,
-        copick_name,
-        copick_session_id,
-        copick_user_id,
-        filtered_copick_run_names,
-        optics_df,
-        data_portal_runs=True,
-    )
-    # filter out particles that don't have a corresponding tomogram in the tomograms starfile
-    particles_df = particles_df[particles_df["rlnTomoName"].isin(optics_df["rlnTomoName"])]
-    particles_path = output_dir / "particles.star"
-    starfile.write({"optics": optics_df, "particles": particles_df}, particles_path)
-    logger.info(f"Generated particles star file at {particles_path} with {len(particles_df)} particles.")
-
-    if not particles_path.exists():
-        raise ValueError(
-            f"Starfile generation failed. Expected particles star file at {particles_path} does not exist."
-        )
-
-    if not tomograms_path.exists():
-        raise ValueError(
-            f"Starfile generation failed. Expected tomograms star file at {tomograms_path} does not exist."
-        )
-
-    if not tiltseries_folder.exists() or not any(tiltseries_folder.glob("*.star")):
-        raise ValueError(
-            f"Starfile generation failed. Expected tiltseries star files in {tiltseries_folder} do not exist."
-        )
 
     if dry_run:
         logger.info(
@@ -852,7 +845,7 @@ def parse_extract_data_portal_copick_subtomograms(
     particles_count, total_skipped_count, individual_tiltseries_count = extract_subtomograms(
         particles_starfile=particles_path,
         trajectories_starfile=None,  # No trajectories data in Data Portal
-        tiltseries_relative_dir=Path("./"),
+        tiltseries_relative_dir=output_dir.parent,  # star paths are relative to project root, not cwd
         tomograms_starfile=tomograms_path,
         box_size=box_size,
         crop_size=crop_size,
@@ -861,6 +854,7 @@ def parse_extract_data_portal_copick_subtomograms(
         no_ctf=no_ctf,
         circle_precrop=circle_precrop,
         no_circle_crop=no_circle_crop,
+        dont_apply_offsets=dont_apply_offsets,
         no_ic=no_ic,
         normalize_bin=normalize_bin,
         write_fourier=write_fourier,
@@ -876,13 +870,13 @@ def parse_extract_data_portal_copick_subtomograms(
     return (
         output_dir / "particles.star",
         None,
-        Path("./"),  # tiltseries star paths already include output_dir; resolve from cwd
+        output_dir.parent,
         tomograms_path,
         output_dir / "optimisation_set.star",
     )
 
 
-@click.group("Extract subtomograms.")
+@click.group(help="Extract subtomograms.")
 def cli():
     pass
 
@@ -897,17 +891,16 @@ def cmd_local(**kwargs):
     parse_extract_local_subtomograms(**kwargs)
 
 
-# TODO: write tests
 @cli.command("copick-local", help="Extract subtomograms from local files (tiltseries) with copick particles.")
 @cli_options.local_shared_options()
 @cli_options.copick_options()
 @cli_options.common_options()
 @cli_options.extract_options()
 @cli_options.dry_run_option
-def cmd_local_copick(**kwargs):
+def cmd_copick_local(**kwargs):
     setup_logging(debug=kwargs.get("debug", False))
     kwargs["copick_run_names"] = cli_options.flatten(kwargs["copick_run_names"])
-    parse_extract_local_copick_subtomograms(**kwargs)
+    parse_extract_copick_local_subtomograms(**kwargs)
 
 
 # TODO: write full tests
@@ -922,7 +915,6 @@ def cmd_data_portal(**kwargs):
     parse_extract_data_portal_subtomograms(**kwargs)
 
 
-# TODO: write tests
 @cli.command("copick-data-portal", help="Extract subtomograms from CryoET Data Portal runs with copick particles.")
 @cli_options.common_options()
 @cli_options.extract_options()
