@@ -18,20 +18,25 @@ def compose_options(opts: list[click.Option]) -> callable:
 
 def common_options():
     opts = [
-        click.option("--box-size", type=int, help="Box size of the extracted subtomograms in pixels."),
+        click.option("--box-size", type=int, help="Box size in pixels; must be even."),
         click.option(
             "--crop-size",
             type=int,
             default=None,
-            help="Crop size of the extracted subtomograms in pixels. If not specified, defaults to box-size.",
+            help="Crop size in pixels, even and no larger than box-size; defaults to box-size. For "
+            "reconstruct this crops the output map (RELION --crop), not the extracted particles.",
         ),
         click.option("--bin", type=int, default=1, show_default=True, help="Binning factor for the subtomograms."),
-        click.option("--no-ctf", is_flag=True, help="Disable CTF premultiplication."),
+        click.option(
+            "--no-ctf",
+            is_flag=True,
+            help="Disable CTF premultiplication (for reconstruct: CTF weighting during backprojection).",
+        ),
         click.option(
             "--output-dir",
             type=click.Path(file_okay=False, path_type=Path),
             required=True,
-            help="Path to the output directory where the extracted subtomograms will be saved.",
+            help="Output directory.",
         ),
         click.option(
             "--overwrite", is_flag=True, help="If set, existing output files will be overwritten. Default is False."
@@ -53,7 +58,9 @@ def extract_options():
         click.option("--no-circle-crop", is_flag=True, help="Disable circular cropping of the subtomograms."),
         click.option("--no-ic", is_flag=True, help="Do not invert contrast of the subtomograms."),
         click.option(
-            "--write-fourier", is_flag=True, help="Write Fourier space stacks (.npy) in addition to real space (.mrcs)."
+            "--write-fourier",
+            is_flag=True,
+            help="Also write Fourier space stacks (.npy); requires --no-circle-crop and crop-size == box-size.",
         ),
         click.option(
             "--dont-apply-offsets",
@@ -187,8 +194,15 @@ def arg_flags(plural: str) -> tuple[str, str]:
 
 
 def help_text(field_name: str, field_type: str, arg_type: type) -> str:
-    return f"CryoET Data Portal {field_name} {field_type}(s) to filter picks (comma or space separated). \
-        {' If --inexact-match is specified, filtering is case insensitive, contains search is used. NOTE: Not necessarily a unique identifier, results can span different datasets.' if arg_type is str else ''}"
+    """Help for one portal filter. Strings split on commas only; numbers also split on whitespace."""
+    separators = "comma-separated" if arg_type is str else "comma- or space-separated"
+    text = f"CryoET Data Portal {field_name} {field_type}(s) to filter on ({separators})."
+    if arg_type is str:
+        text += (
+            " With --inexact-match, matching is case-insensitive and by substring."
+            " Not necessarily unique: results can span datasets."
+        )
+    return text
 
 
 def data_portal_options():
@@ -348,12 +362,18 @@ def ctfrefine_options():
         click.option("--do-reg-defocus", is_flag=True, help="Regularise defocus across tilts (needs --do-defocus)."),
         click.option("--lambda-reg", type=float, default=0.1, show_default=True, help="Defocus regularisation weight."),
         click.option("--do-scale", is_flag=True, help="Refine contrast scale."),
-        click.option("--per-frame-scale", is_flag=True, help="Scale per frame (no Lambert model)."),
-        click.option("--per-tomogram-scale", is_flag=True, help="Scale per tomogram."),
+        click.option(
+            "--per-frame-scale", is_flag=True, help="Scale per frame (no Lambert model); excludes --per-tomogram-scale."
+        ),
+        click.option("--per-tomogram-scale", is_flag=True, help="Scale per tomogram; excludes --per-frame-scale."),
         click.option("--do-even-aberrations", is_flag=True, help="Refine even higher-order aberrations."),
         click.option("--do-odd-aberrations", is_flag=True, help="Refine odd higher-order aberrations."),
         click.option(
-            "--focus-range", type=float, default=3000.0, show_default=True, help="Defocus search range [A] (--d0/--d1)."
+            "--focus-range",
+            type=float,
+            default=3000.0,
+            show_default=True,
+            help="Defocus search half-range [A]; searches +/- this (RELION --d0/--d1).",
         ),
         click.option("--threads", "-j", type=int, default=6, show_default=True, help="OMP threads (RELION --j)."),
         click.option(
@@ -443,7 +463,9 @@ def polish_options():
             help="Deformation model.",
         ),
         click.option(
-            "--shift-only", is_flag=True, help="Only apply a rigid shift per frame (no iterative optimisation)."
+            "--shift-only",
+            is_flag=True,
+            help="Only apply a rigid shift per frame; use with --no-motion, as RELION rejects it alongside --motion.",
         ),
         click.option(
             "--align-range", type=int, default=20, show_default=True, help="Max particle shift [px] (RELION --r)."
