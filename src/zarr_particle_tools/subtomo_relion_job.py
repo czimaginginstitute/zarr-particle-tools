@@ -363,7 +363,8 @@ def _two_phase(
     p1_root = output_dir / "_phase1"
     tasks, processed = [], []
     for name in names:
-        sub_particles = pdf[pdf["rlnTomoName"] == name]
+        # names are str, but starfile parses an all-digit rlnTomoName as int64
+        sub_particles = pdf[pdf["rlnTomoName"].astype(str) == name]
         if len(sub_particles) == 0:  # RELION skips 0-particle tomograms; don't launch a run for one
             logger.info("Skipping tomogram %s in phase 1: no particles.", name)
             continue
@@ -373,7 +374,15 @@ def _two_phase(
         sub = {k: (sub_particles if k == "particles" else v) for k, v in parts.items()}
         starfile.write(sub, str(ps), overwrite=True)
         tasks.append(
-            (build_cmd, relion_bin, global_df[global_df["rlnTomoName"] == name].copy(), ps, trajectories, d, common)
+            (
+                build_cmd,
+                relion_bin,
+                global_df[global_df["rlnTomoName"].astype(str) == name].copy(),
+                ps,
+                trajectories,
+                d,
+                common,
+            )
         )
         processed.append(name)
     if n_workers and n_workers > 1:
