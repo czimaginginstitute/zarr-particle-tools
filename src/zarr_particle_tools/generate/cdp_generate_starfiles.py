@@ -134,9 +134,7 @@ def get_particles_df_from_file(annotation_file: cdp.AnnotationFile, no_orientati
     # rot, tilt, psi
     euler_angles = (
         [
-            Rotation.from_matrix(np.linalg.inv(d["xyz_rotation_matrix"])).as_euler(
-                "ZYZ", degrees=True
-            )  # TODO: verify this is correct
+            Rotation.from_matrix(np.linalg.inv(d["xyz_rotation_matrix"])).as_euler("ZYZ", degrees=True)
             for d in json_point_data
         ]
         if not no_orientations and "xyz_rotation_matrix" in json_point_data[0]
@@ -159,7 +157,7 @@ def get_particles_df_from_file(annotation_file: cdp.AnnotationFile, no_orientati
             "rlnOpticsGroup": 1,
             "cdpAnnotationShapeId": annotation_file.annotation_shape_id,
         }
-        for p, c, e in zip(pixel_coordinates, centered_coordinates, euler_angles)
+        for p, c, e in zip(pixel_coordinates, centered_coordinates, euler_angles, strict=True)
     ]
     particles_df = pd.DataFrame(particles_list, columns=particles_df.columns)
 
@@ -305,7 +303,7 @@ def get_tomograms_df(optics_df: pd.DataFrame, output_dir: Path) -> tuple[pd.Data
         tiltseries = cdp_cache.get_tiltseries(cdp_cache.get_alignments(row["alignment_id"])[0].tiltseries_id)[0]
         tomograms_df.at[index, TILTSERIES_URI_RELION_COLUMN] = tiltseries.s3_omezarr_dir
 
-    return tomograms_df, list(zip(tomograms_df.pop("alignment_id"), tomograms_df.pop("voxel_spacing_id")))
+    return tomograms_df, list(zip(tomograms_df.pop("alignment_id"), tomograms_df.pop("voxel_spacing_id"), strict=True))
 
 
 def generate_individual_tomogram_starfile(

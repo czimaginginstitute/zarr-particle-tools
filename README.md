@@ -113,7 +113,7 @@ IDs).
 |---|---|---|
 | `zarr-particle-pipeline` | Full STA pipeline via py2rely | `local`, `copick-local`, `data-portal`, `copick-data-portal`, plus `preflight` |
 | `zarr-particle-extract` | Subtomogram extraction (2D stacks) | `local`, `copick-local`, `data-portal`, `copick-data-portal` |
-| `zarr-particle-reconstruct` | Particle map reconstruction (experimental) | `local`, `copick-local`, `data-portal`, `copick-data-portal` |
+| `zarr-particle-reconstruct` | Particle map reconstruction | `local`, `copick-local`, `data-portal`, `copick-data-portal` |
 | `zarr-particle-ctfrefine` | RELION `relion_tomo_refine_ctf` on zarr | `local`, `data-portal`, `copick-data-portal` |
 | `zarr-particle-polish` | RELION `relion_tomo_align` on zarr | `local`, `data-portal`, `copick-data-portal` |
 | `zarr-particle-tomograms` | Emit just a `tomograms.star` | `data-portal`, `copick-data-portal` |
@@ -223,7 +223,7 @@ zarr-particle-extract data-portal \
   --box-size 128 --bin 2
 ```
 
-### Reconstruction (experimental)
+### Reconstruction
 
 ```bash
 zarr-particle-reconstruct local \
@@ -338,7 +338,7 @@ If you would like to see a feature added, on or off this list, please open an is
 - Does not support grid precorrection
 - Does not support whitening (power spectral flattening)
 - Does not support 3D volume extraction
-- Does not support min_frames or max_dose flags
+- Does not support min_frames or max_dose (`zarr-particle-pipeline` refuses `--max-dose` up front rather than failing once it reaches Extract)
 - Does not support --apply_orientations
 - Does not support --dont_apply_offsets for reconstruction (extraction does, via `--dont-apply-offsets`)
 - Does not support cone flags (--cone_weight, --cone_angle, --cone_sig0)
@@ -353,7 +353,6 @@ If you would like to see a feature added, on or off this list, please open an is
 
 ## Project roadmap
 - [ ] Support multiple optics groups
-- [ ] Support features that have (yet) to be implemented
 - [ ] Add star file generation from the CryoET Data Portal into the cryoet-alignment package
 
 ## Development

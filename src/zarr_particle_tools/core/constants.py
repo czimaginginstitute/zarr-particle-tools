@@ -77,7 +77,7 @@ INDIVIDUAL_TOMOGRAM_ALN_COLUMNS = [
     "rlnTomoXShiftAngst",
     "rlnTomoYShiftAngst",
 ]
-# TODO: not included for now, but filled in with 0s / placeholders in pyrelion
+# NOTE: not included here; pyrelion fills these with 0s / placeholders
 # "rlnTomoTiltMovieFrameCount",
 # "rlnTomoNominalStageTiltAngle",
 # "rlnTomoNominalTiltAxisAngle",

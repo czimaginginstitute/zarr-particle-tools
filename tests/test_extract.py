@@ -14,7 +14,10 @@ DATASET_CONFIGS = {
     },
     "unroofing": {
         "data_root": Path("tests/data/relion_project_unroofing"),
-        "tol": 5e-5,  # TODO: investigate why this needs to be so high
+        # 5e-5 accommodates RELION's float32-before-cropCircle mean-subtraction ordering, which
+        # leaves a ~3e-5 DC residual on the no-CTF cases; test_extract_strict.py pins that
+        # explicitly via extra_atol, and checks the rest at ~10x the float32 ULP.
+        "tol": 5e-5,
         "float_tol": 1e-6,
     },
 }

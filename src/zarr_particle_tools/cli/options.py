@@ -1,4 +1,3 @@
-# TODO: fuzzy matching for name fields?
 # TODO: globbing for all fields?
 from pathlib import Path
 from typing import Any
