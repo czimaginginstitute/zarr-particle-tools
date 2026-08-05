@@ -121,6 +121,144 @@ def np_arrays_equal(
     return True
 
 
+def float32_ulp(max_abs_value: float) -> float:
+    """The float32 unit-in-the-last-place at a given magnitude (the storage-rounding floor that
+    both sides incur by writing float32 .mrc/.mrcs)."""
+    return float(np.spacing(np.float32(max_abs_value)))
+
+
+def np_arrays_close_unmasked(
+    arr1: np.ndarray,
+    arr2: np.ndarray,
+    metadata: str = "",
+    ulp_factor: float = 16.0,
+    extra_atol: float = 0.0,
+) -> bool:
+    """
+    Strict, UNMASKED, magnitude-aware comparison (the float64-as-oracle policy).
+
+    Unlike `np_arrays_equal`, this compares EVERY voxel (no 99.5-percentile mask) against a
+    magnitude-aware absolute tolerance::
+
+        atol = ulp_factor * float32_ulp(max|values|) + extra_atol
+
+    The first term is the float32 *storage* floor (both sides write float32), which scales with the
+    data magnitude. `extra_atol` is an explicit, documented allowance for known RELION
+    rounding-order residuals (e.g. the cropCircle mean-subtraction in the no-CTF path, where RELION
+    rounds the IFFT to float32 before subtracting and we keep float64). Reports the worst voxel and
+    its size as a multiple of the ULP.
+    """
+    if arr1.shape != arr2.shape:
+        print(f"{metadata} Arrays must have the same shape. {arr1.shape} != {arr2.shape}")
+        return False
+
+    a = arr1.astype(np.float64)
+    b = arr2.astype(np.float64)
+    abs_diff = np.abs(a - b)
+    if abs_diff.size == 0:
+        return True
+
+    max_abs = max(float(np.max(np.abs(a))), float(np.max(np.abs(b))))
+    ulp = float32_ulp(max_abs)
+    atol = ulp_factor * ulp + extra_atol
+    max_diff = float(abs_diff.max())
+
+    if max_diff > atol:
+        idx = np.unravel_index(np.argmax(abs_diff), abs_diff.shape)
+        extra = f" + extra {extra_atol:.1e}" if extra_atol else ""
+        print(
+            f"{metadata} UNMASKED max|diff|={max_diff:.3e} at {idx} exceeds atol={atol:.3e} "
+            f"(={ulp_factor:g}x float32 ULP {ulp:.2e} @ |max|={max_abs:.3g}{extra}); "
+            f"max|diff| is {max_diff / ulp:.1f}x ULP"
+        )
+        return False
+    return True
+
+
+def mrc_close_unmasked(file1: Path, file2: Path, ulp_factor: float = 16.0, extra_atol: float = 0.0) -> bool:
+    """Open two MRC(s) files and compare them with the strict unmasked magnitude-aware tolerance."""
+    if file1 == file2:
+        raise ValueError("Cannot compare the same file.")
+    if not file1.exists() or not file2.exists():
+        raise FileNotFoundError(f"One of the files does not exist: {file1}, {file2}")
+    with mrcfile.open(file1, mode="r") as mrc1, mrcfile.open(file2, mode="r") as mrc2:
+        return np_arrays_close_unmasked(
+            mrc1.data,
+            mrc2.data,
+            metadata=f"Comparing {file1.name} vs {file2.name}.",
+            ulp_factor=ulp_factor,
+            extra_atol=extra_atol,
+        )
+
+
+def mrc_unmasked_report(file1: Path, file2: Path) -> dict:
+    """
+    Measurement-only (no assertion) unmasked diff report between two MRC(s) files. Intended for the
+    HPC pass to quantify true reconstruct/extract error vs a RELION reference: returns max abs diff
+    and its location, the data magnitude, the float32 ULP at that magnitude, the diff as a multiple
+    of that ULP, and median/RMS of the difference.
+    """
+    with mrcfile.open(file1, mode="r") as mrc1, mrcfile.open(file2, mode="r") as mrc2:
+        a = mrc1.data.astype(np.float64)
+        b = mrc2.data.astype(np.float64)
+    diff = a - b
+    abs_diff = np.abs(diff)
+    max_abs = max(float(np.max(np.abs(a))), float(np.max(np.abs(b))))
+    ulp = float32_ulp(max_abs)
+    max_diff = float(abs_diff.max())
+    return {
+        "max_abs_diff": max_diff,
+        "argmax": tuple(int(i) for i in np.unravel_index(np.argmax(abs_diff), abs_diff.shape)),
+        "max_abs_value": max_abs,
+        "float32_ulp": ulp,
+        "ulp_multiple": max_diff / ulp if ulp else float("inf"),
+        "median_abs_diff": float(np.median(abs_diff)),
+        "rms_diff": float(np.sqrt(np.mean(diff**2))),
+    }
+
+
+def mrc_headers_match(file1: Path, file2: Path, float_atol: float = 1e-3) -> bool:
+    """
+    Compare the structural MRC header fields of two files (parity check vs a RELION reference):
+    data mode, dimensions (nx/ny/nz), sampling (mx/my/mz), axis order (mapc/mapr/maps), start
+    offsets, ispg, and (with tolerance) the cell dimensions and origin. Returns True on full match,
+    else prints the differing fields and returns False.
+    """
+    int_fields = [
+        "mode",
+        "nx",
+        "ny",
+        "nz",
+        "mx",
+        "my",
+        "mz",
+        "mapc",
+        "mapr",
+        "maps",
+        "nxstart",
+        "nystart",
+        "nzstart",
+        "ispg",
+    ]
+    with mrcfile.open(file1, mode="r", permissive=True) as m1, mrcfile.open(file2, mode="r", permissive=True) as m2:
+        h1, h2 = m1.header, m2.header
+        diffs = [
+            f"{f}: {int(getattr(h1, f))} != {int(getattr(h2, f))}"
+            for f in int_fields
+            if int(getattr(h1, f)) != int(getattr(h2, f))
+        ]
+        for name, r1, r2 in [
+            ("cella", (h1.cella.x, h1.cella.y, h1.cella.z), (h2.cella.x, h2.cella.y, h2.cella.z)),
+            ("origin", (h1.origin.x, h1.origin.y, h1.origin.z), (h2.origin.x, h2.origin.y, h2.origin.z)),
+        ]:
+            if not all(abs(float(a) - float(b)) <= float_atol for a, b in zip(r1, r2)):
+                diffs.append(f"{name}: {tuple(float(a) for a in r1)} != {tuple(float(b) for b in r2)}")
+    if diffs:
+        print(f"MRC header mismatch {file1.name} vs {file2.name}: " + "; ".join(diffs))
+        return False
+    return True
+
+
 def df_equal(df1, df2):
     df1_sorted = df1.sort_index(axis=1).sort_values(by=df1.columns.tolist()).reset_index(drop=True)
     df2_sorted = df2.sort_index(axis=1).sort_values(by=df2.columns.tolist()).reset_index(drop=True)

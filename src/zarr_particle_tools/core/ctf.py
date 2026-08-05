@@ -51,7 +51,7 @@ def _ctf_template(
     K1 = np.pi * wavelength
     K2 = np.pi / 2 * spherical_aberration * wavelength**3
     K3 = np.arctan(amplitude_contrast / np.sqrt(1 - amplitude_contrast**2))
-    K4 = -1 * bfactor / 4.0  # noqa: F841
+    K4 = -1 * bfactor / 4.0
     K5 = np.deg2rad(phase_shift)
 
     # for astigmatism correction
@@ -66,7 +66,7 @@ def _ctf_template(
     u2 = kx_grid**2 + ky_grid**2
     u4 = u2**2
 
-    return K1, K2, K3, K5, ky_grid, kx_grid, u2, u4, Q, Q_t
+    return K1, K2, K3, K4, K5, ky_grid, kx_grid, u2, u4, Q, Q_t
 
 
 def calculate_ctf(
@@ -131,7 +131,7 @@ def calculate_ctf(
             f"Original Defocus U: {defocus_u}, Original Defocus V: {defocus_v}, Corrected Defocus U: {defocus_u_corrected}, Corrected Defocus V: {defocus_v_corrected}, Depth offset: {depth_offset}"
         )
 
-    K1, K2, K3, K5, ky_grid, kx_grid, u2, u4, Q, Q_t = _ctf_template(
+    K1, K2, K3, K4, K5, ky_grid, kx_grid, u2, u4, Q, Q_t = _ctf_template(
         voltage,
         spherical_aberration,
         amplitude_contrast,
@@ -161,8 +161,10 @@ def calculate_ctf(
         logger.debug(f"Gamma: {gamma}")
     ctf = -1 * np.sin(gamma)
 
-    # dose weighting, which doesn't seem to be done on the CTF?
-    # ctf *= calculate_dose_weights(u2, dose, bfactor)
+    # CTF damping envelope from the per-CTF B-factor (rlnCtfBfactor): RELION CTF::getCTF applies
+    # E = exp(K4 * u2) with K4 = -bfactor / 4, before the scale and the near-zero clamp. E == 1
+    # when bfactor == 0, so this is an exact no-op for data without rlnCtfBfactor.
+    ctf *= np.exp(K4 * u2)
 
     ctf *= ctf_scalefactor
 

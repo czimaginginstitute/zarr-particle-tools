@@ -6,6 +6,7 @@ Run zarr-particle-extract --help for usage instructions.
 
 import logging
 import multiprocessing as mp
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -32,7 +33,7 @@ from zarr_particle_tools.core.forwardprojection import (
     get_particle_crop_and_visibility,
     get_particles_to_tiltseries_coordinates,
 )
-from zarr_particle_tools.core.helpers import get_tiltseries_data, setup_logging, validate_and_setup
+from zarr_particle_tools.core.helpers import auto_worker_count, get_tiltseries_data, setup_logging, validate_and_setup
 from zarr_particle_tools.core.mask import circular_mask, circular_soft_mask
 from zarr_particle_tools.generate.copick_generate_starfiles import copick_picks_to_starfile, get_copick_picks
 
@@ -140,8 +141,8 @@ def process_tiltseries(
     amplitude_contrast = tiltseries_row_entry["rlnAmplitudeContrast"]
     handedness = tiltseries_row_entry["rlnTomoHand"]
     phase_shift = (
-        tiltseries_row_entry["rlnPhaseShift"]
-        if "rlnPhaseShift" in optics_row.columns
+        individual_tiltseries_df["rlnPhaseShift"].values
+        if "rlnPhaseShift" in individual_tiltseries_df.columns
         else [0.0] * len(individual_tiltseries_df)
     )
     defocus_u = individual_tiltseries_df["rlnDefocusU"].values
@@ -156,6 +157,13 @@ def process_tiltseries(
     bfactor_per_electron_dose = (
         individual_tiltseries_df["rlnCtfBfactorPerElectronDose"]
         if "rlnCtfBfactorPerElectronDose" in individual_tiltseries_df.columns
+        else [0.0] * len(individual_tiltseries_df)
+    )
+    # rlnCtfBfactor (per-CTF B-factor) is distinct from rlnCtfBfactorPerElectronDose above:
+    # it drives the CTF damping envelope (calculate_ctf), not dose weighting. Default 0 (no damping).
+    ctf_bfactor = (
+        individual_tiltseries_df["rlnCtfBfactor"].values
+        if "rlnCtfBfactor" in individual_tiltseries_df.columns
         else [0.0] * len(individual_tiltseries_df)
     )
     dose_weights = np.stack(
@@ -252,7 +260,7 @@ def process_tiltseries(
                     defocus_angle=defocus_angle[section_index],
                     dose=doses[section_index],
                     ctf_scalefactor=ctf_scalefactor[section_index],
-                    bfactor=bfactor_per_electron_dose[section_index],
+                    bfactor=ctf_bfactor[section_index],
                     box_size=box_size,
                     bin=bin,
                 )
@@ -282,8 +290,16 @@ def process_tiltseries(
             mrc.voxel_size = (tiltseries_pixel_size * bin, tiltseries_pixel_size * bin, 1.0)
 
         if write_fourier:
-            # fourier stacks
-            final_fourier_tilt_stack = np.fft.rfft2(cropped_tilt_stack, norm="ortho", axes=(-2, -1))
+            # Save the shifted complex slice directly. An irfft2 -> rfft2 round trip would realify the
+            # even-size Nyquist bin, dropping the sub-pixel-shift phase there that RELION keeps.
+            if no_circle_crop and crop_size == box_size:
+                final_fourier_tilt_stack = new_fourier_tilt_stack
+            else:
+                # Real-space masking/cropping here would require that Nyquist-lossy round trip.
+                raise NotImplementedError(
+                    "write_fourier requires no_circle_crop and crop_size == box_size "
+                    "(real-space masking/cropping would lose Nyquist-frequency phase)."
+                )
             np.save(output_folder / f"{particle_id}_stack2d.npy", final_fourier_tilt_stack)
 
     start_time = time.time()
@@ -425,15 +441,21 @@ def extract_subtomograms(
     # do actual subtomogram extraction & .mrcs file creation here
     total_skipped_count = 0
     particles_df_results = []
-    cpu_count = min(32, mp.cpu_count(), len(tomograms_df))
-    logger.info(f"Starting extraction of subtomograms from {len(tomograms_df)} tiltseries using {cpu_count} CPU cores.")
+    cpu_count = auto_worker_count(min(32, mp.cpu_count(), len(tomograms_df)))
+    logger.info(f"Starting extraction of subtomograms from {len(tomograms_df)} tiltseries using {cpu_count} workers.")
 
-    with mp.Pool(processes=cpu_count) as pool:
-        for updated_filtered_particles_df, skipped_count in track(
-            pool.imap_unordered(process_tiltseries_wrapper, args_list, chunksize=1),
-            description="Extracting subtomograms...",
-            total=len(args_list),
-        ):
+    # per-tomogram wall cap so a dead/OOM-killed worker raises instead of hanging imap forever
+    tomo_timeout = int(os.environ.get("ZARR_TOMO_TIMEOUT", "1800"))
+    with mp.get_context("spawn").Pool(processes=cpu_count) as pool:
+        results = pool.imap_unordered(process_tiltseries_wrapper, args_list, chunksize=1)
+        for _ in track(range(len(args_list)), description="Extracting subtomograms..."):
+            try:
+                updated_filtered_particles_df, skipped_count = results.next(tomo_timeout)
+            except mp.TimeoutError as err:
+                raise RuntimeError(
+                    f"A tiltseries worker produced no result within {tomo_timeout}s (likely killed, e.g. OOM). "
+                    "Lower worker count via ZARR_N_WORKERS or raise job memory."
+                ) from err
             if updated_filtered_particles_df is not None and not updated_filtered_particles_df.empty:
                 particles_df_results.append(updated_filtered_particles_df)
             total_skipped_count += skipped_count
@@ -728,7 +750,7 @@ def parse_extract_data_portal_subtomograms(
     return (
         output_dir / "particles.star",
         None,
-        output_dir,
+        Path("./"),  # tiltseries star paths already include output_dir; resolve from cwd
         tomograms_path,
         output_dir / "optimisation_set.star",
     )
@@ -854,7 +876,7 @@ def parse_extract_data_portal_copick_subtomograms(
     return (
         output_dir / "particles.star",
         None,
-        output_dir,
+        Path("./"),  # tiltseries star paths already include output_dir; resolve from cwd
         tomograms_path,
         output_dir / "optimisation_set.star",
     )

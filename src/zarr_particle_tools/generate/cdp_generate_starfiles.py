@@ -93,7 +93,7 @@ def get_optics_df(alignment_ids_voxel_spacing_ids: list[tuple[int, int]]) -> pd.
     return optics_df
 
 
-def get_particles_df_from_file(annotation_file: cdp.AnnotationFile) -> pd.DataFrame:
+def get_particles_df_from_file(annotation_file: cdp.AnnotationFile, no_orientations: bool = False) -> pd.DataFrame:
     """
     Create a DataFrame containing particle information from the specified annotation file.
     """
@@ -139,7 +139,7 @@ def get_particles_df_from_file(annotation_file: cdp.AnnotationFile) -> pd.DataFr
             )  # TODO: verify this is correct
             for d in json_point_data
         ]
-        if "xyz_rotation_matrix" in json_point_data[0]
+        if not no_orientations and "xyz_rotation_matrix" in json_point_data[0]
         else [(0, 0, 0)] * len(pixel_coordinates)
     )
 
@@ -170,7 +170,9 @@ def get_particles_df_from_file(annotation_file: cdp.AnnotationFile) -> pd.DataFr
     return particles_df
 
 
-def get_particles_df_optics_df(annotation_files: list[cdp.AnnotationFile]) -> tuple[pd.DataFrame, pd.DataFrame | None]:
+def get_particles_df_optics_df(
+    annotation_files: list[cdp.AnnotationFile], no_orientations: bool = False
+) -> tuple[pd.DataFrame, pd.DataFrame | None]:
     """
     Creates particles and optics dataframes necessary for a particles.star file from CryoET Data Portal annotations.
     Args:
@@ -237,7 +239,7 @@ def get_particles_df_optics_df(annotation_files: list[cdp.AnnotationFile]) -> tu
     all_particles_dfs: list[pd.DataFrame] = []
     # thread pool because we're downloading data
     with ThreadPoolExecutor(max_workers=THREAD_POOL_WORKER_COUNT) as thread_pool:
-        futures = [thread_pool.submit(get_particles_df_from_file, file) for file in annotation_files]
+        futures = [thread_pool.submit(get_particles_df_from_file, file, no_orientations) for file in annotation_files]
 
         for fut in track(as_completed(futures), description="Downloading particle data", total=len(futures)):
             particles_df = fut.result()
@@ -382,11 +384,6 @@ def generate_individual_tomogram_starfile(
     individual_tomogram_df = individual_tomogram_df.drop(columns=["z_index"])
     individual_tomogram_df = individual_tomogram_df[INDIVIDUAL_TOMOGRAM_COLUMNS]
 
-    # generate empty placeholder tiltseries mrc (relative path)
-    with mrcfile.new(output_dir / TILTSERIES_MRCS_PLACEHOLDER, overwrite=True) as mrc:
-        mrc.set_data(np.zeros((tiltseries.size_z, tiltseries.size_y, tiltseries.size_x), dtype=np.float32))
-        mrc.voxel_size = (tiltseries.pixel_spacing, tiltseries.pixel_spacing, 1.0)
-
     if individual_tomogram_df.isna().any().any():
         raise ValueError(
             f"[Run {alignment.run_id}, TiltSeries {tiltseries.id}, Alignment {alignment.id}] Data contains NA values. This can cause issues with RELION subtomogram extraction. Please check the star file."
@@ -400,6 +397,22 @@ def generate_individual_tomogram_starfile(
     )
 
     return individual_tomogram_df, tomo_name
+
+
+def write_tiltseries_placeholder(output_dir: Path, tiltseries) -> None:
+    """Write the shared placeholder tiltseries mrc that rlnTomoTiltSeriesName points to (to satisfy RELION's
+    schema + the pipeliner node-existence check). Pixels stream from the tomoTiltSeriesURI, so the single
+    tomogram's dims are harmless. Written ONCE before the tomogram pool (not per-tomogram): the single-writer
+    guarantee is what makes new_mmap safe here — the earlier per-tomogram new_mmap raced on this shared path
+    (concurrent truncate/mmap -> "mmap length > file size"). Sparse: ~8 KB on disk vs a full ~GB volume."""
+    (output_dir / "tiltseries").mkdir(parents=True, exist_ok=True)
+    with mrcfile.new_mmap(
+        output_dir / TILTSERIES_MRCS_PLACEHOLDER,
+        shape=(tiltseries.size_z, tiltseries.size_y, tiltseries.size_x),
+        mrc_mode=2,
+        overwrite=True,
+    ) as mrc:
+        mrc.voxel_size = (tiltseries.pixel_spacing, tiltseries.pixel_spacing, 1.0)
 
 
 def generate_individual_tomogram_starfiles(
@@ -417,6 +430,12 @@ def generate_individual_tomogram_starfiles(
 
     individual_tomograms_dfs = []
     tomo_names = []
+
+    # create the single shared placeholder once, before the pool, to avoid a concurrent-write race on it
+    if alignment_and_voxel_spacing_ids:
+        first_alignment_id = alignment_and_voxel_spacing_ids[0][0]
+        first_tiltseries = cdp_cache.get_tiltseries(cdp_cache.get_alignments(first_alignment_id)[0].tiltseries_id)[0]
+        write_tiltseries_placeholder(output_dir, first_tiltseries)
 
     with ThreadPoolExecutor(max_workers=THREAD_POOL_WORKER_COUNT) as thread_pool:
         futures = [
@@ -436,7 +455,7 @@ def generate_individual_tomogram_starfiles(
 
 
 def generate_starfiles_from_annotation_files(
-    annotation_files: list[cdp.AnnotationFile], output_dir: Path
+    annotation_files: list[cdp.AnnotationFile], output_dir: Path, no_orientations: bool = False
 ) -> tuple[Path, Path, Path]:
     """
     Generates optics.star / particles.star, tomograms.star, and individual tomogram star files from the given annotation files.
@@ -447,7 +466,7 @@ def generate_starfiles_from_annotation_files(
         tuple: A tuple containing the paths to the generated optics.star / particles.star, tomograms.star, and the tiltseries folder.
     """
     start_time = time.time()
-    optics_df, particles_df = get_particles_df_optics_df(annotation_files)
+    optics_df, particles_df = get_particles_df_optics_df(annotation_files, no_orientations)
     tomograms_df, alignment_and_voxel_spacing_ids = get_tomograms_df(optics_df, output_dir)
     _, tomo_names = generate_individual_tomogram_starfiles(alignment_and_voxel_spacing_ids, output_dir)
     # filter out invalid tomograms from optics, particles, and tomograms dataframes
@@ -580,6 +599,7 @@ def resolve_annotation_files(
     annotation_names: list[str] = None,
     inexact_match: bool = False,
     ground_truth: bool = False,
+    automated_only: bool = False,
 ) -> list[cdp.AnnotationFile]:
     client = cdp.Client()
 
@@ -608,6 +628,9 @@ def resolve_annotation_files(
     if ground_truth:
         logger.info("Filtering for ONLY ground truth annotations.")
         annotation_query_filters.append(cdp.Annotation.ground_truth_status == True)  # noqa: E712
+    if automated_only:
+        logger.info("Filtering for ONLY automated annotations.")
+        annotation_query_filters.append(cdp.Annotation.method_type == "automated")
     annotation_query_filters = [f for f in annotation_query_filters if f is not None]
 
     # Then filter with information related to the AnnotationFile class
@@ -690,6 +713,8 @@ def generate_starfiles(
     annotation_names: list[str] = None,
     inexact_match: bool = False,
     ground_truth: bool = False,
+    automated_only: bool = False,
+    no_orientations: bool = False,
 ) -> tuple[Path, Path, Path]:
     """
     Generates star files for annotations based on the specified filters. First resolves all annotation IDs based on the provided filters, then generates the star files given the resolved annotation IDs.
@@ -716,9 +741,10 @@ def generate_starfiles(
         annotation_names=annotation_names,
         inexact_match=inexact_match,
         ground_truth=ground_truth,
+        automated_only=automated_only,
     )
 
-    return generate_starfiles_from_annotation_files(annotation_files, output_dir)
+    return generate_starfiles_from_annotation_files(annotation_files, output_dir, no_orientations)
 
 
 @click.command(help="Generate star files needed for subtomogram extraction from a CryoET Data Portal run.")

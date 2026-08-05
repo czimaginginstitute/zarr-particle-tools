@@ -1,0 +1,137 @@
+"""
+Run RELION's Bayesian polish / frame alignment (relion_tomo_align) on tilt series stored as OME-Zarr.
+
+Thin wrapper over subtomo_relion_job: supplies the binary name and the align flag builder. align
+reads the raw tilt series at the same seam as CTF refinement and is per-tomogram independent (its
+finalise just concatenates per-tomogram results), so the two-phase per-tomogram mode is exact and
+memory-bounded. Reference half-maps (--ref1/--ref2) from a prior Refine3D are required.
+"""
+
+import logging
+from pathlib import Path
+from typing import Optional, Union
+
+import click
+
+import zarr_particle_tools.cli.options as cli_options
+from zarr_particle_tools.core.helpers import setup_logging
+from zarr_particle_tools.subtomo_relion_job import run_relion_tomo_job
+
+logger = logging.getLogger(__name__)
+
+RELION_BIN = "relion_tomo_align"
+
+
+def build_align_cmd(relion_bin, opt_set, output_dir, box_size, ref1, ref2, mask, fsc, threads, opts) -> list:
+    """Assemble the relion_tomo_align command line from the polish options dict."""
+    cmd = [
+        relion_bin,
+        "--i",
+        str(Path(opt_set).resolve()),
+        "--ref1",
+        str(Path(ref1).resolve()),
+        "--ref2",
+        str(Path(ref2).resolve()),
+        "--b",
+        str(box_size),
+        "--o",
+        str(Path(output_dir).resolve()) + "/",
+        "--r",
+        str(opts["range"]),
+        "--j",
+        str(threads),
+    ]
+    if mask is not None:
+        cmd += ["--mask", str(Path(mask).resolve())]
+    if fsc is not None:
+        cmd += ["--fsc", str(Path(fsc).resolve())]
+    if opts["shift_only"]:
+        cmd += ["--shift_only"]
+    if opts["do_motion"]:
+        cmd += ["--motion", "--s_vel", str(opts["s_vel"]), "--s_div", str(opts["s_div"])]
+    if opts["do_deformation"]:
+        cmd += ["--deformation", "--def_model", str(opts["def_model"])]
+    return cmd
+
+
+def run_polish(
+    output_dir: Union[str, Path],
+    box_size: int,
+    ref1: Union[str, Path],
+    ref2: Union[str, Path],
+    particles_starfile: Optional[Path] = None,
+    tomograms_starfile: Optional[Path] = None,
+    trajectories_starfile: Optional[Path] = None,
+    optimisation_set_starfile: Optional[Path] = None,
+    tiltseries_relative_dir: Optional[Path] = None,
+    mask: Optional[Path] = None,
+    fsc: Optional[Path] = None,
+    do_motion: bool = True,
+    s_vel: float = 0.2,
+    s_div: float = 5000.0,
+    do_deformation: bool = False,
+    def_model: str = "spline",
+    shift_only: bool = False,
+    align_range: int = 20,
+    threads: int = 6,
+    relion_bin: str = RELION_BIN,
+    shm_dir: Union[str, Path] = "/dev/shm",
+    keep_shm: bool = False,
+    per_tomogram: bool = True,
+    n_workers: int = 0,
+) -> Path:
+    """
+    Orchestrate a RELION polish (relion_tomo_align) run against zarr tilt series. Returns output dir.
+
+    per_tomogram=True (default): two-phase, <= n_workers tilt series in RAM. align is per-tomogram
+    independent, so results match all-at-once. Outputs motion.star (trajectories) + updated
+    tomograms.star / particles.star (RELION-native, so they feed a following CTF-refine).
+    """
+    opts = {
+        "do_motion": do_motion,
+        "s_vel": s_vel,
+        "s_div": s_div,
+        "do_deformation": do_deformation,
+        "def_model": def_model,
+        "shift_only": shift_only,
+        "range": align_range,
+    }
+    return run_relion_tomo_job(
+        build_align_cmd,
+        relion_bin,
+        output_dir,
+        box_size,
+        ref1,
+        ref2,
+        opts,
+        particles_starfile=particles_starfile,
+        tomograms_starfile=tomograms_starfile,
+        trajectories_starfile=trajectories_starfile,
+        optimisation_set_starfile=optimisation_set_starfile,
+        tiltseries_relative_dir=tiltseries_relative_dir,
+        mask=mask,
+        fsc=fsc,
+        threads=threads,
+        shm_dir=shm_dir,
+        keep_shm=keep_shm,
+        per_tomogram=per_tomogram,
+        n_workers=n_workers,
+    )
+
+
+@click.group("Run RELION Bayesian polish / frame alignment on zarr tilt series.")
+def cli():
+    pass
+
+
+@cli.command("local", help="Polish using RELION stars (optimisation set or particles+tomograms) + references.")
+@cli_options.local_options()
+@cli_options.local_shared_options()
+@cli_options.polish_options()
+def cmd_local(**kwargs):
+    setup_logging(kwargs.pop("debug", False))
+    run_polish(**kwargs)
+
+
+if __name__ == "__main__":
+    cli()

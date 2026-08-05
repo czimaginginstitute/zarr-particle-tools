@@ -44,7 +44,38 @@ def bilinear_interpolation_fourier(img: np.ndarray, x_coord: np.ndarray, y_coord
     return np.where(conj_mask, np.conj(v), v)
 
 
-# TODO: optimise
+_GEOMETRY_CACHE: dict = {}
+_PHASE_CACHE: dict = {}
+
+
+def _backproject_geometry(d3: int, h3: int, wh3: int):
+    """Cache box-only geometry (centered axes + flat (z,y) index grid) per volume shape."""
+    key = (d3, h3, wh3)
+    geom = _GEOMETRY_CACHE.get(key)
+    if geom is None:
+        yy_all = np.arange(h3, dtype=np.float64)
+        yy_all[yy_all >= h3 // 2] -= h3
+        zz_all = np.arange(d3, dtype=np.float64)
+        zz_all[zz_all >= d3 // 2] -= d3
+        x_all = np.arange(wh3, dtype=np.float64)
+        z_grid, y_grid = np.meshgrid(np.arange(d3), np.arange(h3), indexing="ij")
+        geom = (x_all, yy_all, zz_all, z_grid.ravel(), y_grid.ravel())
+        _GEOMETRY_CACHE[key] = geom
+    return geom
+
+
+def _fourier_shift_phase(h2: int, wh2: int) -> np.ndarray:
+    """Cache the (-1)^(x+y) checkerboard phase per slice shape."""
+    key = (h2, wh2)
+    phase = _PHASE_CACHE.get(key)
+    if phase is None:
+        x_coords = np.arange(wh2)[None, :]
+        y_coords = np.arange(h2)[:, None]
+        phase = 1 - 2 * ((x_coords + y_coords) & 1)
+        _PHASE_CACHE[key] = phase
+    return phase
+
+
 def backproject_slice_backward(
     particle_data_slice: np.ndarray,
     particle_weight_slice: np.ndarray,
@@ -52,101 +83,94 @@ def backproject_slice_backward(
     particle_weight_fourier_volume: np.ndarray,
     particle_projection_matrix: np.ndarray,
     freq_cutoff: int,
-    z_chunk: int = 8,
 ):
     """
-    Backproject a single slice into a 3D fourier volume. Based on RELION's FourierBackprojection::backprojectSlice_backward.
+    Backproject a single slice into a 3D fourier volume, in place. Based on RELION's FourierBackprojection::backprojectSlice_backward.
+
+    Only the voxels on the tilted slab (~O(box^2)) are touched: per (z,y) row the analytic x-interval
+    hit by the slab is computed directly (RELION's structure), instead of scanning the full box^3 grid.
 
     Args:
         particle_data_slice (np.ndarray): 2D complex image in np.rfft2 layout (box_size, box_size // 2 + 1).
         particle_weight_slice (np.ndarray): 2D real image in np.rfft2 layout (box_size, box_size // 2 + 1). (Should be the square of the CTF * dose weighting)
-        particle_data_fourier_volume (np.ndarray): 3D complex volume of the particle in np.rfft3 layout (box_size, box_size, box_size // 2 + 1).
-        particle_weight_fourier_volume (np.ndarray): 3D complex volume of the weights in np.rfft3 layout (box_size, box_size, box_size // 2 + 1).
+        particle_data_fourier_volume (np.ndarray): 3D complex volume of the particle in np.rfft3 layout (box_size, box_size, box_size // 2 + 1). Mutated in place.
+        particle_weight_fourier_volume (np.ndarray): 3D complex volume of the weights in np.rfft3 layout (box_size, box_size, box_size // 2 + 1). Mutated in place.
         particle_projection_matrix (np.ndarray): 3x3 or 4x4 projection matrix. (Only 3x3 part is used) # TODO: integrate subtomogram orientations
         freq_cutoff (int): Maximum frequency to consider (pixels away from the center).
-        z_chunk (int, optional): Number of z-slices to process at a time. Defaults to 8.
-
-    Returns:
-        tuple[np.ndarray, np.ndarray]: Updated particle_fourier_volume and weight_fourier_volume.
     """
     h2, wh2 = particle_data_slice.shape
     d3, h3, wh3 = particle_data_fourier_volume.shape
 
-    # do a fourier shift to center the particle data
-    particle_data_slice = particle_data_slice.copy()
-    x_coords = np.arange(wh2)[None, :]
-    y_coords = np.arange(h2)[:, None]
-    phase = 1 - 2 * ((x_coords + y_coords) & 1)
-    particle_data_slice = particle_data_slice * phase
+    particle_data_slice = particle_data_slice * _fourier_shift_phase(h2, wh2)
 
-    if particle_projection_matrix.shape[0] >= 3 and particle_projection_matrix.shape[1] >= 3:
-        A = particle_projection_matrix[:3, :3].astype(np.float64, copy=False)
-    else:
+    if particle_projection_matrix.shape[0] < 3 or particle_projection_matrix.shape[1] < 3:
         raise ValueError("proj must be at least 3x3")
-
+    A = particle_projection_matrix[:3, :3].astype(np.float64, copy=False)
     AinvT = np.linalg.inv(A).T
     nx, ny, nz = AinvT[2, 0], AinvT[2, 1], AinvT[2, 2]
 
-    # precompute (y,z)-centered coordinates for all indices
-    yy_all = np.arange(h3, dtype=np.float64)
-    yy_all[yy_all >= h3 // 2] -= h3
-    zz_all = np.arange(d3, dtype=np.float64)
-    zz_all[zz_all >= d3 // 2] -= d3
-    x_all = np.arange(wh3, dtype=np.float64)
-
-    X = x_all[None, None, :]
-    Y = yy_all[None, :, None]
-
+    x_all, yy_all, zz_all, z_flat, y_flat = _backproject_geometry(d3, h3, wh3)
     r2_max = freq_cutoff**2
-
-    # precompute spatial bounds used in mask for source sampling
-    py_bound = h2 // 2 + 1
     px_bound = wh2
+    py_bound = h2 // 2 + 1
 
-    for z0 in range(0, d3, z_chunk):
-        z1 = min(d3, z0 + z_chunk)
+    yy = yy_all[y_flat]
+    zz = zz_all[z_flat]
+    yz = ny * yy + nz * zz
 
-        Z = zz_all[z0:z1, None, None]
+    # sphere cutoff x^2 + yy^2 + zz^2 <= r2_max as an exact per-row upper bound on x (not re-checked below)
+    dsq = r2_max - yy * yy - zz * zz
+    valid = dsq >= 0.0
+    max_x = np.zeros(yz.shape, dtype=np.int64)
+    max_x[valid] = np.floor(np.sqrt(dsq[valid])).astype(np.int64)
+    x1_cap = np.minimum(max_x, wh3 - 1)
 
-        # slab condition: -1 < nx*x + ny*yy + nz*zz < 1
-        slab = nx * X + ny * Y + nz * Z
-        slab_mask = (slab > -1.0) & (slab < 1.0)
-        # frequency cutoff: x^2 + yy^2 + zz^2 <= r2_max
-        r2 = (X * X) + (Y * Y) + (Z * Z)
-        sphere_mask = r2 <= r2_max
-        geom_mask = slab_mask & sphere_mask
-        if not np.any(geom_mask):
-            continue
+    # slab interval -1 < nx*x + yz < 1, widened by 1 each side so it is a float-safe superset;
+    # the strict pz re-test below trims it back to the exact voxel set.
+    if nx == 0.0:
+        row_ok = valid & (yz > -1.0) & (yz < 1.0)
+        x0 = np.zeros(yz.shape, dtype=np.int64)
+        x1 = np.where(row_ok, x1_cap, -1)
+    else:
+        a0 = (-yz - 1.0) / nx
+        a1 = (-yz + 1.0) / nx
+        x0 = np.ceil(np.minimum(a0, a1)).astype(np.int64) - 1
+        x1 = np.floor(np.maximum(a0, a1)).astype(np.int64) + 1
+        np.clip(x0, 0, None, out=x0)
+        x1 = np.where(valid, np.minimum(x1, x1_cap), -1)
 
-        # project 3D voxels to 2D slice
-        px = AinvT[0, 0] * X + AinvT[0, 1] * Y + AinvT[0, 2] * Z
-        py = AinvT[1, 0] * X + AinvT[1, 1] * Y + AinvT[1, 2] * Z
-        pz = AinvT[2, 0] * X + AinvT[2, 1] * Y + AinvT[2, 2] * Z
+    counts = x1 - x0 + 1
+    np.clip(counts, 0, None, out=counts)
+    total = int(counts.sum())
+    if total == 0:
+        return
 
-        # prevent sampling outside of source image (essentially redundant with slab_mask but following RELION convention)
-        src_mask = (pz > -1.0) & (pz < 1.0) & (np.abs(px) < px_bound) & (np.abs(py) < py_bound)
+    keep = counts > 0
+    counts = counts[keep]
+    z_sel = np.repeat(z_flat[keep], counts)
+    y_sel = np.repeat(y_flat[keep], counts)
+    starts = np.repeat(np.cumsum(counts) - counts, counts)
+    x_sel = np.repeat(x0[keep], counts) + (np.arange(total) - starts)
 
-        # final mask:
-        mask = geom_mask & src_mask
-        if not np.any(mask):
-            continue
+    Xs = x_all[x_sel]
+    Ys = yy_all[y_sel]
+    Zs = zz_all[z_sel]
+    px = AinvT[0, 0] * Xs + AinvT[0, 1] * Ys + AinvT[0, 2] * Zs
+    py = AinvT[1, 0] * Xs + AinvT[1, 1] * Ys + AinvT[1, 2] * Zs
+    pz = AinvT[2, 0] * Xs + AinvT[2, 1] * Ys + AinvT[2, 2] * Zs
 
-        # linear (triangular) weighting
-        c = 1.0 - np.abs(pz)
+    src = (pz > -1.0) & (pz < 1.0) & (np.abs(px) < px_bound) & (np.abs(py) < py_bound)
+    if not np.any(src):
+        return
+    z_sel, y_sel, x_sel = z_sel[src], y_sel[src], x_sel[src]
+    px, py = px[src], py[src]
+    c = 1.0 - np.abs(pz[src])
 
-        idx = np.where(mask)
-        px_sel = px[idx]
-        py_sel = py[idx]
-        c_sel = c[idx]
+    z0_complex = bilinear_interpolation_fourier(particle_data_slice, px, py)
+    w_sel = bilinear_interpolation_fourier(particle_weight_slice, px, py)
 
-        # bilinear interpolation of the source image
-        z0_complex = bilinear_interpolation_fourier(particle_data_slice, px_sel, py_sel)
-        w_sel = bilinear_interpolation_fourier(particle_weight_slice, px_sel, py_sel)
-
-        iz_local, iy, ix = idx
-        iz = iz_local + z0
-        particle_data_fourier_volume[iz, iy, ix] += c_sel * z0_complex
-        particle_weight_fourier_volume[iz, iy, ix] += c_sel * w_sel
+    particle_data_fourier_volume[z_sel, y_sel, x_sel] += c * z0_complex
+    particle_weight_fourier_volume[z_sel, y_sel, x_sel] += c * w_sel
 
 
 def gridding_correct_3d_sinc2(

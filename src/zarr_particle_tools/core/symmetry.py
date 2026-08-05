@@ -266,13 +266,20 @@ def ih_transforms(n: int) -> list[np.ndarray]:
     return I_matrices + MI_matrices
 
 
+_SQRT_HALF = np.sqrt(0.5)
+
+
 def sanitize_transform(T, atol=1e-12):
+    # Snap near-special entries to one bit pattern so 45deg cos/sin (which differ by 1 ULP) cancel
+    # exactly on the X=-Y diagonal, keeping the FFTW-half conjugation branch deterministic (fixes D8).
     T = T.copy().astype(np.float64)
     T[np.isclose(T, 0.0, atol=atol)] = 0.0
     T[np.isclose(T, 1.0, atol=atol)] = 1.0
     T[np.isclose(T, -1.0, atol=atol)] = -1.0
     T[np.isclose(T, 0.5, atol=atol)] = 0.5
     T[np.isclose(T, -0.5, atol=atol)] = -0.5
+    T[np.isclose(T, _SQRT_HALF, atol=atol)] = _SQRT_HALF
+    T[np.isclose(T, -_SQRT_HALF, atol=atol)] = -_SQRT_HALF
     return T
 
 
@@ -320,7 +327,7 @@ def get_transforms_from_symmetry(symmetry: str) -> list[np.ndarray]:
         transforms = o_transforms()
     elif symmetry == "OH":
         transforms = oh_transforms()
-    elif symmetry.startswith("I") and symmetry.endswith("H") and symmetry[1:-1].isdigit():
+    elif symmetry.startswith("I") and symmetry.endswith("H") and (symmetry[1:-1].isdigit() or symmetry == "IH"):
         n = int(symmetry[1:-1]) if symmetry != "IH" else 2
         transforms = ih_transforms(n)
     elif symmetry.startswith("I"):
