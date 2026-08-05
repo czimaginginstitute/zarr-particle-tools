@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.0](https://github.com/czimaginginstitute/zarr-particle-tools/compare/zarr-particle-tools-v0.3.4...zarr-particle-tools-v0.4.0) (2026-08-05)
+
+
+### ✨ Features
+
+* RELION CTF-refine + Bayesian polish on OME-Zarr, reconstruct speedups, STA numerical-correctness fixes, S3 fixes, tomograms.star CLI, and tests ([#20](https://github.com/czimaginginstitute/zarr-particle-tools/issues/20)) ([1cc611e](https://github.com/czimaginginstitute/zarr-particle-tools/commit/1cc611e70401000896c17d978c0d89dcece0ef5e))
+* zarr-particle-pipeline, zarr-particle-export ([#21](https://github.com/czimaginginstitute/zarr-particle-tools/issues/21)) ([c1be48a](https://github.com/czimaginginstitute/zarr-particle-tools/commit/c1be48ae69795ef306d541d04f803555cb9355ac))
+
+
+### 🐞 Bug Fixes
+
+* add note about parallelism in README ([#19](https://github.com/czimaginginstitute/zarr-particle-tools/issues/19)) ([cda77de](https://github.com/czimaginginstitute/zarr-particle-tools/commit/cda77de8d957f09037b0f2dc5dbc2e60988ce6f8))
+* improve pytests ([#13](https://github.com/czimaginginstitute/zarr-particle-tools/issues/13)) ([7e1c7ad](https://github.com/czimaginginstitute/zarr-particle-tools/commit/7e1c7ad07cf888e8490dc5f7d9ac8aa95fdc5fe2))
+
 ## [0.3.4](https://github.com/czimaginginstitute/zarr-particle-tools/compare/zarr-particle-tools-v0.3.3...zarr-particle-tools-v0.3.4) (2025-11-17)
 
 
