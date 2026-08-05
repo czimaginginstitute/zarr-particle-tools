@@ -305,7 +305,7 @@ class Py2RelyConfig:
     manual_masking: bool = False
     num_gpus: int = 2
     gpu_constraint: str | None = None
-    cpu_constraint: str = "16,12"
+    cpu_constraint: str = "16,8"
     timeout: int = 24
     num_days: int = 14
     prepare_only: bool = False
@@ -680,9 +680,10 @@ def compute_options():
         click.option(
             "--cpu-constraint",
             type=str,
-            default="16,12",
+            default="16,8",
             show_default=True,
-            help="CPUs and memory per CPU in GB, as 'CPUs,mem-per-cpu-GB' (e.g. 16,12 = 16 CPUs, 12 GB each).",
+            # 8 GB/CPU leaves auto_worker_count core-bound rather than memory-bound at this CPU count
+            help="CPUs and memory per CPU in GB, as 'CPUs,mem-per-cpu-GB' (e.g. 16,8 = 16 CPUs, 8 GB each).",
         ),
         click.option("--timeout", type=int, default=24, show_default=True, help="submitit per-trial timeout [hours]."),
         click.option("--num-days", type=int, default=14, show_default=True, help="SLURM walltime request [days]."),
