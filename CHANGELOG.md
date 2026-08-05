@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.4.0](https://github.com/czimaginginstitute/zarr-particle-tools/compare/zarr-particle-tools-v0.3.4...zarr-particle-tools-v0.4.0) (2026-08-05)
+## [1.0.0](https://github.com/czimaginginstitute/zarr-particle-tools/compare/zarr-particle-tools-v0.3.4...zarr-particle-tools-v1.0.0) (2026-08-05)
 
 
 ### ✨ Features
