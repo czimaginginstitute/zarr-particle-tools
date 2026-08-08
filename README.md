@@ -44,12 +44,11 @@ zarr-particle-pipeline data-portal \
   --box-scaling 1.65 \
   --num-gpus 4 \
   --nthreads 4 \
-  --timeout 12 \
   --prepare-only
 ```
 
 Flags that would only restate a default are omitted: `--low-pass 50`, `--binning-list 4,2,1`,
-`--symmetry C1`, `--cpu-constraint 16,12` and `--num-days 14` are already the defaults.
+`--symmetry C1`, `--cpu-constraint 16,12`, `--timeout 24` and `--num-days 14` are already the defaults.
 
 `--timeout` is the per-SLURM-job limit in hours (py2rely passes it to submitit as `timeout_min`), not a
 budget for the whole pipeline — that is `--num-days`. Add `--run-class3d --nclasses N
@@ -154,7 +153,7 @@ zarr-particle-pipeline copick-data-portal \
   --reference-template template.mrc \
   --protein-diameter 330 \
   --box-scaling 1.65 \
-  --num-gpus 4 --nthreads 4 --timeout 12
+  --num-gpus 4 --nthreads 4
 ```
 
 The science options are the same as the `data-portal` form; only the pick source differs. Match the

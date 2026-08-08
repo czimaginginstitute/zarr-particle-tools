@@ -1,0 +1,19 @@
+# Without this, Dependabot titles its PRs "Bump x from a to b", which fails the
+# conventional_commit_title check and leaves release-please unable to categorise the commit.
+version: 2
+updates:
+  - package-ecosystem: uv # pyproject.toml + uv.lock
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore # -> chore(deps): bump x from a to b
+      include: scope
+
+  - package-ecosystem: github-actions # the workflows pin action SHAs
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+      include: scope
