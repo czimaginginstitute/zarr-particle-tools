@@ -13,7 +13,7 @@ STA run end to end via [py2rely](https://github.com/chanzuckerberg/py2rely) (REL
 
 ```bash
 conda create -n zarr-particle-tools python=3.12 && conda activate zarr-particle-tools
-pip install uv && uv pip install zarr-particle-tools
+pip install uv && uv pip install "zarr-particle-tools[pipeliner]"
 
 zarr-particle-pipeline preflight          # checks py2rely, RELION binaries, zarr job registration
 ```
@@ -82,9 +82,17 @@ pip install uv
 uv pip install zarr-particle-tools
 ```
 
+Extraction and reconstruction work with that alone. The `[pipeliner]` extra adds
+[CCPEM pipeliner](https://ccpem-pipeliner.readthedocs.io/en/latest/), which the four
+`ccpem_pipeliner.jobs` classes import and which `zarr-particle-pipeline` therefore needs:
+
+```bash
+uv pip install "zarr-particle-tools[pipeliner]"
+```
+
 > [!NOTE]
-> [CCPEM pipeliner](https://ccpem-pipeliner.readthedocs.io/en/latest/) is not on PyPI. To use this package
-> with pipeliner, install it from the [pipeliner repository](https://gitlab.com/ccpem/ccpem-pipeliner).
+> py2rely depends on ccpem-pipeliner too, so installing it into the same environment already covers
+> this — the extra is for using the pipeliner jobs without py2rely.
 
 ### Prerequisites for the pipeline
 
@@ -95,7 +103,8 @@ Extraction and reconstruction need only this package; ctfrefine and polish addit
   ([README](https://github.com/chanzuckerberg/py2rely/blob/main/README.md)).
 - **RELION 5** with the `relion_*` binaries on `PATH` (source its `setup-env.sh`, or add its `build/bin`).
 - This package installed with pip (editable or not) so its `ccpem_pipeliner.jobs` entry points register —
-  that registration is what lets py2rely pick the zarr jobs over stock RELION.
+  that registration is what lets py2rely pick the zarr jobs over stock RELION. **ccpem-pipeliner** itself
+  comes with py2rely, or from this package's `[pipeliner]` extra.
 - **[copick](https://github.com/copick/copick)**, for the `copick-*` variants only.
 - A **SLURM** cluster: py2rely submits via `sbatch`.
 

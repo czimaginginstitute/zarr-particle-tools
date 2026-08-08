@@ -70,7 +70,7 @@ def preflight_problems(require_copick: bool = False) -> list[str]:
             f"RELION binaries not on PATH: {', '.join(missing_bins)} "
             "(source RELION's setup-env.sh and add its build/bin to PATH)"
         )
-    modules = [("pipeliner", "ccpem-pipeliner")]
+    modules = [("pipeliner", 'ccpem-pipeliner, e.g. pip install "zarr-particle-tools[pipeliner]"')]
     if require_copick:  # only needed for the copick-data-portal path
         modules.append(("copick", "copick"))
     for module, pkg in modules:
