@@ -1,5 +1,6 @@
 import logging
 import shutil
+import struct
 import tempfile
 import time
 from functools import cache
@@ -93,10 +94,18 @@ class DataReader:
             - A local path to a .zarr store.
             - An S3 URI (s3://...) to an .mrc file.
             - An S3 URI (s3://...) to a .zarr store.
+        staging_dir: Preferred directory for a temporary local copy of an S3 MRC.
     """
 
-    def __init__(self, resource_locator: str, is_s3: bool = None, is_zarr: bool = None):
+    def __init__(
+        self,
+        resource_locator: str,
+        is_s3: bool = None,
+        is_zarr: bool = None,
+        staging_dir: str | Path | None = None,
+    ):
         self.locator = resource_locator
+        self.staging_dir = Path(staging_dir) if staging_dir is not None else None
         self._s3fs = None
         self._mrc = None
         self._staged_mrc_dir = None
@@ -136,7 +145,8 @@ class DataReader:
                 else:
                     logger.debug(f"Loading S3 MRC file: {self.locator}")
                     fs = self._get_s3fs()
-                    stage_root = resolve_staging_dir(required_bytes=int(fs.size(self.locator)))
+                    preferred = self.staging_dir if self.staging_dir is not None else Path("/dev/shm")
+                    stage_root = resolve_staging_dir(preferred, required_bytes=int(fs.size(self.locator)))
                     self._staged_mrc_dir = tempfile.TemporaryDirectory(prefix="zpt-s3-mrc-", dir=stage_root)
                     local_path = Path(self._staged_mrc_dir.name) / Path(self.locator).name
                     try:
@@ -348,15 +358,13 @@ def write_tiltseries_to_mrc(
     return out_path
 
 
-def get_tiltseries_datareader(individual_tiltseries_df: pd.DataFrame, tiltseries_relative_dir: Path) -> DataReader:
-    """
-    Given a tiltseries dataframe, returns a DataReader object for the tiltseries data.
-    """
+def get_tiltseries_data_locator(individual_tiltseries_df: pd.DataFrame, tiltseries_relative_dir: Path) -> str:
+    """Return the single tilt-series locator referenced by an individual tilt-series table."""
     if TILTSERIES_URI_RELION_COLUMN in individual_tiltseries_df.columns:
         tiltseries_data_locators = individual_tiltseries_df[TILTSERIES_URI_RELION_COLUMN].to_list()
     else:
         tiltseries_data_locators = (
-            individual_tiltseries_df["rlnMicrographName"].apply(lambda x: x.split("@")[1]).to_list()
+            individual_tiltseries_df["rlnMicrographName"].apply(lambda x: x.split("@", 1)[1]).to_list()
         )
     if len(set(tiltseries_data_locators)) != 1:
         raise ValueError(
@@ -364,6 +372,37 @@ def get_tiltseries_datareader(individual_tiltseries_df: pd.DataFrame, tiltseries
         )
     tiltseries_data_locator = tiltseries_data_locators[0]
     if not tiltseries_data_locator.startswith("s3://") and not tiltseries_data_locator.startswith("/"):
-        # assume it's a local relative path, relative to the tiltseries relative dir
         tiltseries_data_locator = tiltseries_relative_dir / tiltseries_data_locator
-    return DataReader(str(tiltseries_data_locator))
+    return str(tiltseries_data_locator)
+
+
+def read_s3_mrc_metadata(resource_locator: str) -> tuple[tuple[int, int, int], int]:
+    """Range-read an S3 MRC header and return ``((nz, ny, nx), object_bytes)`` without downloading pixels."""
+    try:
+        with global_fs.open(resource_locator, "rb") as source:
+            header = source.read(1024)
+        object_bytes = int(global_fs.size(resource_locator))
+    except Exception as exc:
+        if _is_forbidden(exc):
+            raise _s3_access_error(resource_locator, exc) from exc
+        raise
+    if len(header) < 16:
+        raise ValueError(f"MRC header for {resource_locator} is only {len(header)} bytes.")
+    allowed_modes = {0, 1, 2, 3, 4, 6, 12, 16}
+    for byte_order in ("<", ">"):
+        nx, ny, nz, mode = struct.unpack_from(f"{byte_order}4i", header)
+        if nx > 0 and ny > 0 and nz > 0 and mode in allowed_modes:
+            return (nz, ny, nx), object_bytes
+    raise ValueError(f"Invalid MRC dimensions or mode in the header for {resource_locator}.")
+
+
+def get_tiltseries_datareader(
+    individual_tiltseries_df: pd.DataFrame,
+    tiltseries_relative_dir: Path,
+    staging_dir: str | Path | None = None,
+) -> DataReader:
+    """
+    Given a tiltseries dataframe, returns a DataReader object for the tiltseries data.
+    """
+    locator = get_tiltseries_data_locator(individual_tiltseries_df, tiltseries_relative_dir)
+    return DataReader(locator, staging_dir=staging_dir)

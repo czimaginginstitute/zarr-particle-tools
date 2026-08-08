@@ -297,29 +297,32 @@ zarr-particle-export data-portal \
 
 ## Testing
 
-Extraction and reconstruction are compared against RELION 5.0 with the magnitude-aware, unmasked
-per-voxel comparator in `tests/helpers/compare.py`. Every voxel must fall within
-`ulp_factor * float32_ulp(max|values|)`, and the worst voxel is reported as a multiple of the float32
-ULP. float16 and experimental datasets use wider tolerances.
+Strict extraction and reconstruction comparisons against RELION 5.0 check every voxel with
+magnitude-aware float32 tolerances and report the worst mismatch. Broader float16 and experimental
+cases use looser comparisons appropriate to their precision and noise.
 
 - `test_extract_strict.py`, `test_reconstruct.py` — strict per-voxel equivalence vs RELION on synthetic and
   real data, across binning, cropping, and no-CTF cases.
 - `test_ctfrefine.py`, `test_polish.py` (need RELION binaries) — temporarily staged Zarr data
-  matches stock RELION, and two-phase per-tomogram matches all-at-once across every fit variant.
+  matches stock RELION, with two-phase parity coverage for defocus, scale, aberration, and motion modes.
 - `tests/unit/` (no RELION needed) — CTF envelope and phase shift, dose frequency cutoff vs RELION's
   `findDoseXRanges`, the zarr readers, and temporary-file preflight/fallback/cleanup safeguards.
 
 ```bash
 uv sync --locked --extra dev
-mkdir -p tests/data && cd tests/data
+mkdir -p tests/data
+(
+cd tests/data
 for f in zarr_particle_tools_test_data_large zarr_particle_tools_test_data_small; do
   curl -L --fail --retry 5 --retry-delay 5 --continue-at - -o "$f.tar.gz" \
     "https://zenodo.org/records/21797999/files/$f.tar.gz?download=1"
 done
 for f in *.tar.gz; do tar -xzf "$f"; done
+)
 ```
 
-The record ID is also set as `ZENODO_RECORD` in `.github/workflows/pytest.yml`; check there if this drifts.
+The two archives are about 9.34 GB compressed and need additional space when extracted. The record ID
+is also set as `ZENODO_RECORD` in `.github/workflows/pytest.yml` and `.github/workflows/pytest_full.yml`.
 
 On shared or login nodes, avoid `pytest -n auto`; it starts one worker per core and can oversubscribe the
 CPU through BLAS thread pools. Use a fixed worker count:

@@ -52,7 +52,7 @@ def test_materialize_project_to_disk(monkeypatch, tmp_path):
         with open(dest, "wb") as f:
             f.write(b"MRCDATA")
 
-    monkeypatch.setattr(ep.global_fs, "get", _fake_get)
+    monkeypatch.setattr(ep.core_data.global_fs, "get", _fake_get)
 
     ep.materialize_project_to_disk(tmp_path)
 
@@ -75,9 +75,19 @@ def test_materialize_project_to_disk(monkeypatch, tmp_path):
 def test_materialize_missing_mrc_fails(monkeypatch, tmp_path):
     _build_fake_project(tmp_path)
     monkeypatch.setattr(ep.cdp_cache, "get_tiltseries", lambda tid: [SimpleNamespace(id=tid, s3_mrc_file=None)])
-    monkeypatch.setattr(ep.global_fs, "get", lambda *a: None)
+    monkeypatch.setattr(ep.core_data.global_fs, "get", lambda *a: None)
     with pytest.raises(click.ClickException, match="no MRC file on the portal"):
         ep.materialize_project_to_disk(tmp_path)
+
+
+def test_download_uses_current_shared_filesystem(monkeypatch, tmp_path):
+    calls = {}
+    current = SimpleNamespace(get=lambda source, dest: calls.update(source=source, dest=dest))
+    monkeypatch.setattr(ep.core_data, "global_fs", current)
+
+    destination = tmp_path / "tilt.mrc"
+    assert ep._download_s3_file("s3://private/tilt.mrc", destination) == destination
+    assert calls == {"source": "private/tilt.mrc", "dest": str(destination)}
 
 
 def test_export_data_portal_project_wiring(monkeypatch, tmp_path):

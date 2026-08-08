@@ -31,7 +31,7 @@ dependencies = [
     "zarr",
 ]
 authors = [{ name = "Daniel Ji" }, { name = "Utz Heinrich Ermel" }]
-description = "Subtomogram averaging tools for local and cloud-hosted tilt series."
+description = "Subtomogram averaging tools for local and S3-hosted tilt series."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]

@@ -41,9 +41,19 @@ def _ts(ts_id, pixel_spacing, mrc="s3://bucket/x.mrc"):
 # read_mrc_header_pixel_size
 # ---------------------------------------------------------------------------
 def test_read_mrc_header_pixel_size(monkeypatch):
-    monkeypatch.setattr(o.global_fs, "open", lambda p, mode="rb": _FakeS3File(_fake_mrc_header(4092, 8859.18)))
+    monkeypatch.setattr(
+        o.core_data.global_fs,
+        "open",
+        lambda p, mode="rb": _FakeS3File(_fake_mrc_header(4092, 8859.18)),
+    )
     ps = o.read_mrc_header_pixel_size("s3://bucket/tomo.mrc")
     assert ps == pytest.approx(8859.18 / 4092, rel=1e-6)
+
+
+def test_read_mrc_header_uses_current_shared_filesystem(monkeypatch):
+    current = SimpleNamespace(open=lambda *a, **k: _FakeS3File(_fake_mrc_header(10, 25.0)))
+    monkeypatch.setattr(o.core_data, "global_fs", current)
+    assert o.read_mrc_header_pixel_size("s3://staging/tomo.mrc") == pytest.approx(2.5)
 
 
 def test_read_mrc_header_pixel_size_no_file():
@@ -55,7 +65,7 @@ def test_read_mrc_header_pixel_size_read_error(monkeypatch):
     def _boom(*a, **k):
         raise OSError("network down")
 
-    monkeypatch.setattr(o.global_fs, "open", _boom)
+    monkeypatch.setattr(o.core_data.global_fs, "open", _boom)
     # returns None (logs warning) rather than raising
     monkeypatch.setattr(o, "logger", MagicMock())
     assert o.read_mrc_header_pixel_size("s3://bucket/tomo.mrc") is None
@@ -257,6 +267,12 @@ def test_config_requires_reference_unless_denovo():
 def test_config_denovo_allows_no_reference():
     cfg = o.Py2RelyConfig(protein_diameter=330, reference_template=None, denovo_generation=True)
     assert cfg.denovo_generation is True
+
+
+def test_cli_cpu_constraint_default_matches_config():
+    command = o.cli.get_command(click.Context(o.cli), "data-portal")
+    cpu_option = next(param for param in command.params if param.name == "cpu_constraint")
+    assert cpu_option.default == o.Py2RelyConfig.__dataclass_fields__["cpu_constraint"].default == "16,8"
 
 
 # ---------------------------------------------------------------------------

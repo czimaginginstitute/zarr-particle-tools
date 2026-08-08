@@ -36,7 +36,10 @@ import starfile
 
 from zarr_particle_tools.core.constants import TILTSERIES_URI_RELION_COLUMN
 from zarr_particle_tools.core.data import (
+    DataReader,
+    get_tiltseries_data_locator,
     get_tiltseries_datareader,
+    read_s3_mrc_metadata,
     resolve_staging_dir,
     write_tiltseries_to_mrc,
 )
@@ -54,15 +57,35 @@ def _resolve_tiltstar(rel_or_abs, src_base):
     return ip if ip.exists() else src_base / ip
 
 
-def _indiv_reader(row, src_base, tiltseries_relative_dir):
-    """Load a tomogram's individual tilt star + a DataReader, propagating a global tomoTiltSeriesURI
-    (present on our chained outputs) into the individual df so the zarr locator resolves."""
+def _indiv_table(row, src_base):
+    """Load an individual tilt table and propagate a global URI from chained job output."""
     ip = _resolve_tiltstar(row["rlnTomoTiltSeriesStarFile"], src_base)
     indiv = read_single_table(ip)
     if TILTSERIES_URI_RELION_COLUMN in row and TILTSERIES_URI_RELION_COLUMN not in indiv.columns:
         indiv = indiv.copy()
         indiv[TILTSERIES_URI_RELION_COLUMN] = row[TILTSERIES_URI_RELION_COLUMN]
-    return indiv, get_tiltseries_datareader(indiv, tiltseries_relative_dir or Path("./"))
+    return indiv
+
+
+def _indiv_reader(row, src_base, tiltseries_relative_dir, staging_dir=None):
+    """Load a tomogram's individual tilt table and its pixel reader."""
+    indiv = _indiv_table(row, src_base)
+    return indiv, get_tiltseries_datareader(
+        indiv,
+        tiltseries_relative_dir or Path("./"),
+        staging_dir=staging_dir,
+    )
+
+
+def _locator_shape_and_source_bytes(locator: str) -> tuple[tuple[int, ...], int]:
+    """Return array shape and temporary source bytes, range-reading S3 MRC metadata when possible."""
+    if locator.startswith("s3://") and not locator.endswith(".zarr"):
+        return read_s3_mrc_metadata(locator)
+    reader = DataReader(locator)
+    try:
+        return tuple(int(v) for v in reader.data.shape), 0
+    finally:
+        reader.close()
 
 
 # Track materialized shm MRCs so a graceful exit/SIGTERM cleans them (SIGKILL is uncatchable).
@@ -111,19 +134,25 @@ def _fs_type(path: Path) -> str:
     return best_fs
 
 
-def _peek_stack_bytes(global_df, src_base, tiltseries_relative_dir) -> list:
-    """Per-tomogram tilt-series size in bytes (float32), from lazy zarr/MRC metadata (no download)."""
-    sizes = []
+def _peek_stack_storage(global_df, src_base, tiltseries_relative_dir) -> tuple[list[int], list[int]]:
+    """Return per-tomogram float32 output bytes and temporary S3-MRC source bytes without reading pixels."""
+    output_sizes, source_sizes = [], []
     for _, row in global_df.iterrows():
-        _, reader = _indiv_reader(row, src_base, tiltseries_relative_dir)
-        try:
-            sizes.append(int(np.prod(reader.data.shape)) * 4)
-        finally:
-            reader.close()
-    return sizes
+        indiv = _indiv_table(row, src_base)
+        locator = get_tiltseries_data_locator(indiv, tiltseries_relative_dir or Path("./"))
+        shape, source_bytes = _locator_shape_and_source_bytes(locator)
+        output_sizes.append(int(np.prod(shape)) * 4)
+        source_sizes.append(source_bytes)
+    return output_sizes, source_sizes
 
 
-def _preflight_budget(shm_dir: Path, stack_bytes: list, concurrency: int, all_at_once: bool) -> None:
+def _preflight_budget(
+    shm_dir: Path,
+    stack_bytes: list,
+    concurrency: int,
+    all_at_once: bool,
+    source_bytes: list | None = None,
+) -> None:
     """
     Check the selected staging directory for the whole run and warn if estimated peak usage exceeds
     50% of its free space. ``resolve_staging_dir`` has already verified writability and capacity.
@@ -133,7 +162,7 @@ def _preflight_budget(shm_dir: Path, stack_bytes: list, concurrency: int, all_at
         logger.info("Using disk-backed staging directory %s (filesystem: %s).", shm_dir, fs)
     if not stack_bytes:
         return
-    peak = _peak_stage_bytes(stack_bytes, concurrency, all_at_once)
+    peak = _peak_stage_bytes(stack_bytes, concurrency, all_at_once, source_bytes)
     free = shutil.disk_usage(shm_dir).free
     mode = "all-at-once (sum of all tilt series)" if all_at_once else f"{concurrency} concurrent worker(s)"
     if peak > free:
@@ -151,18 +180,36 @@ def _preflight_budget(shm_dir: Path, stack_bytes: list, concurrency: int, all_at
         )
 
 
-def _peak_stage_bytes(stack_bytes: list, concurrency: int, all_at_once: bool) -> int:
-    """Estimated maximum bytes occupied by materialized tilt-series MRCs."""
+def _peak_stage_bytes(
+    stack_bytes: list,
+    concurrency: int,
+    all_at_once: bool,
+    source_bytes: list | None = None,
+) -> int:
+    """Estimated peak bytes for float32 outputs plus temporary S3-MRC source copies."""
     if not stack_bytes:
         return 0
-    return sum(stack_bytes) if all_at_once else min(concurrency, len(stack_bytes)) * max(stack_bytes)
+    source_bytes = source_bytes or [0] * len(stack_bytes)
+    if len(source_bytes) != len(stack_bytes):
+        raise ValueError("source_bytes and stack_bytes must contain one value per tomogram.")
+    if all_at_once:
+        return sum(stack_bytes) + max(source_bytes, default=0)
+    per_worker = sorted(
+        (out + source for out, source in zip(stack_bytes, source_bytes, strict=True)),
+        reverse=True,
+    )
+    return sum(per_worker[: min(concurrency, len(per_worker))])
 
 
 def _slug(name: str, max_len: int = 200) -> str:
-    """Filesystem-safe form of a tomogram name; hash-suffix only if pathologically long."""
+    """Collision-resistant filesystem-safe form of a tomogram name."""
     s = re.sub(r"[^A-Za-z0-9._-]", "_", name)
-    if len(s) > max_len:
-        s = s[:max_len] + "_" + hashlib.sha1(name.encode()).hexdigest()[:8]
+    changed = s != name or s in ("", ".", "..") or len(s) > max_len
+    if s in ("", ".", ".."):
+        s = "tomogram"
+    if changed:
+        digest = hashlib.sha1(name.encode()).hexdigest()[:8]
+        s = s[: max_len - len(digest) - 1] + "_" + digest
     return s
 
 
@@ -219,39 +266,55 @@ def _materialize_tiltseries(global_df, src_base, stage_dir, shm_dir, tiltseries_
     run_tag = uuid.uuid4().hex[:8]
 
     shm_paths, names, frame_counts, indiv_rel = [], [], [], []
-    for _, row in global_df.iterrows():
-        tomo_name = str(row["rlnTomoName"])
-        indiv_df, reader = _indiv_reader(row, src_base, tiltseries_relative_dir)
-        indiv_out = ts_out_dir / f"{tomo_name}.star"
-
-        if len(reader.data.shape) != 3:
-            raise ValueError(f"Tomogram {tomo_name}: tilt series must be 3-D (section,y,x), got {reader.data.shape}.")
-        acq_nz, ny, nx = (int(x) for x in reader.data.shape)
-        # RELION tomo indexes tilts by ROW POSITION and needs stack_zdim == rlnTomoFrameCount == rows.
-        # Dark-frame-excluded stars reference a section subset via N@, so write only those sections (row
-        # order), rebase @1..N, set FrameCount=N. (Untrimmed / FrameCount=acquired overruns the N-row table
-        # -> "object N out of bounds", metadata_table.cpp:1789.)
-        sec0 = [int(str(s).split("@")[0]) - 1 for s in indiv_df["rlnMicrographName"]]  # 0-based, row order
-        if min(sec0) < 0 or max(sec0) >= acq_nz:
-            raise ValueError(f"Tomogram {tomo_name}: tilt @indices reference sections outside stack range 1..{acq_nz}.")
-        n_tilt = len(sec0)
-        indiv_df = indiv_df.copy()
-        indiv_df["rlnMicrographName"] = [
-            f"{i + 1}@{str(s).split('@', 1)[1]}" for i, s in enumerate(indiv_df["rlnMicrographName"])
-        ]
-        starfile.write({tomo_name: indiv_df}, str(indiv_out), overwrite=True)
-        voxel = float(row["rlnTomoTiltSeriesPixelSize"]) if "rlnTomoTiltSeriesPixelSize" in row else None
-        shm_path = shm_dir / f"zpt_{run_tag}_{_slug(tomo_name)}.mrc"
-        try:
-            write_tiltseries_to_mrc(reader, shm_path, voxel_size=voxel, sections=sec0)
-        finally:
-            reader.close()
-        _ACTIVE_SHM.add(str(shm_path))
-        shm_paths.append(shm_path)
-        names.append(str(shm_path))
-        frame_counts.append(n_tilt)
-        indiv_rel.append(f"tiltseries/{tomo_name}.star")  # relative to CWD (=stage_dir); RELION prepends --o on write
-        logger.info(f"Materialized {tomo_name}: {reader.locator} -> {shm_path} ({n_tilt}/{acq_nz} tilts).")
+    try:
+        for _, row in global_df.iterrows():
+            tomo_name = str(row["rlnTomoName"])
+            artifact_name = _slug(tomo_name)
+            reader = None
+            shm_path = shm_dir / f"zpt_{run_tag}_{artifact_name}.mrc"
+            try:
+                indiv_df, reader = _indiv_reader(row, src_base, tiltseries_relative_dir, staging_dir=shm_dir)
+                indiv_out = ts_out_dir / f"{artifact_name}.star"
+                if len(reader.data.shape) != 3:
+                    raise ValueError(
+                        f"Tomogram {tomo_name}: tilt series must be 3-D (section,y,x), got {reader.data.shape}."
+                    )
+                acq_nz = int(reader.data.shape[0])
+                # Dark-frame-excluded stars reference a section subset via N@, so write only those sections
+                # (row order), rebase @1..N, and set FrameCount=N.
+                sec0 = [int(str(s).split("@", 1)[0]) - 1 for s in indiv_df["rlnMicrographName"]]
+                if not sec0:
+                    raise ValueError(f"Tomogram {tomo_name}: individual tilt-series table has no frames.")
+                if min(sec0) < 0 or max(sec0) >= acq_nz:
+                    raise ValueError(
+                        f"Tomogram {tomo_name}: tilt @indices reference sections outside stack range 1..{acq_nz}."
+                    )
+                n_tilt = len(sec0)
+                indiv_df = indiv_df.copy()
+                indiv_df["rlnMicrographName"] = [
+                    f"{i + 1}@{str(s).split('@', 1)[1]}" for i, s in enumerate(indiv_df["rlnMicrographName"])
+                ]
+                starfile.write({tomo_name: indiv_df}, str(indiv_out), overwrite=True)
+                voxel = float(row["rlnTomoTiltSeriesPixelSize"]) if "rlnTomoTiltSeriesPixelSize" in row else None
+                _ACTIVE_SHM.add(str(shm_path))
+                write_tiltseries_to_mrc(reader, shm_path, voxel_size=voxel, sections=sec0)
+            except Exception:
+                shm_path.unlink(missing_ok=True)
+                _ACTIVE_SHM.discard(str(shm_path))
+                raise
+            finally:
+                if reader is not None:
+                    reader.close()
+            shm_paths.append(shm_path)
+            names.append(str(shm_path))
+            frame_counts.append(n_tilt)
+            indiv_rel.append(f"tiltseries/{artifact_name}.star")
+            logger.info(f"Materialized {tomo_name}: {reader.locator} -> {shm_path} ({n_tilt}/{acq_nz} tilts).")
+    except Exception:
+        for path in shm_paths:
+            path.unlink(missing_ok=True)
+            _ACTIVE_SHM.discard(str(path))
+        raise
 
     global_df["rlnTomoTiltSeriesName"] = names
     global_df["rlnTomoFrameCount"] = frame_counts
@@ -422,14 +485,15 @@ def _two_phase(
     rows = []
     for _, row in global_df.iterrows():
         name = str(row["rlnTomoName"])
-        indiv, reader = _indiv_reader(row, src_base, common.get("tiltseries_relative_dir"))
-        try:
-            acq_nz, ny, nx = (int(x) for x in reader.data.shape)  # acquired section count (zarr metadata)
-        finally:
-            reader.close()
+        artifact_name = _slug(name)
+        indiv = _indiv_table(row, src_base)
+        locator = get_tiltseries_data_locator(indiv, common.get("tiltseries_relative_dir") or Path("./"))
+        acq_nz, ny, nx = _locator_shape_and_source_bytes(locator)[0]
         # Trimmed tilts: rebase @1..N and size the stub to the row count (stack_zdim==FrameCount==rows;
         # see _materialize_tiltseries). Phase-2 merge reads FrameCount + header only, no pixels.
-        sec0 = [int(str(s).split("@")[0]) - 1 for s in indiv["rlnMicrographName"]]
+        sec0 = [int(str(s).split("@", 1)[0]) - 1 for s in indiv["rlnMicrographName"]]
+        if not sec0:
+            raise ValueError(f"Tomogram {name}: individual tilt-series table has no frames.")
         if min(sec0) < 0 or max(sec0) >= acq_nz:
             raise ValueError(f"Tomogram {name}: tilt @indices reference sections outside stack range 1..{acq_nz}.")
         n_tilt = len(sec0)
@@ -437,8 +501,8 @@ def _two_phase(
         indiv["rlnMicrographName"] = [
             f"{i + 1}@{str(s).split('@', 1)[1]}" for i, s in enumerate(indiv["rlnMicrographName"])
         ]
-        starfile.write({name: indiv}, str(stage / "tiltseries" / f"{name}.star"), overwrite=True)
-        stub = stage / f"{name}_stub.mrc"
+        starfile.write({name: indiv}, str(stage / "tiltseries" / f"{artifact_name}.star"), overwrite=True)
+        stub = stage / f"{artifact_name}_stub.mrc"
         _write_header_stub(
             stub,
             nx,
@@ -449,7 +513,7 @@ def _two_phase(
         r = row.to_dict()
         r["rlnTomoTiltSeriesName"] = str(stub.resolve())
         r["rlnTomoFrameCount"] = n_tilt
-        r["rlnTomoTiltSeriesStarFile"] = f"tiltseries/{name}.star"
+        r["rlnTomoTiltSeriesStarFile"] = f"tiltseries/{artifact_name}.star"
         rows.append(r)
     starfile.write({"global": pd.DataFrame(rows)}, str(stage / "tomograms.star"), overwrite=True)
     opt_set = _write_optimisation_set(stage, particles_star, stage / "tomograms.star", trajectories)
@@ -548,16 +612,27 @@ def run_relion_tomo_job(
             )
 
     two_phase = per_tomogram and len(global_df) > 1
-    stack_bytes = _peek_stack_bytes(global_df, src_base, tiltseries_relative_dir)
+    stack_bytes, source_bytes = _peek_stack_storage(global_df, src_base, tiltseries_relative_dir)
     if two_phase and (n_workers is None or n_workers <= 0):  # ~1/4 cores, then bounded by memory
         cpu_cap = min(len(global_df), max(1, min(16, (os.cpu_count() or 4) // 4)))
         # each worker holds a staged tilt-series copy plus a
         # memory-heavy relion job (box^3 volumes); ~7x the largest stack empirically avoids OOM/SIGKILL.
         per_worker_gb = max(1.0, (max(stack_bytes) / 1024**3) * 7)
         n_workers = auto_worker_count(cpu_cap, per_worker_gb)
-    peak_stage_bytes = _peak_stage_bytes(stack_bytes, n_workers or 1, all_at_once=not two_phase)
+    peak_stage_bytes = _peak_stage_bytes(
+        stack_bytes,
+        n_workers or 1,
+        all_at_once=not two_phase,
+        source_bytes=source_bytes,
+    )
     shm_dir = resolve_staging_dir(shm_dir, required_bytes=peak_stage_bytes)
-    _preflight_budget(shm_dir, stack_bytes, n_workers or 1, all_at_once=not two_phase)
+    _preflight_budget(
+        shm_dir,
+        stack_bytes,
+        n_workers or 1,
+        all_at_once=not two_phase,
+        source_bytes=source_bytes,
+    )
 
     common = dict(
         src_base=src_base,

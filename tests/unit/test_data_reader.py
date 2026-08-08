@@ -5,10 +5,16 @@ from pathlib import Path
 
 import mrcfile
 import numpy as np
+import pytest
 import zarr
 
 from zarr_particle_tools.core import data as data_module
-from zarr_particle_tools.core.data import DataReader, resolve_staging_dir, write_tiltseries_to_mrc
+from zarr_particle_tools.core.data import (
+    DataReader,
+    read_s3_mrc_metadata,
+    resolve_staging_dir,
+    write_tiltseries_to_mrc,
+)
 
 
 class _LocalFileS3:
@@ -67,17 +73,46 @@ def test_s3_mrc_is_staged_mapped_and_cleaned_up(tmp_path, monkeypatch):
     stage_root = tmp_path / "stage"
     stage_root.mkdir()
     fake_s3 = _LocalFileS3(source)
+    selected = {}
     monkeypatch.setattr(DataReader, "_get_s3fs", lambda _: fake_s3)
-    monkeypatch.setattr(data_module, "resolve_staging_dir", lambda **_: stage_root)
+    monkeypatch.setattr(
+        data_module,
+        "resolve_staging_dir",
+        lambda preferred, required_bytes: selected.update(preferred=preferred, required=required_bytes) or stage_root,
+    )
 
-    reader = DataReader("s3://example/tilt-series.mrc")
+    reader = DataReader("s3://example/tilt-series.mrc", staging_dir=stage_root)
     assert np.array_equal(reader.data, stack)
+    assert selected == {"preferred": stage_root, "required": source.stat().st_size}
     staged_dirs = list(stage_root.glob("zpt-s3-mrc-*"))
     assert len(staged_dirs) == 1
     assert (staged_dirs[0] / "tilt-series.mrc").exists()
 
     reader.close()
     assert not staged_dirs[0].exists()
+
+
+def test_s3_mrc_metadata_reads_header_without_pixels(tmp_path, monkeypatch):
+    stack = np.zeros((3, 5, 7), dtype=np.float32)
+    source = tmp_path / "source.mrc"
+    with mrcfile.new(source, overwrite=True) as mrc:
+        mrc.set_data(stack)
+    fake_s3 = _LocalFileS3(source)
+    monkeypatch.setattr(data_module, "global_fs", fake_s3)
+
+    shape, object_bytes = read_s3_mrc_metadata("s3://example/tilt-series.mrc")
+
+    assert shape == stack.shape
+    assert object_bytes == source.stat().st_size
+
+
+def test_s3_mrc_metadata_reports_authenticated_access_failure(monkeypatch):
+    denied = type("DeniedS3", (), {"open": lambda *a, **k: (_ for _ in ()).throw(PermissionError("403"))})()
+    monkeypatch.setattr(data_module, "global_fs", denied)
+    monkeypatch.setattr(data_module, "_s3_anon", False)
+
+    with pytest.raises(RuntimeError, match="authenticated access"):
+        read_s3_mrc_metadata("s3://private/tilt-series.mrc")
 
 
 def test_staging_dir_falls_back_when_preferred_is_not_writable(tmp_path, monkeypatch):
@@ -106,3 +141,14 @@ def test_staging_dir_falls_back_when_preferred_lacks_space(tmp_path, monkeypatch
     monkeypatch.setattr(data_module.shutil, "disk_usage", disk_usage)
 
     assert resolve_staging_dir(preferred, required_bytes=2) == fallback
+
+
+def test_staging_dir_fails_when_preferred_and_fallback_are_unusable(tmp_path, monkeypatch):
+    preferred_blocker = tmp_path / "preferred-file"
+    fallback_blocker = tmp_path / "fallback-file"
+    preferred_blocker.write_text("x")
+    fallback_blocker.write_text("x")
+    monkeypatch.setattr(data_module.tempfile, "gettempdir", lambda: str(fallback_blocker / "child"))
+
+    with pytest.raises(RuntimeError, match="No usable staging directory"):
+        resolve_staging_dir(preferred_blocker / "child", required_bytes=1)

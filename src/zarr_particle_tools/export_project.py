@@ -18,6 +18,7 @@ import click
 import starfile
 
 import zarr_particle_tools.cli.options as cli_options
+import zarr_particle_tools.core.data as core_data
 import zarr_particle_tools.generate.cdp_cache as cdp_cache
 import zarr_particle_tools.generate.cdp_generate_starfiles as cdp_generate
 import zarr_particle_tools.generate.copick_generate_starfiles as copick_generate
@@ -26,7 +27,6 @@ from zarr_particle_tools.core.constants import (
     TILTSERIES_MRCS_PLACEHOLDER,
     TILTSERIES_URI_RELION_COLUMN,
 )
-from zarr_particle_tools.core.data import global_fs
 from zarr_particle_tools.core.helpers import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 def _download_s3_file(s3_path: str, dest: Path) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    global_fs.get(s3_path.removeprefix("s3://"), str(dest))
+    core_data.global_fs.get(s3_path.removeprefix("s3://"), str(dest))
     return dest
 
 
