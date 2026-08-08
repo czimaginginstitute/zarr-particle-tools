@@ -48,7 +48,7 @@ zarr-particle-pipeline data-portal \
 ```
 
 Flags that would only restate a default are omitted: `--low-pass 50`, `--binning-list 4,2,1`,
-`--symmetry C1`, `--cpu-constraint 16,12`, `--timeout 24` and `--num-days 14` are already the defaults.
+`--symmetry C1`, `--cpu-constraint 16,8`, `--timeout 24` and `--num-days 14` are already the defaults.
 
 `--timeout` is the per-SLURM-job limit in hours (py2rely passes it to submitit as `timeout_min`), not a
 budget for the whole pipeline — that is `--num-days`. Add `--run-class3d --nclasses N
