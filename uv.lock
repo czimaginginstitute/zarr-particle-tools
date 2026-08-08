@@ -769,7 +769,7 @@ wheels = [
 
 [[package]]
 name = "cryoet-alignment"
-version = "0.1.1"
+version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -783,9 +783,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "s3fs" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c7/f7/c9c384c7fe86c518dacca4b7c64f884bd91730a2dc3c59260ddb114d58ec/cryoet_alignment-0.1.1.tar.gz", hash = "sha256:d3fbb00670655ed1de539d36f3912ab87a2334dbdea41cf075556d5c8ce8742c", size = 218201, upload-time = "2025-11-03T19:24:45.935Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/17/1c/cd6c7886e5478e22a4b3936c9cb2eb86359409cc55a89eb64a7c16efe5a3/cryoet_alignment-0.1.2.tar.gz", hash = "sha256:fe4782b93f76eab7381fe6073bbfb3768911180f04ffa6a262a779baea85977a", size = 218320, upload-time = "2025-12-02T15:51:17.75Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/bf/cd/5e3cbaf5758d0722ec7bad36f40ccf019f1c0daab19290e9e7f5a9824fed/cryoet_alignment-0.1.1-py3-none-any.whl", hash = "sha256:e5cebc704b4d264e3bb46aeb69b1af633a16906a11242c16b1dbde2f918ed6e7", size = 21052, upload-time = "2025-11-03T19:24:44.35Z" },
+    { url = "https://files.pythonhosted.org/packages/b8/7a/94f95baffad5e356fe898729bbbe3155ff47a010f5a668160c0195960ecc/cryoet_alignment-0.1.2-py3-none-any.whl", hash = "sha256:7a9984c99c613900dbc95b5011da67d8c34069a88731d9f9948af572d65532e8", size = 21049, upload-time = "2025-12-02T15:51:16.648Z" },
 ]
 
 [[package]]
