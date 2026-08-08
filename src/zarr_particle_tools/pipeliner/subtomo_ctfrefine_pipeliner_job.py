@@ -25,7 +25,7 @@ class PythonRelionSubtomoCtfRefineJob(PipelinerJob):
         self.jobinfo.programs = [ExternalProgram(command="zarr-particle-ctfrefine")]
         self.jobinfo.display_name = "Refine CTF parameters (Python)."
         self.jobinfo.short_desc = (
-            "CTF-refine tilt series stored as OME-Zarr using zarr-particle-ctfrefine (stock RELION on /dev/shm)."
+            "CTF-refine tilt series stored as OME-Zarr using zarr-particle-ctfrefine and stock RELION."
         )
         self.joboptions = copy.deepcopy(TomoRelionCtfRefine().joboptions)
 

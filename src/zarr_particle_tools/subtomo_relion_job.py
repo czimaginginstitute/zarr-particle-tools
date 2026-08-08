@@ -2,12 +2,12 @@
 Shared harness for running RELION tomography jobs (CTF refinement, Bayesian polish) against tilt
 series stored as OME-Zarr, without modifying RELION.
 
-Strategy: reuse the stock RELION binary and replace
-only the pixel source. Per tomogram we stream the zarr tilt series into a RAM-backed MRC (/dev/shm),
-point rlnTomoTiltSeriesName at it, and let RELION read its own format. A two-phase mode keeps at most
-n_workers tilt series in RAM: phase 1 processes each tomogram alone (parallel pool, writes RELION temp
-evidence); phase 2 runs RELION's own joint finalise via --only_do_unfinished + 1 KB header stubs, so
-results match all-at-once for every fit type.
+Strategy: reuse the stock RELION binary and replace only the pixel source. Per tomogram we stream the
+zarr tilt series into a temporary MRC, preferring /dev/shm and falling back to the system temp
+directory, point rlnTomoTiltSeriesName at it, and let RELION read its own format. A two-phase mode
+keeps at most n_workers tilt series staged at once: phase 1 processes each tomogram alone (parallel
+pool, writes RELION temp evidence); phase 2 runs RELION's own joint finalise via
+--only_do_unfinished + 1 KB header stubs, so results match all-at-once for every fit type.
 
 Job-specific behaviour is injected as a `build_cmd(relion_bin, opt_set, output_dir, box_size, ref1,
 ref2, mask, fsc, threads, opts) -> list[str]` callable plus the binary name; everything else here is
@@ -35,7 +35,11 @@ import pandas as pd
 import starfile
 
 from zarr_particle_tools.core.constants import TILTSERIES_URI_RELION_COLUMN
-from zarr_particle_tools.core.data import get_tiltseries_datareader, write_tiltseries_to_mrc
+from zarr_particle_tools.core.data import (
+    get_tiltseries_datareader,
+    resolve_staging_dir,
+    write_tiltseries_to_mrc,
+)
 from zarr_particle_tools.core.helpers import auto_worker_count
 
 logger = logging.getLogger(__name__)
@@ -112,33 +116,30 @@ def _peek_stack_bytes(global_df, src_base, tiltseries_relative_dir) -> list:
     sizes = []
     for _, row in global_df.iterrows():
         _, reader = _indiv_reader(row, src_base, tiltseries_relative_dir)
-        sizes.append(int(np.prod(reader.data.shape)) * 4)
+        try:
+            sizes.append(int(np.prod(reader.data.shape)) * 4)
+        finally:
+            reader.close()
     return sizes
 
 
 def _preflight_budget(shm_dir: Path, stack_bytes: list, concurrency: int, all_at_once: bool) -> None:
     """
-    Upfront RAM check for the whole run: warn if shm_dir isn't tmpfs; estimate PEAK shm usage
-    (sum of all stacks for all-at-once, else `concurrency` largest concurrent stacks) and error if it
-    won't fit / warn if it exceeds 50% of free. Avoids the per-worker race where each checks one stack.
+    Check the selected staging directory for the whole run and warn if estimated peak usage exceeds
+    50% of its free space. ``resolve_staging_dir`` has already verified writability and capacity.
     """
     fs = _fs_type(shm_dir)
     if fs not in ("tmpfs", "ramfs"):
-        logger.warning(
-            "shm-dir %s is on '%s', not tmpfs/ramfs: the tilt series will hit PHYSICAL DISK "
-            "(slow, and violates the RAM-only guarantee). Use /dev/shm or another tmpfs.",
-            shm_dir,
-            fs,
-        )
+        logger.info("Using disk-backed staging directory %s (filesystem: %s).", shm_dir, fs)
     if not stack_bytes:
         return
-    peak = sum(stack_bytes) if all_at_once else min(concurrency, len(stack_bytes)) * max(stack_bytes)
+    peak = _peak_stage_bytes(stack_bytes, concurrency, all_at_once)
     free = shutil.disk_usage(shm_dir).free
     mode = "all-at-once (sum of all tilt series)" if all_at_once else f"{concurrency} concurrent worker(s)"
     if peak > free:
         raise RuntimeError(
             f"Not enough space on {shm_dir}: {mode} needs ~{peak/1e9:.1f} GB, {free/1e9:.1f} GB free. "
-            f"Lower --n-workers, use per-tomogram mode, or a larger tmpfs."
+            f"Lower --n-workers, use per-tomogram mode, or a larger staging directory."
         )
     if peak > 0.5 * free:
         logger.warning(
@@ -148,6 +149,13 @@ def _preflight_budget(shm_dir: Path, stack_bytes: list, concurrency: int, all_at
             shm_dir,
             free / 1e9,
         )
+
+
+def _peak_stage_bytes(stack_bytes: list, concurrency: int, all_at_once: bool) -> int:
+    """Estimated maximum bytes occupied by materialized tilt-series MRCs."""
+    if not stack_bytes:
+        return 0
+    return sum(stack_bytes) if all_at_once else min(concurrency, len(stack_bytes)) * max(stack_bytes)
 
 
 def _slug(name: str, max_len: int = 200) -> str:
@@ -199,7 +207,7 @@ def read_global_tomograms(tomograms_starfile: Path) -> tuple[pd.DataFrame, Path]
 
 def _materialize_tiltseries(global_df, src_base, stage_dir, shm_dir, tiltseries_relative_dir):
     """
-    Write a tomograms.star into stage_dir with rlnTomoTiltSeriesName repointed at a /dev/shm MRC
+    Write a tomograms.star into stage_dir with rlnTomoTiltSeriesName repointed at a temporary MRC
     streamed from each tomogram's zarr tilt series (RELION option-A stack load). stage_dir must be
     separate from the RELION output dir so its tiltseries/*.star don't collide with RELION's outputs.
     Pass a 1-row global_df for a single tomogram. Returns (patched_tomograms_star, [shm_paths]).
@@ -234,7 +242,10 @@ def _materialize_tiltseries(global_df, src_base, stage_dir, shm_dir, tiltseries_
         starfile.write({tomo_name: indiv_df}, str(indiv_out), overwrite=True)
         voxel = float(row["rlnTomoTiltSeriesPixelSize"]) if "rlnTomoTiltSeriesPixelSize" in row else None
         shm_path = shm_dir / f"zpt_{run_tag}_{_slug(tomo_name)}.mrc"
-        write_tiltseries_to_mrc(reader, shm_path, voxel_size=voxel, sections=sec0)
+        try:
+            write_tiltseries_to_mrc(reader, shm_path, voxel_size=voxel, sections=sec0)
+        finally:
+            reader.close()
         _ACTIVE_SHM.add(str(shm_path))
         shm_paths.append(shm_path)
         names.append(str(shm_path))
@@ -350,10 +361,11 @@ def _two_phase(
     common,
 ) -> Path:
     """
-    Memory-bounded per-tomogram run (<= n_workers tilt series in RAM): phase 1 processes each
-    tomogram alone (parallel pool, writes temp); phase 2 gathers temp and runs one --only_do_unfinished
-    collect with 1 KB header stubs, so RELION's own finalise (defocus/scale/aberrations/motion) runs
-    with no stack loaded. Matches all-at-once for every fit type.
+    Staging-bounded per-tomogram run (<= n_workers tilt series at once): phase 1 processes each
+    tomogram alone (parallel pool, writes temp); phase 2 gathers temp and runs one
+    --only_do_unfinished collect with 1 KB header stubs, so RELION's own finalise
+    (defocus/scale/aberrations/motion) runs with no stack loaded. Matches all-at-once for every fit
+    type.
     """
     names = [str(r["rlnTomoName"]) for _, r in global_df.iterrows()]
     parts = starfile.read(str(particles_star))
@@ -411,7 +423,10 @@ def _two_phase(
     for _, row in global_df.iterrows():
         name = str(row["rlnTomoName"])
         indiv, reader = _indiv_reader(row, src_base, common.get("tiltseries_relative_dir"))
-        acq_nz, ny, nx = (int(x) for x in reader.data.shape)  # acquired section count (zarr metadata)
+        try:
+            acq_nz, ny, nx = (int(x) for x in reader.data.shape)  # acquired section count (zarr metadata)
+        finally:
+            reader.close()
         # Trimmed tilts: rebase @1..N and size the stub to the row count (stack_zdim==FrameCount==rows;
         # see _materialize_tiltseries). Phase-2 merge reads FrameCount + header only, no pixels.
         sec0 = [int(str(s).split("@")[0]) - 1 for s in indiv["rlnMicrographName"]]
@@ -536,10 +551,12 @@ def run_relion_tomo_job(
     stack_bytes = _peek_stack_bytes(global_df, src_base, tiltseries_relative_dir)
     if two_phase and (n_workers is None or n_workers <= 0):  # ~1/4 cores, then bounded by memory
         cpu_cap = min(len(global_df), max(1, min(16, (os.cpu_count() or 4) // 4)))
-        # each worker holds a tilt-series copy in /dev/shm (counts against cgroup RAM) plus a
+        # each worker holds a staged tilt-series copy plus a
         # memory-heavy relion job (box^3 volumes); ~7x the largest stack empirically avoids OOM/SIGKILL.
         per_worker_gb = max(1.0, (max(stack_bytes) / 1024**3) * 7)
         n_workers = auto_worker_count(cpu_cap, per_worker_gb)
+    peak_stage_bytes = _peak_stage_bytes(stack_bytes, n_workers or 1, all_at_once=not two_phase)
+    shm_dir = resolve_staging_dir(shm_dir, required_bytes=peak_stage_bytes)
     _preflight_budget(shm_dir, stack_bytes, n_workers or 1, all_at_once=not two_phase)
 
     common = dict(
@@ -593,7 +610,7 @@ def run_relion_tomo_job(
             **common,
         )
 
-    # make the output re-consumable by our tools (restore zarr locator, drop stale shm refs)
+    # make the output re-consumable by our tools (restore zarr locator, drop stale staging refs)
     _restore_zarr_source(output_dir, global_df, src_base, tiltseries_relative_dir)
     logger.info("%s finished in %.1fs. Output: %s", Path(relion_bin).name, time.time() - start, output_dir)
     return output_dir

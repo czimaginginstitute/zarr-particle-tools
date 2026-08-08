@@ -1,4 +1,6 @@
 import logging
+import shutil
+import tempfile
 import time
 from functools import cache
 from pathlib import Path
@@ -45,6 +47,40 @@ def _s3_access_error(s3_uri: str, exc: Exception) -> RuntimeError:
     )
 
 
+def _check_staging_dir(path: Path, required_bytes: int = 0) -> None:
+    """Raise if ``path`` cannot be written or lacks the requested free space."""
+    path.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(prefix=".zpt-write-test-", dir=path) as probe:
+        probe.write(b"ok")
+        probe.flush()
+    free = shutil.disk_usage(path).free
+    if required_bytes > free:
+        raise OSError(f"needs {required_bytes} bytes but only {free} bytes are free")
+
+
+def resolve_staging_dir(preferred: str | Path = "/dev/shm", required_bytes: int = 0) -> Path:
+    """Return a usable staging directory, falling back to the system temp directory.
+
+    The preferred directory is not trusted merely because it exists: a small file is created and
+    removed, and its free space is checked. This makes the default safe on systems without a usable
+    ``/dev/shm`` (including macOS and constrained containers).
+    """
+    preferred = Path(preferred)
+    fallback = Path(tempfile.gettempdir())
+    candidates = [preferred] if preferred == fallback else [preferred, fallback]
+    failures = []
+    for candidate in candidates:
+        try:
+            _check_staging_dir(candidate, required_bytes)
+        except OSError as exc:
+            failures.append(f"{candidate}: {exc}")
+            continue
+        if candidate != preferred:
+            logger.info("Staging directory %s is unavailable; using %s.", preferred, candidate)
+        return candidate
+    raise RuntimeError("No usable staging directory (" + "; ".join(failures) + ").")
+
+
 class DataReader:
     """
     A reader for tiltseries data, generalized to handle both MRC files and Zarr stores.
@@ -62,6 +98,8 @@ class DataReader:
     def __init__(self, resource_locator: str, is_s3: bool = None, is_zarr: bool = None):
         self.locator = resource_locator
         self._s3fs = None
+        self._mrc = None
+        self._staged_mrc_dir = None
         self.is_s3 = is_s3 if is_s3 is not None else self.locator.startswith("s3://")
         self.is_zarr = is_zarr if is_zarr is not None else self.locator.endswith(".zarr")
 
@@ -97,9 +135,18 @@ class DataReader:
                     return da.from_zarr(s3_map)
                 else:
                     logger.debug(f"Loading S3 MRC file: {self.locator}")
-                    with self._get_s3fs().open(self.locator, "rb") as f:
-                        with mrcfile.mmap(f, mode="r") as mrc:
-                            return mrc.data
+                    fs = self._get_s3fs()
+                    stage_root = resolve_staging_dir(required_bytes=int(fs.size(self.locator)))
+                    self._staged_mrc_dir = tempfile.TemporaryDirectory(prefix="zpt-s3-mrc-", dir=stage_root)
+                    local_path = Path(self._staged_mrc_dir.name) / Path(self.locator).name
+                    try:
+                        with fs.open(self.locator, "rb") as source, local_path.open("wb") as destination:
+                            shutil.copyfileobj(source, destination)
+                        self._mrc = mrcfile.mmap(str(local_path), mode="r")
+                        return self._mrc.data
+                    except Exception:
+                        self.close()
+                        raise
             except Exception as exc:
                 if _is_forbidden(exc):
                     raise _s3_access_error(self.locator, exc) from exc
@@ -110,8 +157,27 @@ class DataReader:
                 return da.from_zarr(self.locator)
             else:
                 logger.debug(f"Loading local MRC file: {self.locator}")
-                with mrcfile.mmap(self.locator, mode="r") as mrc:
-                    return mrc.data
+                self._mrc = mrcfile.mmap(self.locator, mode="r")
+                return self._mrc.data
+
+    def close(self) -> None:
+        """Close an MRC mapping and remove any temporary S3 staging file."""
+        if self._mrc is not None:
+            self._mrc.close()
+            self._mrc = None
+        if self._staged_mrc_dir is not None:
+            self._staged_mrc_dir.cleanup()
+            self._staged_mrc_dir = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.close()
+
+    def __del__(self):
+        if hasattr(self, "_mrc"):
+            self.close()
 
     def slice_data(self, key: tuple[int, int, int, int, int]) -> None:
         """
@@ -157,7 +223,7 @@ class DataReader:
 
         Unlike the crop machinery (``slice_data``/``compute_crops``), this materializes the whole
         stack in one shot. It is used to hand a complete tilt series to RELION (e.g. via a
-        RAM-backed MRC for the CTF-refine / polish jobs, which whiten against the whole frame and
+        temporary MRC for the CTF-refine / polish jobs, which whiten against the whole frame and
         extract at absolute coordinates, so they need every pixel).
 
         A warning is emitted if the stored dtype is not float32, since the cast can change values.
@@ -231,14 +297,14 @@ def write_tiltseries_to_mrc(
     Stream a tilt-series ``DataReader`` into an MRC image stack (float32, MRC mode 2) written to
     ``out_path``, without holding the full stack as a single numpy array.
 
-    Intended for materializing a tilt series into a RAM-backed filesystem (``/dev/shm``) so the
-    stock RELION tomography binaries can read it as a normal MRC while nothing large touches
-    physical disk. For zarr sources the data is streamed chunk-by-chunk via ``dask.array.store``
-    (producer peak ~ one chunk); for MRC sources it is copied through directly.
+    Intended for materializing a tilt series into a temporary filesystem so the stock RELION
+    tomography binaries can read it as a normal MRC. For zarr sources the data is streamed
+    chunk-by-chunk via ``dask.array.store`` (producer peak ~ one chunk); for MRC sources it is copied
+    through directly.
 
     Args:
         reader: a ``DataReader`` for the tilt series (zarr or MRC), shape (section, y, x).
-        out_path: destination MRC path (e.g. under ``/dev/shm``).
+        out_path: destination MRC path.
         voxel_size: optional pixel size (Angstrom) to stamp into the MRC header.
         overwrite: overwrite an existing file at ``out_path``.
 

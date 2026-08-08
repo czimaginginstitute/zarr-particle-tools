@@ -14,12 +14,9 @@ def test_fs_type_detects_disk_vs_tmpfs(tmp_path):
         assert srj._fs_type(Path("/dev/shm")) == "tmpfs"
 
 
-def test_preflight_raises_when_stack_wont_fit():
-    # use /dev/shm (tmpfs, so no not-tmpfs warning); need > free must raise before the 50% warning
-    if not Path("/dev/shm").is_dir():
-        pytest.skip("/dev/shm not present")
+def test_preflight_raises_when_stack_wont_fit(tmp_path):
     with pytest.raises(RuntimeError, match="Not enough space"):
-        srj._preflight_budget(Path("/dev/shm"), [10**18], concurrency=1, all_at_once=True)
+        srj._preflight_budget(tmp_path, [10**18], concurrency=1, all_at_once=True)
 
 
 def test_cleanup_shm_unlinks_registered_files(tmp_path):

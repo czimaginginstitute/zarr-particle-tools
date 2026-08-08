@@ -24,9 +24,7 @@ class PythonRelionSubtomoPolishJob(PipelinerJob):
         super().__init__()
         self.jobinfo.programs = [ExternalProgram(command="zarr-particle-polish")]
         self.jobinfo.display_name = "Bayesian polishing / frame alignment (Python)."
-        self.jobinfo.short_desc = (
-            "Polish tilt series stored as OME-Zarr using zarr-particle-polish (stock RELION on /dev/shm)."
-        )
+        self.jobinfo.short_desc = "Polish tilt series stored as OME-Zarr using zarr-particle-polish and stock RELION."
         self.joboptions = copy.deepcopy(TomoRelionBayesPolishJob().joboptions)
 
     def create_output_nodes(self):

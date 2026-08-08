@@ -93,8 +93,8 @@ def run_ctf_refine(
     """
     Orchestrate a RELION CTF-refinement run against zarr tilt series. Returns the output dir.
 
-    per_tomogram=True (default): two-phase, <= n_workers tilt series in RAM (n_workers=0 auto ~1/4
-    cores). Reuses RELION's joint finalise, so results match all-at-once for every fit type
+    per_tomogram=True (default): two-phase, <= n_workers tilt series staged at once (n_workers=0 auto
+    ~1/4 cores). Reuses RELION's joint finalise, so results match all-at-once for every fit type
     (defocus / scale / aberrations). per_tomogram=False = single all-at-once run.
     """
     opts = {
