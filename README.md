@@ -9,6 +9,21 @@ pixels stream from S3 as needed.
 `zarr-particle-pipeline` ties this together: point it at a dataset and an annotation, and it drives a full
 STA run end to end via [py2rely](https://github.com/chanzuckerberg/py2rely) (RELION 5).
 
+### What you get
+
+- **Voxel-for-voxel RELION 5.0 equivalence.** Extraction and reconstruction match RELION's own output to
+  within a float32 ULP, [checked in CI](#testing).
+- **One `pip install`.** Extraction and reconstruction need no RELION build at all.
+- **Picks from anywhere:** RELION star files, [copick](https://github.com/copick/copick), the CryoET Data
+  Portal, or copick picks against portal tilt series.
+
+Tilt series are read wherever they live:
+
+| | Local | S3 |
+|---|---|---|
+| **OME-Zarr** | ✅ | ✅ |
+| **MRC** | ✅ | ✅ |
+
 ## Quickstart
 
 ```bash
@@ -82,9 +97,10 @@ pip install uv
 uv pip install zarr-particle-tools
 ```
 
-Extraction and reconstruction work with that alone. The `[pipeliner]` extra adds
-[CCPEM pipeliner](https://ccpem-pipeliner.readthedocs.io/en/latest/), which the four
-`ccpem_pipeliner.jobs` classes import and which `zarr-particle-pipeline` therefore needs:
+Every command except `zarr-particle-pipeline` works with that alone — including ctfrefine and polish,
+which need the `relion_tomo_*` binaries but not pipeliner. The `[pipeliner]` extra adds
+[CCPEM pipeliner](https://ccpem-pipeliner.readthedocs.io/en/latest/), which only the four
+`ccpem_pipeliner.jobs` wrapper classes and `zarr-particle-pipeline`'s preflight import:
 
 ```bash
 uv pip install "zarr-particle-tools[pipeliner]"
