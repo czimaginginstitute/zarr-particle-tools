@@ -315,7 +315,7 @@ uv sync --locked --extra dev
 mkdir -p tests/data && cd tests/data
 for f in zarr_particle_tools_test_data_large zarr_particle_tools_test_data_small; do
   curl -L --fail --retry 5 --retry-delay 5 --continue-at - -o "$f.tar.gz" \
-    "https://zenodo.org/records/21797985/files/$f.tar.gz?download=1"
+    "https://zenodo.org/records/21797999/files/$f.tar.gz?download=1"
 done
 for f in *.tar.gz; do tar -xzf "$f"; done
 ```

@@ -53,10 +53,10 @@ cd tests/data
 # Download test data from Zenodo
 curl -L --fail --retry 5 --retry-delay 5 --continue-at - \
   -o zarr_particle_tools_test_data_large.tar.gz \
-  "https://zenodo.org/records/21797985/files/zarr_particle_tools_test_data_large.tar.gz?download=1"
+  "https://zenodo.org/records/21797999/files/zarr_particle_tools_test_data_large.tar.gz?download=1"
 curl -L --fail --retry 5 --retry-delay 5 --continue-at - \
   -o zarr_particle_tools_test_data_small.tar.gz \
-  "https://zenodo.org/records/21797985/files/zarr_particle_tools_test_data_small.tar.gz?download=1"
+  "https://zenodo.org/records/21797999/files/zarr_particle_tools_test_data_small.tar.gz?download=1"
 
 # Extract
 for f in *.tar.gz; do tar -xzf "$f"; done
