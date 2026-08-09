@@ -26,11 +26,11 @@ import click
 import starfile
 
 import zarr_particle_tools.cli.options as cli_options
+import zarr_particle_tools.core.data as core_data
 import zarr_particle_tools.generate.cdp_cache as cdp_cache
 import zarr_particle_tools.generate.cdp_generate_starfiles as cdp_generate
 import zarr_particle_tools.generate.copick_generate_starfiles as copick_generate
 from zarr_particle_tools.core.constants import OPTICS_DF_COLUMNS, THREAD_POOL_WORKER_COUNT
-from zarr_particle_tools.core.data import global_fs
 from zarr_particle_tools.core.helpers import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ def preflight_problems(require_copick: bool = False) -> list[str]:
             f"RELION binaries not on PATH: {', '.join(missing_bins)} "
             "(source RELION's setup-env.sh and add its build/bin to PATH)"
         )
-    modules = [("pipeliner", "ccpem-pipeliner")]
+    modules = [("pipeliner", 'ccpem-pipeliner, e.g. pip install "zarr-particle-tools[pipeliner]"')]
     if require_copick:  # only needed for the copick-data-portal path
         modules.append(("copick", "copick"))
     for module, pkg in modules:
@@ -123,7 +123,7 @@ def read_mrc_header_pixel_size(s3_mrc_file: str) -> float | None:
         return None
     path = s3_mrc_file.removeprefix("s3://")
     try:
-        with global_fs.open(path, "rb") as f:
+        with core_data.global_fs.open(path, "rb") as f:
             hdr = f.read(1024)
     except Exception as e:  # noqa: BLE001
         logger.warning("Could not read MRC header %s: %s", s3_mrc_file, e)

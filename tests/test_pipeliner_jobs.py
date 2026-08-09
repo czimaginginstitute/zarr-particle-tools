@@ -1,8 +1,8 @@
 """
 Tests for the ccpem-pipeliner job wrappers, which are what py2rely actually invokes.
 
-Skipped unless pipeliner is importable (it is not on PyPI, so CI does not have it). Worth having
-anyway: the reconstruct wrapper used to delete Wiener_SNR and point_group from its job options as
+Skipped unless pipeliner is importable; the dev extra installs it, so CI runs these. Worth having:
+the reconstruct wrapper used to delete Wiener_SNR and point_group from its job options as
 "not supported", so a pipeline asking for D2 with a Wiener SNR silently got C1 with the radial-average
 heuristic instead -- no error, just a different reconstruction.
 """
@@ -11,7 +11,7 @@ import importlib.util
 
 import pytest
 
-pytest.importorskip("pipeliner", reason="ccpem-pipeliner is not installed (not on PyPI)")
+pytest.importorskip("pipeliner", reason="ccpem-pipeliner is not installed")
 
 from zarr_particle_tools.pipeliner.subtomo_reconstruct_pipeliner_job import (  # noqa: E402
     PythonRelionSubtomoReconstructJob,

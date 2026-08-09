@@ -83,7 +83,7 @@ def run_polish(
     """
     Orchestrate a RELION polish (relion_tomo_align) run against zarr tilt series. Returns output dir.
 
-    per_tomogram=True (default): two-phase, <= n_workers tilt series in RAM. align is per-tomogram
+    per_tomogram=True (default): two-phase, <= n_workers tilt series staged at once. align is per-tomogram
     independent, so results match all-at-once. Outputs motion.star (trajectories) + updated
     tomograms.star / particles.star (RELION-native, so they feed a following CTF-refine).
     """

@@ -11,7 +11,7 @@ concurrency:
 
 env:
   # Zenodo record hosting the test data tarballs. Bump this when publishing a new version.
-  ZENODO_RECORD: "21797985"
+  ZENODO_RECORD: "21797999"
 
 jobs:
   test:
@@ -39,7 +39,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install uv
-          uv pip install --system -e .[dev]
+          uv sync --locked --extra dev
 
       - name: Download test data from Zenodo
         shell: bash
@@ -69,4 +69,4 @@ jobs:
 
       - name: Run tests
         run: |
-          pytest -n 1 -vvv
+          uv run --locked pytest -n 1 -vvv

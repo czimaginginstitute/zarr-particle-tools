@@ -1,13 +1,12 @@
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
 name = "zarr-particle-tools"
 requires-python = ">=3.10"
 classifiers = [
-    "Development Status :: 4 - Beta",
-    "License :: OSI Approved :: MIT License",
+    "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -28,12 +27,14 @@ dependencies = [
     "rich",
     "s3fs",
     "scipy",
-    "starfile",
+    "starfile>=0.5.13",
+    "zarr",
 ]
 authors = [{ name = "Daniel Ji" }, { name = "Utz Heinrich Ermel" }]
-description = "Subtomogram extraction from local files and the CryoET Data Portal."
+description = "Subtomogram averaging tools for local and S3-hosted tilt series."
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = ["LICENSE"]
 keywords = [
     "cryoet",
     "cryo-et",
@@ -43,11 +44,16 @@ keywords = [
     "zarr",
 ]
 
+[project.urls]
+Homepage = "https://github.com/czimaginginstitute/zarr-particle-tools"
+Repository = "https://github.com/czimaginginstitute/zarr-particle-tools"
+Issues = "https://github.com/czimaginginstitute/zarr-particle-tools/issues"
+Changelog = "https://github.com/czimaginginstitute/zarr-particle-tools/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
 dev = [
     "black>=25.1.0",
-    "hatchling>=1.25.0",
-    "hatch-vcs>=0.4.0",
+    "ccpem-pipeliner>=1.6",
     "pre-commit>=4.2.0",
     "ruff>=0.12.0",
     "matplotlib",
@@ -55,7 +61,7 @@ dev = [
     "pytest",
     "pytest-xdist",
 ]
-# pipeliner = ["pipeliner @ git+https://gitlab.com/ccpem/ccpem-pipeliner.git"]
+pipeliner = ["ccpem-pipeliner>=1.6"]
 
 [project.scripts]
 zarr-particle-extract = "zarr_particle_tools.subtomo_extract:cli"
@@ -74,9 +80,6 @@ zarr-particle-export = "zarr_particle_tools.export_project:cli"
 
 [tool.hatch.version]
 path = "src/zarr_particle_tools/__init__.py"
-
-[tool.hatch.metadata]
-allow-direct-references = true
 
 [tool.black]
 line-length = 120

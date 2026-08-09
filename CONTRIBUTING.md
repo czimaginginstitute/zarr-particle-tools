@@ -32,34 +32,37 @@ There are many ways to contribute to zarr-particle-tools:
 
 3. **Install the package in development mode**:
    ```bash
-   uv pip install -e .[dev]
+   uv sync --locked --extra dev
    ```
 
 4. **Set up pre-commit hooks**:
    ```bash
-   pre-commit install
+   uv run --locked pre-commit install
    ```
 
    This will automatically run code formatters and linters before each commit.
 
 ### Download Test Data (Optional)
 
-To run the full test suite, you'll need to download the test data:
+To run the full test suite, download both test-data archives. They are about 9.34 GB compressed and
+need additional space when extracted:
 
 ```bash
 mkdir -p tests/data
+(
 cd tests/data
 
 # Download test data from Zenodo
 curl -L --fail --retry 5 --retry-delay 5 --continue-at - \
   -o zarr_particle_tools_test_data_large.tar.gz \
-  "https://zenodo.org/records/21797985/files/zarr_particle_tools_test_data_large.tar.gz?download=1"
+  "https://zenodo.org/records/21797999/files/zarr_particle_tools_test_data_large.tar.gz?download=1"
 curl -L --fail --retry 5 --retry-delay 5 --continue-at - \
   -o zarr_particle_tools_test_data_small.tar.gz \
-  "https://zenodo.org/records/21797985/files/zarr_particle_tools_test_data_small.tar.gz?download=1"
+  "https://zenodo.org/records/21797999/files/zarr_particle_tools_test_data_small.tar.gz?download=1"
 
 # Extract
 for f in *.tar.gz; do tar -xzf "$f"; done
+)
 ```
 
 ## Development Workflow
@@ -75,7 +78,7 @@ for f in *.tar.gz; do tar -xzf "$f"; done
 
 3. **Run tests** to ensure your changes don't break existing functionality:
    ```bash
-   pytest
+   uv run --locked pytest
    ```
 
 4. **Commit your changes** using a [conventional commit](https://www.conventionalcommits.org/)
@@ -101,10 +104,10 @@ Pre-commit hooks will automatically format your code when you commit. You can al
 
 ```bash
 # Format code with Black
-black src/ tests/
+uv run --locked black src/ tests/
 
 # Run Ruff linter
-ruff check src/ tests/ --fix
+uv run --locked ruff check src/ tests/ --fix
 ```
 
 ### Code Guidelines
@@ -120,12 +123,13 @@ ruff check src/ tests/ --fix
 
 - Write tests for new features or bug fixes
 - Place tests in the `tests/` directory
-- Run the test suite with `pytest`
-- Run tests in parallel with `pytest -n 4` (requires pytest-xdist). Avoid `-n auto` on shared or
+- Run the test suite with `uv run --locked pytest`
+- Run tests in parallel with `uv run --locked pytest -n 4`. Avoid `-n auto` on shared or
   login nodes: it spawns a worker per core and each worker's BLAS pool adds threads on top
 - Ensure all tests pass before submitting a pull request
-- Tests needing external tooling skip themselves: the ctf-refine / polish comparisons need the
-  `relion_tomo_*` binaries and a `/dev/shm` tmpfs, and the pipeline smoke tests need py2rely.
+- Tests needing external tooling skip themselves: the ctf-refine / polish comparisons currently run
+  only with the `relion_tomo_*` binaries and a `/dev/shm` tmpfs (the runtime itself falls back to the
+  system temp directory), and the pipeline smoke tests need py2rely.
   Set `ZPT_SMOKE_COPICK_CONFIG` to include the copick-backed smoke tests
 - CI runs `pytest -n 1 -k "not (local and unroofing)"`; the excluded cases need the large tarball
 

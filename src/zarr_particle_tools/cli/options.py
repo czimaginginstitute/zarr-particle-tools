@@ -388,22 +388,22 @@ def ctfrefine_options():
             type=click.Path(file_okay=False, path_type=Path),
             default=Path("/dev/shm"),
             show_default=True,
-            help="RAM-backed dir for the materialized tilt-series MRCs.",
+            help="Preferred staging dir for tilt-series MRCs; falls back to the system temp dir.",
         ),
         click.option(
             "--per-tomogram/--all-at-once",
             default=True,
             show_default=True,
-            help="Two-phase per-tomogram (bounded RAM); all-at-once keeps all tilt series in RAM.",
+            help="Two-phase per-tomogram (bounded staging); all-at-once stages all tilt series together.",
         ),
         click.option(
             "--n-workers",
             type=int,
             default=0,
             show_default=True,
-            help="Parallel tomograms in phase 1 (0=auto: ~1/4 cores, capped 16; peak RAM ~ n-workers x tilt series).",
+            help="Parallel tomograms in phase 1 (0=auto: ~1/4 cores, capped 16).",
         ),
-        click.option("--keep-shm", is_flag=True, help="Keep the materialized /dev/shm MRCs (debug)."),
+        click.option("--keep-shm", is_flag=True, help="Keep materialized staging MRCs (debug)."),
         click.option("--debug", is_flag=True, help="Enable debug logging."),
     ]
     return compose_options(opts)
@@ -483,13 +483,13 @@ def polish_options():
             type=click.Path(file_okay=False, path_type=Path),
             default=Path("/dev/shm"),
             show_default=True,
-            help="RAM-backed dir for materialized tilt series.",
+            help="Preferred staging dir for tilt-series MRCs; falls back to the system temp dir.",
         ),
         click.option(
             "--per-tomogram/--all-at-once",
             default=True,
             show_default=True,
-            help="Two-phase per-tomogram (bounded RAM); all-at-once keeps all in RAM.",
+            help="Two-phase per-tomogram (bounded staging); all-at-once stages all tilt series together.",
         ),
         click.option(
             "--n-workers",
@@ -498,7 +498,7 @@ def polish_options():
             show_default=True,
             help="Parallel tomograms in phase 1 (0=auto: ~1/4 cores, capped 16).",
         ),
-        click.option("--keep-shm", is_flag=True, help="Keep the materialized /dev/shm MRCs (debug)."),
+        click.option("--keep-shm", is_flag=True, help="Keep materialized staging MRCs (debug)."),
         click.option("--debug", is_flag=True, help="Enable debug logging."),
     ]
     return compose_options(opts)

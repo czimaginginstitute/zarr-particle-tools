@@ -16,7 +16,7 @@ concurrency:
 env:
   # Zenodo record hosting the test data tarballs. Bump this when publishing a new version; it also
   # keys the cache, so a stale cache is not reused across record versions.
-  ZENODO_RECORD: "21797985"
+  ZENODO_RECORD: "21797999"
 
 jobs:
   test:
@@ -48,7 +48,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install uv
-          uv pip install --system -e .[dev]
+          uv sync --locked --extra dev
 
       - name: Restore test data from cache
         id: cache
@@ -92,4 +92,4 @@ jobs:
 
       - name: Run tests
         run: |
-          pytest -n 1 -vvv -k "not (local and unroofing)"
+          uv run --locked pytest -n 1 -vvv -k "not (local and unroofing)"
