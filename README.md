@@ -26,7 +26,6 @@ float32-scale tolerances.
   - [Export an on-disk project](#export-an-on-disk-project)
 - [Testing](#testing)
 - [Known limitations](#known-limitations)
-- [Project roadmap](#project-roadmap)
 - [Development](#development)
 
 ## Installation
@@ -335,21 +334,18 @@ OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 uv run --locked pytes
 
 If you would like to see a feature added, on or off this list, please open an issue.
 
-### Extraction and reconstruction
+### Extraction
 
-- Does not write any `*.mrcs` files other than the 2D stacks themselves
-- Does not support particle subtomogram orientation (`rlnTomoSubtomogramRot`, `rlnTomoSubtomogramTilt`,
-  `rlnTomoSubtomogramPsi`)
+- Does not support oriented extraction: particle subtomogram orientations
+  (`rlnTomoSubtomogramRot`, `rlnTomoSubtomogramTilt`, `rlnTomoSubtomogramPsi`) and RELION's
+  `--apply_orientations` mode are not implemented
+- Does not support 3D volume extraction or write any `*.mrcs` files other than the 2D stacks themselves
+- Does not support `min_frames` or `max_dose` (`zarr-particle-pipeline` rejects `--max-dose` before
+  extraction)
 - Does not support gamma offset
 - Does not support spherical aberration correction
 - Does not support grid precorrection
 - Does not support whitening (power spectral flattening)
-- Does not support 3D volume extraction
-- Does not support `min_frames` or `max_dose` (`zarr-particle-pipeline` rejects `--max-dose` before
-  extraction)
-- Does not support `--apply_orientations`
-- Does not support `--dont_apply_offsets` for reconstruction (extraction supports `--dont-apply-offsets`)
-- Does not support cone flags (`--cone_weight`, `--cone_angle`, `--cone_sig0`)
 - Does not support anisotropic magnification matrices (`EMDL_IMAGE_MAG_MATRIX_00`,
   `EMDL_IMAGE_MAG_MATRIX_01`, `EMDL_IMAGE_MAG_MATRIX_10`, `EMDL_IMAGE_MAG_MATRIX_11`)
 - Does not support 2D deformations (`EMDL_TOMO_DEFORMATION_GRID_SIZE_X`,
@@ -358,15 +354,12 @@ If you would like to see a feature added, on or off this list, please open an is
 
 ### Reconstruction
 
-- Only reproduces RELION's `--no_circle_crop` mode; its default circle cropping is not implemented
-- Does not support `weight_*.mrc` output files
 - Does not support helical symmetry
+- Only reproduces RELION's `--no_circle_crop` mode; its default circle cropping is not implemented
+- Does not support `--dont_apply_offsets` (extraction supports `--dont-apply-offsets`)
+- Does not support cone flags (`--cone_weight`, `--cone_angle`, `--cone_sig0`)
+- Does not support `weight_*.mrc` output files
 - Does not support backup / only-do-unfinished features
-
-## Project roadmap
-
-- [ ] Support multiple optics groups
-- [ ] Add star file generation from the CryoET Data Portal into the cryoet-alignment package
 
 ## Development
 
