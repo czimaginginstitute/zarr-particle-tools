@@ -339,14 +339,15 @@ If you would like to see a feature added, on or off this list, please open an is
 - Does not apply particle subtomogram orientations (`rlnTomoSubtomogramRot`,
   `rlnTomoSubtomogramTilt`, `rlnTomoSubtomogramPsi`); extraction also lacks RELION's
   `--apply_orientations` mode
-- Does not support gamma offset
-- Does not support spherical aberration correction
+- Does not apply higher-order optical-aberration corrections from RELION optics metadata
+  (even-Zernike gamma offsets or odd-Zernike phase corrections)
 - Does not support whitening (power spectral flattening)
 - Does not support anisotropic magnification matrices (`EMDL_IMAGE_MAG_MATRIX_00`,
   `EMDL_IMAGE_MAG_MATRIX_01`, `EMDL_IMAGE_MAG_MATRIX_10`, `EMDL_IMAGE_MAG_MATRIX_11`)
 - Does not support 2D deformations (`EMDL_TOMO_DEFORMATION_GRID_SIZE_X`,
   `EMDL_TOMO_DEFORMATION_GRID_SIZE_Y`, `EMDL_TOMO_DEFORMATION_TYPE`,
   `EMDL_TOMO_DEFORMATION_COEFFICIENTS`)
+- Does not support `--only_do_unfinished`
 
 ### Extraction
 
@@ -354,15 +355,16 @@ If you would like to see a feature added, on or off this list, please open an is
 - Does not support `min_frames` or `max_dose` (`zarr-particle-pipeline` rejects `--max-dose` before
   extraction)
 - Does not support grid precorrection
+- Does not support cone flags (`--cone_weight`, `--cone_angle`, `--cone_sig0`)
 
 ### Reconstruction
 
 - Does not support helical symmetry
 - Only reproduces RELION's `--no_circle_crop` mode; its default circle cropping is not implemented
 - Does not support `--dont_apply_offsets` (extraction supports `--dont-apply-offsets`)
-- Does not support cone flags (`--cone_weight`, `--cone_angle`, `--cone_sig0`)
+- Requires a single image size, pixel size, and binning across optics groups
 - Does not support `weight_*.mrc` output files
-- Does not support backup / only-do-unfinished features
+- Does not support RELION's reconstruction backup / `--no_backup` behavior
 
 ## Development
 
