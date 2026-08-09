@@ -334,23 +334,26 @@ OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 uv run --locked pytes
 
 If you would like to see a feature added, on or off this list, please open an issue.
 
-### Extraction
+### Extraction and reconstruction
 
-- Does not support oriented extraction: particle subtomogram orientations
-  (`rlnTomoSubtomogramRot`, `rlnTomoSubtomogramTilt`, `rlnTomoSubtomogramPsi`) and RELION's
-  `--apply_orientations` mode are not implemented
-- Does not support 3D volume extraction or write any `*.mrcs` files other than the 2D stacks themselves
-- Does not support `min_frames` or `max_dose` (`zarr-particle-pipeline` rejects `--max-dose` before
-  extraction)
+- Does not apply particle subtomogram orientations (`rlnTomoSubtomogramRot`,
+  `rlnTomoSubtomogramTilt`, `rlnTomoSubtomogramPsi`); extraction also lacks RELION's
+  `--apply_orientations` mode
 - Does not support gamma offset
 - Does not support spherical aberration correction
-- Does not support grid precorrection
 - Does not support whitening (power spectral flattening)
 - Does not support anisotropic magnification matrices (`EMDL_IMAGE_MAG_MATRIX_00`,
   `EMDL_IMAGE_MAG_MATRIX_01`, `EMDL_IMAGE_MAG_MATRIX_10`, `EMDL_IMAGE_MAG_MATRIX_11`)
 - Does not support 2D deformations (`EMDL_TOMO_DEFORMATION_GRID_SIZE_X`,
   `EMDL_TOMO_DEFORMATION_GRID_SIZE_Y`, `EMDL_TOMO_DEFORMATION_TYPE`,
   `EMDL_TOMO_DEFORMATION_COEFFICIENTS`)
+
+### Extraction
+
+- Does not support 3D volume extraction or write any `*.mrcs` files other than the 2D stacks themselves
+- Does not support `min_frames` or `max_dose` (`zarr-particle-pipeline` rejects `--max-dose` before
+  extraction)
+- Does not support grid precorrection
 
 ### Reconstruction
 
