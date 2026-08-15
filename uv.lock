@@ -886,7 +886,7 @@ wheels = [
 
 [[package]]
 name = "cryoet-data-portal"
-version = "4.5.0"
+version = "4.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "boto3" },
@@ -897,9 +897,9 @@ dependencies = [
     { name = "strcase" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b8/6f/8e727141d9c9d7c8ce85a873315efbd385f6f13390d9b6cf03168f7d58b3/cryoet_data_portal-4.5.0.tar.gz", hash = "sha256:0f9d330387fcb9a15f083048324b0633c5c936778de449674446114b9a918a1d", size = 65418, upload-time = "2025-07-28T21:16:41.696Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f5/5c/59b28017802edcfed18ab603a4177dd6322e29d6dbad04ed0c8a7d3f4de3/cryoet_data_portal-4.8.0.tar.gz", hash = "sha256:bb65b62e46b6e5b286fac440ffaccb9a1363303396a24a805e7678fc823c5c9c", size = 67221, upload-time = "2026-03-20T19:03:47.93Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/67/5a/9523a4ed55aa5be8019593bd18a563ee2a715e4d240197d4373c2098513a/cryoet_data_portal-4.5.0-py3-none-any.whl", hash = "sha256:1ee39e30582da64c4e8d82f9f6c41c00b2ee9e767544305c927a61694f05514b", size = 54079, upload-time = "2025-07-28T21:16:40.028Z" },
+    { url = "https://files.pythonhosted.org/packages/62/0f/8cbda3b1a19be2537953f35598597481d88c47e736d35581e73ac9e07642/cryoet_data_portal-4.8.0-py3-none-any.whl", hash = "sha256:2b2ca4ad358bd77122ebb68c7cfaa2ad5ceda4ae3e38827ec3a77406a488d48a", size = 55266, upload-time = "2026-03-20T19:03:46.384Z" },
 ]
 
 [[package]]
