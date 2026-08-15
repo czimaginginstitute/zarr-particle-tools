@@ -30,14 +30,16 @@ workflows.
 
 ## Quickstart (container)
 
-The [relion-zarr-sta](https://github.com/czimaginginstitute/relion-docker) Docker/Apptainer image
-bundles RELION, py2rely, and zarr-particle-tools together, no local installation needed. On a
-SLURM cluster, this is enough to run the full pipeline:
+[`relion-zarr-sta-client`](https://github.com/czimaginginstitute/relion-docker/tree/main/shims)
+installs py2rely and zarr-particle-tools natively (needed for `sbatch`, which requires the host's
+own SLURM setup) and wires them to run RELION and the job commands below through the
+[relion-zarr-sta](https://github.com/czimaginginstitute/relion-docker) container instead of a
+local RELION build. On a SLURM cluster, this is enough to run the full pipeline:
 
 ```bash
 apptainer pull relion-zarr-sta.sif oras://ghcr.io/czimaginginstitute/relion-zarr-sta-sif:5.0-cuda12.8
 pip install git+https://github.com/czimaginginstitute/relion-docker.git#subdirectory=shims
-relion-docker-shims --sif relion-zarr-sta.sif --out ~/relion-shims/bin --wire-py2rely
+relion-zarr-sta-client --sif relion-zarr-sta.sif --out ~/relion-shims/bin --wire-py2rely
 export PATH="$HOME/relion-shims/bin:$PATH"
 ```
 
