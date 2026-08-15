@@ -13,8 +13,23 @@ connects the jobs through [py2rely](https://github.com/chanzuckerberg/py2rely) f
 workflows. Extraction and reconstruction outputs are compared per voxel against RELION in CI using
 float32-scale tolerances.
 
+## Quickstart (container)
+
+The [relion-zarr-sta](https://github.com/czimaginginstitute/relion-docker) Docker/Apptainer image
+bundles RELION, py2rely, and zarr-particle-tools together — no local installation needed:
+
+```bash
+apptainer pull relion-zarr-sta.sif oras://ghcr.io/czimaginginstitute/relion-zarr-sta-sif:5.0-cuda12.8
+```
+
+For SLURM clusters, see relion-docker's
+[`shims/`](https://github.com/czimaginginstitute/relion-docker/tree/main/shims) tool to run
+`zarr-particle-pipeline` through the container transparently. Otherwise, see
+[Installation](#installation) below for a standalone/manual setup.
+
 ## Contents
 
+- [Quickstart (container)](#quickstart-container)
 - [Installation](#installation)
 - [Pipeline prerequisites](#pipeline-prerequisites)
 - [Commands](#commands)
