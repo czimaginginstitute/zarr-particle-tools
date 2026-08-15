@@ -31,16 +31,20 @@ workflows.
 ## Quickstart (container)
 
 The [relion-zarr-sta](https://github.com/czimaginginstitute/relion-docker) Docker/Apptainer image
-bundles RELION, py2rely, and zarr-particle-tools together — no local installation needed:
+bundles RELION, py2rely, and zarr-particle-tools together, no local installation needed. On a
+SLURM cluster, this is enough to run the full pipeline:
 
 ```bash
 apptainer pull relion-zarr-sta.sif oras://ghcr.io/czimaginginstitute/relion-zarr-sta-sif:5.0-cuda12.8
+pip install git+https://github.com/czimaginginstitute/relion-docker.git#subdirectory=shims
+relion-docker-shims --sif relion-zarr-sta.sif --out ~/relion-shims/bin --wire-py2rely
+export PATH="$HOME/relion-shims/bin:$PATH"
 ```
 
-For SLURM clusters, see relion-docker's
-[`shims/`](https://github.com/czimaginginstitute/relion-docker/tree/main/shims) tool to run
-`zarr-particle-pipeline` through the container transparently. Otherwise, see
-[Installation](#installation) below for a standalone/manual setup.
+`--wire-py2rely` points py2rely's SLURM job scripts at the container automatically; the `PATH`
+export lets you also run any of the commands below directly. See relion-docker's
+[`shims/`](https://github.com/czimaginginstitute/relion-docker/tree/main/shims) for details.
+Otherwise, see [Installation](#installation) below for a standalone/manual setup.
 
 ## Installation
 
@@ -66,7 +70,7 @@ Installing py2rely in the same environment also installs ccpem-pipeliner.
 
 ## Pipeline prerequisites
 
-The [Quickstart container](#quickstart-container) already has all of the below — skip this
+The [Quickstart container](#quickstart-container) already has all of the below; skip this
 section if you're using it.
 
 `zarr-particle-pipeline` requires:
