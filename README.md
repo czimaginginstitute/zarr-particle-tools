@@ -10,22 +10,7 @@ Extraction and reconstruction are Python implementations of the corresponding
 complete tilt series. CTF refinement and polishing run RELION against Zarr through temporary MRC
 files, preferring `/dev/shm` and falling back to the system temp directory. `zarr-particle-pipeline`
 connects the jobs through [py2rely](https://github.com/chanzuckerberg/py2rely) for SLURM-based STA
-workflows. Extraction and reconstruction outputs are compared per voxel against RELION in CI using
-float32-scale tolerances.
-
-## Quickstart (container)
-
-The [relion-zarr-sta](https://github.com/czimaginginstitute/relion-docker) Docker/Apptainer image
-bundles RELION, py2rely, and zarr-particle-tools together — no local installation needed:
-
-```bash
-apptainer pull relion-zarr-sta.sif oras://ghcr.io/czimaginginstitute/relion-zarr-sta-sif:5.0-cuda12.8
-```
-
-For SLURM clusters, see relion-docker's
-[`shims/`](https://github.com/czimaginginstitute/relion-docker/tree/main/shims) tool to run
-`zarr-particle-pipeline` through the container transparently. Otherwise, see
-[Installation](#installation) below for a standalone/manual setup.
+workflows.
 
 ## Contents
 
@@ -42,6 +27,20 @@ For SLURM clusters, see relion-docker's
 - [Testing](#testing)
 - [Known limitations](#known-limitations)
 - [Development](#development)
+
+## Quickstart (container)
+
+The [relion-zarr-sta](https://github.com/czimaginginstitute/relion-docker) Docker/Apptainer image
+bundles RELION, py2rely, and zarr-particle-tools together — no local installation needed:
+
+```bash
+apptainer pull relion-zarr-sta.sif oras://ghcr.io/czimaginginstitute/relion-zarr-sta-sif:5.0-cuda12.8
+```
+
+For SLURM clusters, see relion-docker's
+[`shims/`](https://github.com/czimaginginstitute/relion-docker/tree/main/shims) tool to run
+`zarr-particle-pipeline` through the container transparently. Otherwise, see
+[Installation](#installation) below for a standalone/manual setup.
 
 ## Installation
 
@@ -66,6 +65,9 @@ uv pip install "zarr-particle-tools[pipeliner]"
 Installing py2rely in the same environment also installs ccpem-pipeliner.
 
 ## Pipeline prerequisites
+
+The [Quickstart container](#quickstart-container) already has all of the below — skip this
+section if you're using it.
 
 `zarr-particle-pipeline` requires:
 
