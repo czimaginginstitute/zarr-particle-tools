@@ -49,7 +49,7 @@ jobs:
           fetch-depth: 0
 
       - name: Install uv
-        uses: astral-sh/setup-uv@5a7eac68fb9809dea845d802897dc5c723910fa3
+        uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d
         with:
           version: "0.7.13"
           python-version: "3.12"
