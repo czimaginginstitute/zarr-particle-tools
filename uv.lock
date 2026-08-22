@@ -821,7 +821,7 @@ wheels = [
 
 [[package]]
 name = "copick"
-version = "1.26.1"
+version = "1.27.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -830,6 +830,7 @@ dependencies = [
     { name = "distinctipy" },
     { name = "dynamotable" },
     { name = "emfile" },
+    { name = "filelock" },
     { name = "fsspec" },
     { name = "mlcroissant" },
     { name = "mrcfile" },
@@ -857,9 +858,9 @@ dependencies = [
     { name = "zarr", version = "2.18.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "zarr", version = "2.18.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/05/3c/a4abaee6ddfe2b5a787811383b1df5f1f5dfb7dbe34c18463565f555d671/copick-1.26.1.tar.gz", hash = "sha256:5ddea60511ff142fdfcc6d2b2c773184a61c8d69e3243ff0df3ee2e400392de3", size = 47784270, upload-time = "2026-07-08T00:05:41.282Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/38/19/84ab23f4f134d47bdcc8b3b0022f0c131ac52ed0235edf3767f77b4920b7/copick-1.27.0.tar.gz", hash = "sha256:b331397571b0376fb790da89d54406e570a69dbe1da9524937512756227b654a", size = 47797226, upload-time = "2026-08-18T16:40:45.837Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/28/5b/1e6f8eb6c653c99bf9a12560e7fcc3621b8b8ee7cc04279255595103f7ce/copick-1.26.1-py3-none-any.whl", hash = "sha256:f770ccd0aac4ff37dfd2aa3992f09ea30e2a713a6c0143041607d738f7324288", size = 224038, upload-time = "2026-07-08T00:05:38.115Z" },
+    { url = "https://files.pythonhosted.org/packages/1b/77/36bd37302b7c85a0261cf259f85c23c0d65b7df42a0f8686b0b7a3ad085a/copick-1.27.0-py3-none-any.whl", hash = "sha256:41f64eea0ef4c2deaec9789fec8af4b17769060076014e9d1260bed98818a915", size = 233694, upload-time = "2026-08-18T16:40:43.739Z" },
 ]
 
 [[package]]
