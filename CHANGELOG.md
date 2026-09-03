@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.0.2](https://github.com/czimaginginstitute/zarr-particle-tools/compare/zarr-particle-tools-v1.0.1...zarr-particle-tools-v1.0.2) (2026-09-03)
+
+
+### 🐞 Bug Fixes
+
+* **deps:** bump scikit-image to get Python 3.13 wheels ([#75](https://github.com/czimaginginstitute/zarr-particle-tools/issues/75)) ([c0338da](https://github.com/czimaginginstitute/zarr-particle-tools/commit/c0338da0fcc8bc80bd4cdce4d527de91301187a5))
+
+
+### 🧹 Miscellaneous Chores
+
+* **deps:** bump actions/checkout from 5.0.1 to 7.0.1 ([#59](https://github.com/czimaginginstitute/zarr-particle-tools/issues/59)) ([2f16e49](https://github.com/czimaginginstitute/zarr-particle-tools/commit/2f16e49b465a6dd616e6af1da865bf118f5c3990))
+* **deps:** bump actions/setup-python from 6.0.0 to 7.0.0 ([#57](https://github.com/czimaginginstitute/zarr-particle-tools/issues/57)) ([91f21ce](https://github.com/czimaginginstitute/zarr-particle-tools/commit/91f21cefdc1cc52944e027f1ede609a0dddaf2c5))
+* **deps:** bump astral-sh/setup-uv from 10.0.0 to 10.0.1 ([#67](https://github.com/czimaginginstitute/zarr-particle-tools/issues/67)) ([a9495cf](https://github.com/czimaginginstitute/zarr-particle-tools/commit/a9495cf940199eab63beced42b392dfba2ce4657))
+* **deps:** bump astral-sh/setup-uv from 7.1.3 to 10.0.0 ([#55](https://github.com/czimaginginstitute/zarr-particle-tools/issues/55)) ([31a888c](https://github.com/czimaginginstitute/zarr-particle-tools/commit/31a888c5b7fad148417d50a7e86dd9114f9eaf8d))
+* **deps:** bump black from 26.3.1 to 26.5.1 ([#58](https://github.com/czimaginginstitute/zarr-particle-tools/issues/58)) ([9c2e636](https://github.com/czimaginginstitute/zarr-particle-tools/commit/9c2e63693d4adf22b98c6fbdd7f16c1b8bd251d9))
+* **deps:** bump chanzuckerberg/github-actions/.github/actions/conventional-commits from 6.34.0 to 6.36.1 ([#54](https://github.com/czimaginginstitute/zarr-particle-tools/issues/54)) ([7c4dc39](https://github.com/czimaginginstitute/zarr-particle-tools/commit/7c4dc3942eee51f6e947a8e361581c5117795c1d))
+* **deps:** bump chanzuckerberg/github-actions/.github/actions/conventional-commits from 6.36.1 to 6.39.2 ([#72](https://github.com/czimaginginstitute/zarr-particle-tools/issues/72)) ([c974052](https://github.com/czimaginginstitute/zarr-particle-tools/commit/c9740527b971c0aa449bf407dc8e4e34d0332b18))
+* **deps:** bump click from 8.3.0 to 8.4.2 ([#62](https://github.com/czimaginginstitute/zarr-particle-tools/issues/62)) ([4c8ffb2](https://github.com/czimaginginstitute/zarr-particle-tools/commit/4c8ffb2ca396528dae83dbd3190f2766ccbb91c0))
+* **deps:** bump copick from 1.26.1 to 1.27.0 ([#69](https://github.com/czimaginginstitute/zarr-particle-tools/issues/69)) ([ea8adb6](https://github.com/czimaginginstitute/zarr-particle-tools/commit/ea8adb69feffdb1069706585b098a2b985425326))
+* **deps:** bump cryoet-data-portal from 4.5.0 to 4.8.0 ([#61](https://github.com/czimaginginstitute/zarr-particle-tools/issues/61)) ([69f1525](https://github.com/czimaginginstitute/zarr-particle-tools/commit/69f152527c8dfa9402e5049ee762df9e06be2470))
+* **deps:** bump dask from 2025.10.0 to 2026.7.1 ([#60](https://github.com/czimaginginstitute/zarr-particle-tools/issues/60)) ([864b68e](https://github.com/czimaginginstitute/zarr-particle-tools/commit/864b68e5a2f4c029f1ca4f7e9fdffe09ada7873f))
+* **deps:** bump dask from 2026.7.1 to 2026.8.0 ([#71](https://github.com/czimaginginstitute/zarr-particle-tools/issues/71)) ([3c2e23b](https://github.com/czimaginginstitute/zarr-particle-tools/commit/3c2e23ba62f73bb31db0d36f481b696eaf602c44))
+* **deps:** bump matplotlib from 3.10.7 to 3.10.9 ([#56](https://github.com/czimaginginstitute/zarr-particle-tools/issues/56)) ([62a1984](https://github.com/czimaginginstitute/zarr-particle-tools/commit/62a1984a29aae5af1c977a2ecdb4e7ca1ae47893))
+* **deps:** bump pre-commit from 4.6.1 to 4.6.2 ([#68](https://github.com/czimaginginstitute/zarr-particle-tools/issues/68)) ([fca3266](https://github.com/czimaginginstitute/zarr-particle-tools/commit/fca3266d66862ab7a5c4e486e7d4f424059ef1ec))
+* **deps:** bump pytest from 9.0.3 to 9.1.1 ([#66](https://github.com/czimaginginstitute/zarr-particle-tools/issues/66)) ([e700de8](https://github.com/czimaginginstitute/zarr-particle-tools/commit/e700de8e9e0dfcc224c5a6e1095b753686b98800))
+* **deps:** bump ruff from 0.14.3 to 0.16.5 ([#73](https://github.com/czimaginginstitute/zarr-particle-tools/issues/73)) ([95fa519](https://github.com/czimaginginstitute/zarr-particle-tools/commit/95fa519172d306e67ea636096d9c093088a3b8dc))
+* **deps:** bump tornado from 6.5.7 to 6.5.8 ([#74](https://github.com/czimaginginstitute/zarr-particle-tools/issues/74)) ([e28ef86](https://github.com/czimaginginstitute/zarr-particle-tools/commit/e28ef86da32f3763b0a4b7908f8f975ed193a579))
+
 ## [1.0.1](https://github.com/czimaginginstitute/zarr-particle-tools/compare/zarr-particle-tools-v1.0.0...zarr-particle-tools-v1.0.1) (2026-08-09)
 
 
