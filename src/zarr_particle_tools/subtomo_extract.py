@@ -32,7 +32,14 @@ from zarr_particle_tools.core.forwardprojection import (
     get_particle_crop_and_visibility,
     get_particles_to_tiltseries_coordinates,
 )
-from zarr_particle_tools.core.helpers import auto_worker_count, get_tiltseries_data, setup_logging, validate_and_setup
+from zarr_particle_tools.core.helpers import (
+    auto_worker_count,
+    get_tiltseries_data,
+    particle_id_from_name,
+    particle_id_sort_key,
+    setup_logging,
+    validate_and_setup,
+)
 from zarr_particle_tools.core.mask import circular_mask, circular_soft_mask
 from zarr_particle_tools.generate.copick_generate_starfiles import (
     copick_picks_to_starfile,
@@ -66,14 +73,14 @@ def update_particles_df(
             updated_particles_df["rlnTomoName"] + "/" + updated_particles_df.index.astype(str)
         )
     # set index to be based on rlnTomoParticleName for easier processing
-    updated_particles_df.index = updated_particles_df["rlnTomoParticleName"].str.split("/").str[-1].astype(int)
+    updated_particles_df.index = updated_particles_df["rlnTomoParticleName"].map(particle_id_from_name)
     updated_particles_df["rlnImageName"] = updated_particles_df.index.to_series().apply(
         lambda idx: (output_folder / f"{idx}_stack2d.mrcs").resolve()
     )
     # drop rows by particle_id that were skipped
     updated_particles_df = updated_particles_df.drop(
         updated_particles_df.index[
-            updated_particles_df["rlnTomoParticleName"].str.split("/").str[-1].astype(int).isin(skipped_particles)
+            updated_particles_df["rlnTomoParticleName"].map(particle_id_from_name).isin(skipped_particles)
         ]
     )
     updated_particles_df["rlnTomoVisibleFrames"] = all_visible_sections_relion_column
@@ -236,7 +243,7 @@ def process_tiltseries(
             )
             tilt_stack[tilt] = padded_crop
 
-            if particle_id % 100 == 0:
+            if isinstance(particle_id, int) and particle_id % 100 == 0:
                 logger.debug(
                     f"particle {particle_id}, tilt {tilt}, crop min/max: {padded_crop.min()}/{padded_crop.max()}, key: {tiltseries_key}, pre/post padding: ({y_pre_padding},{x_pre_padding})/({y_post_padding},{x_post_padding})"
                 )
@@ -356,7 +363,9 @@ def write_starfiles(
     """
     Writes the updated particles and optimisation set star files, as per RELION expected format & outputs.
     """
-    merged_particles_df["ParticleID"] = merged_particles_df["rlnTomoParticleName"].str.split("/").str[-1].astype(int)
+    merged_particles_df["ParticleID"] = merged_particles_df["rlnTomoParticleName"].map(
+        lambda name: particle_id_sort_key(particle_id_from_name(name))
+    )
     merged_particles_df = merged_particles_df.sort_values(by=["rlnTomoName", "ParticleID"]).reset_index(drop=True)
     merged_particles_df = merged_particles_df.drop(columns="ParticleID")
 

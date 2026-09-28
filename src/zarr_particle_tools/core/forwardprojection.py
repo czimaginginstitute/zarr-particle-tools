@@ -9,6 +9,7 @@ import pandas as pd
 from cryoet_alignment.io.aretomo3 import AreTomo3ALN
 
 from zarr_particle_tools.core.data import DataReader
+from zarr_particle_tools.core.helpers import particle_id_from_name
 
 
 def in_plane_rotation_to_tilt_axis_rotation(rotation_matrix: list[list[float]]) -> float:
@@ -196,7 +197,7 @@ def get_particles_to_tiltseries_coordinates(
                 ]
             )
             particle_id = (
-                int(particle.rlnTomoParticleName.split("/")[-1])
+                particle_id_from_name(particle.rlnTomoParticleName)
                 if "rlnTomoParticleName" in filtered_particles_df.columns and use_tomo_particle_name_for_id
                 else default_particle_id
             )
@@ -229,7 +230,7 @@ def get_particles_to_tiltseries_coordinates(
 
 def get_particle_crop_and_visibility(
     tiltseries_data: DataReader,
-    particle_id: int,
+    particle_id: int | str,
     sections: dict,
     tiltseries_x: int,
     tiltseries_y: int,

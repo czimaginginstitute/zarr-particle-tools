@@ -99,6 +99,32 @@ def get_filter(values, field, inexact_match, label=""):
         return field._in(values)
 
 
+def particle_id_from_name(particle_name: str) -> int | str:
+    """
+    The particle id is the trailing component of rlnTomoParticleName. RELION normally numbers these
+    ("tomo_1/117"), but particles added by an infilling pass carry a non-numeric token instead
+    ("tomo_1/ext1_-3"). Return the int when it is numeric so existing numbering and ordering are
+    unchanged, otherwise return the token as-is; the id is only used as a dict key, as the output
+    filename stem, and as a sort key.
+    """
+    particle_id = particle_name.split("/")[-1]
+    try:
+        return int(particle_id)
+    except ValueError:
+        return particle_id
+
+
+def particle_id_sort_key(particle_id: int | str) -> tuple[int, int, str]:
+    """
+    Orders numeric particle ids numerically and ahead of non-numeric ones, which order
+    lexicographically. A plain sort raises TypeError on the mixed int/str ids that infilled
+    particles produce.
+    """
+    if isinstance(particle_id, int):
+        return (0, particle_id, "")
+    return (1, 0, particle_id)
+
+
 # ====================== starfile generation helpers ======================
 
 
