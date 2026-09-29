@@ -276,3 +276,46 @@ def get_tiltseries_data(
         "individual_tiltseries_df": individual_tiltseries_df,
         "optics_row": optics_row,
     }
+
+
+#: The tomograms.star columns RELION 5 builds a particle set's optics table from when the particle
+#: file has none (relion_tomo_subtomo on relion_tomo_import_coordinates output).
+TOMOGRAM_OPTICS_COLUMNS = [
+    "rlnVoltage",
+    "rlnSphericalAberration",
+    "rlnAmplitudeContrast",
+    "rlnTomoTiltSeriesPixelSize",
+    "rlnOpticsGroup",
+    "rlnOpticsGroupName",
+]
+
+
+def particles_and_optics(particles_data, tomograms_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """The particle table and its optics table, as RELION 5 reads a tomography particle set.
+
+    A two-block particle STAR (``optics`` + ``particles``) is returned as is. A single-block one, which is what
+    ``relion_tomo_import_coordinates`` writes, has no optics: RELION then makes one optics group per tomogram from
+    ``tomograms.star`` and gives each particle its tomogram's group (verified against ``relion_tomo_subtomo`` 5.1,
+    whose output renumbers an all-1 import to 1 and 2 on a two-tomogram set). Same here. A particle whose tomogram
+    ``tomograms.star`` does not list keeps its group; the callers warn about and skip those, as RELION does.
+    """
+    if isinstance(particles_data, dict) and "optics" in particles_data and "particles" in particles_data:
+        return particles_data["particles"], particles_data["optics"]
+    if isinstance(particles_data, dict):
+        if "particles" not in particles_data:
+            raise ValueError(f"no particles block in the particle STAR (blocks: {sorted(particles_data)})")
+        particles_df = particles_data["particles"]
+    else:
+        particles_df = particles_data
+    missing = [c for c in TOMOGRAM_OPTICS_COLUMNS + ["rlnTomoName"] if c not in tomograms_df.columns]
+    if missing:
+        raise ValueError(f"the particle STAR has no optics block and tomograms.star lacks {missing} to build one")
+    group_of = dict(
+        zip(tomograms_df["rlnTomoName"].astype(str), tomograms_df["rlnOpticsGroup"].astype(int), strict=True)
+    )
+    names = particles_df["rlnTomoName"].astype(str)
+    particles_df = particles_df.copy()
+    kept = particles_df["rlnOpticsGroup"] if "rlnOpticsGroup" in particles_df.columns else 1
+    particles_df["rlnOpticsGroup"] = names.map(group_of).fillna(kept).astype(int)
+    optics_df = tomograms_df[TOMOGRAM_OPTICS_COLUMNS].drop_duplicates().reset_index(drop=True)
+    return particles_df, optics_df
