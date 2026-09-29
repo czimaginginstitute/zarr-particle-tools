@@ -306,6 +306,50 @@ def get_tomograms_df(optics_df: pd.DataFrame, output_dir: Path) -> tuple[pd.Data
     return tomograms_df, list(zip(tomograms_df.pop("alignment_id"), tomograms_df.pop("voxel_spacing_id"), strict=True))
 
 
+def per_section_ctf_df(per_section_parameters: list[cdp.PerSectionParameters], frames: list[cdp.Frame]) -> pd.DataFrame:
+    """Per-tilt CTF and pre-exposure rows of one tilt series, keyed by RELION's 1-based ``z_index``.
+
+    The one place a portal CTF record becomes RELION columns; the annotation-driven generator and
+    ``zarr-particle-importtomo`` both call it.
+    """
+    per_section_parameters_df = pd.DataFrame(columns=INDIVIDUAL_TOMOGRAM_CTF_COLUMNS)
+    for param in per_section_parameters:
+        frame = next((f for f in frames if f.id == param.frame_id), None)
+        per_section_parameters_df.loc[len(per_section_parameters_df)] = {
+            "z_index": param.z_index + 1,  # match RELION's 1-based indexing
+            "rlnDefocusU": param.major_defocus,
+            "rlnDefocusV": param.minor_defocus,
+            "rlnDefocusAngle": param.astigmatic_angle,
+            "rlnPhaseShift": param.phase_shift * 180.0 / np.pi,  # match RELION deg convention
+            "rlnCtfMaxResolution": param.max_resolution,
+            "rlnMicrographPreExposure": frame.accumulated_dose,
+        }
+    return per_section_parameters_df
+
+
+def per_section_alignment_df(
+    per_section_alignment_parameters: list[cdp.PerSectionAlignmentParameters], tiltseries_pixel_size: float
+) -> pd.DataFrame:
+    """Per-tilt projection geometry rows of one alignment, keyed by RELION's 1-based ``z_index``.
+
+    The one place a portal alignment record becomes RELION columns; see :func:`per_section_ctf_df`.
+    """
+    return pd.DataFrame(
+        columns=INDIVIDUAL_TOMOGRAM_ALN_COLUMNS,
+        data=[
+            {
+                "z_index": param.z_index + 1,  # match RELION's 1-based indexing
+                "rlnTomoXTilt": param.volume_x_rotation,  # param.x_rotation offset (AreTomo3 beta) is not applied, as per AreTomo3 convention
+                "rlnTomoYTilt": param.tilt_angle,  # already accounts for any tilt offset (AreTomo3 alpha)
+                "rlnTomoZRot": in_plane_rotation_to_tilt_axis_rotation(np.array(param.in_plane_rotation)),
+                "rlnTomoXShiftAngst": param.x_offset * tiltseries_pixel_size,
+                "rlnTomoYShiftAngst": param.y_offset * tiltseries_pixel_size,
+            }
+            for param in per_section_alignment_parameters
+        ],
+    )
+
+
 def generate_individual_tomogram_starfile(
     alignment_id: int, voxel_spacing_id: int, output_dir: Path
 ) -> tuple[pd.DataFrame, str]:
@@ -333,32 +377,9 @@ def generate_individual_tomogram_starfile(
         )
     frames = cdp_cache.get_frames_by_run_id(alignment.run_id)[alignment.run_id]
 
-    per_section_parameters_df = pd.DataFrame(columns=INDIVIDUAL_TOMOGRAM_CTF_COLUMNS)
-    for param in per_section_parameters:
-        frame = next((f for f in frames if f.id == param.frame_id), None)
-        per_section_parameters_df.loc[len(per_section_parameters_df)] = {
-            "z_index": param.z_index + 1,  # match RELION's 1-based indexing
-            "rlnDefocusU": param.major_defocus,
-            "rlnDefocusV": param.minor_defocus,
-            "rlnDefocusAngle": param.astigmatic_angle,
-            "rlnPhaseShift": param.phase_shift * 180.0 / np.pi,  # match RELION deg convention
-            "rlnCtfMaxResolution": param.max_resolution,
-            "rlnMicrographPreExposure": frame.accumulated_dose,
-        }
-
-    per_section_alignment_parameters_df = pd.DataFrame(
-        columns=INDIVIDUAL_TOMOGRAM_ALN_COLUMNS,
-        data=[
-            {
-                "z_index": param.z_index + 1,  # match RELION's 1-based indexing
-                "rlnTomoXTilt": param.volume_x_rotation,  # param.x_rotation offset (AreTomo3 beta) is not applied, as per AreTomo3 convention
-                "rlnTomoYTilt": param.tilt_angle,  # already accounts for any tilt offset (AreTomo3 alpha)
-                "rlnTomoZRot": in_plane_rotation_to_tilt_axis_rotation(np.array(param.in_plane_rotation)),
-                "rlnTomoXShiftAngst": param.x_offset * tiltseries.pixel_spacing,
-                "rlnTomoYShiftAngst": param.y_offset * tiltseries.pixel_spacing,
-            }
-            for param in per_section_alignment_parameters
-        ],
+    per_section_parameters_df = per_section_ctf_df(per_section_parameters, frames)
+    per_section_alignment_parameters_df = per_section_alignment_df(
+        per_section_alignment_parameters, tiltseries.pixel_spacing
     )
 
     individual_tomogram_df = pd.merge(
