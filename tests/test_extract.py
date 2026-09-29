@@ -1,10 +1,13 @@
 import shutil
 from pathlib import Path
 
+import pandas as pd
 import pytest
+import starfile
 from click.testing import CliRunner
 
-from zarr_particle_tools.subtomo_extract import cli, extract_subtomograms
+from tests.helpers.compare import mrc_equal
+from zarr_particle_tools.subtomo_extract import cli, extract_subtomograms, subtomogram_path
 
 DATASET_CONFIGS = {
     "synthetic": {
@@ -212,3 +215,47 @@ def test_cli_extract_data_portal(tmp_path, dataset, extract_suffix):
     assert (
         output_dir / "Subtomograms/run_16851_tiltseries_16585_alignment_17775_spacing_17054/10_stack2d.mrcs"
     ).exists()
+
+
+def test_extract_arbitrary_particle_names(tmp_path):
+    # RELION treats rlnTomoParticleName as an opaque string: output paths come from the full name, rows follow
+    # tomograms.star order then input order. session1_TS_0 is a copy of session1_TS_1 listed after it, and every
+    # particle is a copy of RELION's session1_TS_1/{i + 1} in the reference output.
+    data_root = DATASET_CONFIGS["synthetic"]["data_root"]
+    (tmp_path / "tiltseries").mkdir()
+    for f in ["TS_1.mrcs", "TS_1.star"]:
+        (tmp_path / "tiltseries" / f).symlink_to((data_root / "tiltseries" / f).resolve())
+    ts_star = (data_root / "tiltseries/TS_1.star").read_text()
+    (tmp_path / "tiltseries/TS_0.star").write_text(ts_star.replace("data_session1_TS_1", "data_session1_TS_0"))
+    tomograms = starfile.read(data_root / "tomograms.star")
+    ts0 = tomograms.assign(rlnTomoName="session1_TS_0", rlnTomoTiltSeriesStarFile="tiltseries/TS_0.star")
+    starfile.write({"global": pd.concat([tomograms, ts0])}, tmp_path / "tomograms.star")
+
+    particles_data = starfile.read(data_root / "particles.star")
+    ts1_particles = particles_data["particles"]
+    ts1_names = ["session1_TS_1/007", "session1_TS_1/ext1_-3", "p3", *[f"session1_TS_1/{29 - i}" for i in range(3, 25)]]
+    ts0_names = ["session1_TS_0/12", "session1_TS_0/ext1_-3", "session1_TS_0/1"]
+    ts0_particles = ts1_particles.iloc[: len(ts0_names)].assign(rlnTomoName="session1_TS_0")
+    particles_data["particles"] = pd.concat(
+        [ts0_particles.assign(rlnTomoParticleName=ts0_names), ts1_particles.assign(rlnTomoParticleName=ts1_names)]
+    )
+    starfile.write(particles_data, tmp_path / "particles.star")
+
+    output_dir = tmp_path / "output"
+    extract_subtomograms(
+        box_size=64,
+        output_dir=output_dir,
+        particles_starfile=tmp_path / "particles.star",
+        tiltseries_relative_dir=tmp_path,
+        tomograms_starfile=tmp_path / "tomograms.star",
+    )
+
+    particles = starfile.read(output_dir / "particles.star")["particles"]
+    expected = [("session1_TS_1", i, name) for i, name in enumerate(ts1_names)]
+    expected += [("session1_TS_0", i, name) for i, name in enumerate(ts0_names)]
+    assert particles["rlnTomoParticleName"].tolist() == [name for _, _, name in expected]
+    relion_dir = data_root / "Extract/relion_output_baseline/Subtomograms/session1_TS_1"
+    for (tomo_name, i, name), image_name in zip(expected, particles["rlnImageName"], strict=True):
+        path = subtomogram_path(output_dir, tomo_name, name).resolve()
+        assert image_name == str(path)
+        assert mrc_equal(relion_dir / f"{i + 1}_stack2d.mrcs", path, tol=DATASET_CONFIGS["synthetic"]["tol"])
