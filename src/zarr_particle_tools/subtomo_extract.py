@@ -37,6 +37,7 @@ from zarr_particle_tools.core.helpers import (
     STAR_NAME_COLUMNS,
     auto_worker_count,
     get_tiltseries_data,
+    particles_and_optics,
     read_tomograms_starfile,
     setup_logging,
     validate_and_setup,
@@ -418,12 +419,13 @@ def extract_subtomograms(
 
     logger.debug(f"Starting subtomogram extraction, reading file {particles_starfile} and {tomograms_starfile}")
     particles_data = starfile.read(particles_starfile, parse_as_string=STAR_NAME_COLUMNS)
-    particles_df = particles_data["particles"]
+    tomograms_data, tomograms_df = read_tomograms_starfile(tomograms_starfile)
+    # a particle STAR without optics (relion_tomo_import_coordinates) takes them from tomograms.star, as in RELION
+    particles_df, optics_df = particles_and_optics(particles_data, tomograms_df)
     if "rlnTomoParticleName" not in particles_df.columns:
         # RELION names unnamed particles <rlnTomoName>/<1-based index within the tomogram>
         index_in_tomo = particles_df.groupby("rlnTomoName", sort=False).cumcount() + 1
         particles_df["rlnTomoParticleName"] = particles_df["rlnTomoName"] + "/" + index_in_tomo.astype(str)
-    tomograms_data, tomograms_df = read_tomograms_starfile(tomograms_starfile)
     # like RELION's ParticleSet::splitByTomogram, particles of tomograms missing from tomograms.star are not extracted
     in_tomograms = particles_df["rlnTomoName"].isin(tomograms_df["rlnTomoName"])
     if not in_tomograms.all():
@@ -449,7 +451,6 @@ def extract_subtomograms(
         )
     if not dont_apply_offsets:
         particles_df = apply_offsets_to_coordinates(particles_df)
-    optics_df = particles_data["optics"]
     trajectories_dict = starfile.read(trajectories_starfile) if trajectories_starfile else None
     if not tiltseries_relative_dir:
         tiltseries_relative_dir = Path("./")
@@ -518,7 +519,7 @@ def extract_subtomograms(
     # update all the relevant star files
     write_starfiles(
         merged_particles_df,
-        particles_data["optics"],
+        optics_df,
         tomograms_starfile,
         box_size,
         crop_size,

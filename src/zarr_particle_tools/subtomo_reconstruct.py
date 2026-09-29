@@ -47,6 +47,7 @@ from zarr_particle_tools.core.helpers import (
     STAR_NAME_COLUMNS,
     auto_worker_count,
     get_tiltseries_data,
+    particles_and_optics,
     read_tomograms_starfile,
     setup_logging,
 )
@@ -437,10 +438,11 @@ def reconstruct(
         crop_size = box_size
 
     particles_metadata = starfile.read(particles_starfile, parse_as_string=STAR_NAME_COLUMNS)
-    particles_df = apply_offsets_to_coordinates(particles_metadata["particles"])
-    optics_df = particles_metadata["optics"]
     trajectories_dict = starfile.read(trajectories_starfile) if trajectories_starfile else None
     tomograms_data, tomograms_df = read_tomograms_starfile(tomograms_starfile)
+    # a particle STAR without optics (relion_tomo_import_coordinates) takes them from tomograms.star, as in RELION
+    particles_df, optics_df = particles_and_optics(particles_metadata, tomograms_df)
+    particles_df = apply_offsets_to_coordinates(particles_df)
     if not tiltseries_relative_dir:
         tiltseries_relative_dir = Path("./")
 
