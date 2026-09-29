@@ -212,12 +212,18 @@ def write(
     return tomograms_path
 
 
-@click.command(
+@click.group(help="Import CryoET Data Portal runs as a RELION 5 tomography set whose tilt series stay on S3.")
+def cli():
+    pass
+
+
+@cli.command(
+    "data-portal",
     help=(
-        "Import CryoET Data Portal runs as a RELION 5 tomography set (tomograms.star + per-tilt stars) whose tilt "
-        "series stay on S3. Resolves one tomogram per run (which fixes the alignment and voxel spacing), or takes a "
-        "stored portal_selection.json and fails if the portal changed since it was resolved."
-    )
+        "Write tomograms.star + per-tilt stars for portal runs. Resolves one tomogram per run (which fixes the "
+        "alignment and voxel spacing), or takes a stored portal_selection.json and fails if the portal changed "
+        "since it was resolved."
+    ),
 )
 @click.option("--dataset-ids", type=INT_LIST, multiple=True, help="Every run of these datasets.")
 @click.option("--run-ids", type=INT_LIST, multiple=True, help="These runs (narrows --dataset-ids).")
@@ -266,7 +272,7 @@ def write(
     help="Query the staging CryoET Data Portal (GraphQL + authenticated S3) instead of prod.",
 )
 @click.option("--debug", is_flag=True, help="Enable debug logging.")
-def cli(
+def cmd_data_portal(
     dataset_ids,
     run_ids,
     tomogram_ids,

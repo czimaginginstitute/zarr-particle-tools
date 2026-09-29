@@ -78,7 +78,7 @@ IDs).
 | `zarr-particle-ctfrefine` | RELION `relion_tomo_refine_ctf` on zarr | `local`, `data-portal`, `copick-data-portal` |
 | `zarr-particle-polish` | RELION `relion_tomo_align` on zarr | `local`, `data-portal`, `copick-data-portal` |
 | `zarr-particle-tomograms` | Write a `tomograms.star` | `data-portal`, `copick-data-portal` |
-| `zarr-particle-importtomo` | Import portal runs into a RELION project (pipeliner: `zarrparticletools.importtomo`) | portal IDs or a stored selection |
+| `zarr-particle-importtomo` | Import portal runs into a RELION project (pipeliner: `zarrparticletools.importtomo`) | `data-portal` (IDs or a stored selection) |
 | `zarr-particle-export` | Self-contained on-disk project (downloads tilt series) | `data-portal`, `copick-data-portal` |
 
 `core/` can also be used directly for projection matrices and point projection, CTF premultiplication,
@@ -303,7 +303,7 @@ and voxel spacing, so picks made on that tomogram and the tilt geometry share a 
   `--hand` (default -1) set them.
 
 ```bash
-zarr-particle-importtomo --dataset-ids 10426 --run-ids 16848,16849 --output-dir Import/job001
+zarr-particle-importtomo data-portal --dataset-ids 10426 --run-ids 16848,16849 --output-dir Import/job001
 ```
 
 ### Export an on-disk project

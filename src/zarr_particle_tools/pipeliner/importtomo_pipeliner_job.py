@@ -105,7 +105,7 @@ class PythonPortalImportTomoJob(PipelinerJob):
         self.add_output_node("portal_selection.json", NODE_PROCESSDATA, ["portal", "selection"])
 
     def get_commands(self):
-        cmd = ["zarr-particle-importtomo", "--output-dir", self.output_dir]
+        cmd = ["zarr-particle-importtomo", "data-portal", "--output-dir", self.output_dir]
         selection = self.joboptions["in_selection"].get_string().strip()
         if selection:
             cmd += ["--selection", selection]
