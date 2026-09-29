@@ -35,6 +35,7 @@ EXPECTED_SUBCOMMANDS = {
     "zarr-particle-tomograms": {"data-portal", "copick-data-portal"},
     "zarr-particle-pipeline": {"preflight", "local", "copick-local", "data-portal", "copick-data-portal"},
     "zarr-particle-export": {"data-portal", "copick-data-portal"},
+    "zarr-particle-importtomo": {"data-portal"},
 }
 
 

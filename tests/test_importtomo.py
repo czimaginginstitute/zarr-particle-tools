@@ -47,7 +47,7 @@ def test_job_command():
     job.joboptions["dataset_ids"].value = "10426"
     job.joboptions["run_ids"].value = "16848,16849"
     cmd = [str(x) for x in job.get_commands()[0].cmd]
-    assert cmd[:3] == ["zarr-particle-importtomo", "--output-dir", "Import/job001/"]
+    assert cmd[:4] == ["zarr-particle-importtomo", "data-portal", "--output-dir", "Import/job001/"]
     assert cmd[cmd.index("--dataset-ids") + 1] == "10426"
     assert cmd[cmd.index("--hand") + 1] == "-1"
     assert "--selection" not in cmd
@@ -93,7 +93,7 @@ def _tilts(path) -> pd.DataFrame:
 
 def test_import_writes_a_project_relative_s3_set(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    result = CliRunner().invoke(cli, ["--run-ids", f"{RUN},16849", "--output-dir", "Import/job001"])
+    result = CliRunner().invoke(cli, ["data-portal", "--run-ids", f"{RUN},16849", "--output-dir", "Import/job001"])
     assert result.exit_code == 0, result.output
 
     tomograms = _tilts("Import/job001/tomograms.star")
@@ -123,7 +123,7 @@ def test_import_rows_are_the_generator_rows(tmp_path, monkeypatch):
     from zarr_particle_tools.generate.cdp_generate_starfiles import generate_individual_tomogram_starfile
 
     monkeypatch.chdir(tmp_path)
-    assert CliRunner().invoke(cli, ["--run-ids", str(RUN), "--output-dir", "new"]).exit_code == 0
+    assert CliRunner().invoke(cli, ["data-portal", "--run-ids", str(RUN), "--output-dir", "new"]).exit_code == 0
     (tmp_path / "old" / "tiltseries").mkdir(parents=True)
     old, _ = generate_individual_tomogram_starfile(17772, 17051, tmp_path / "old")
     new = _tilts(f"new/tiltseries/{RUN}.star")
@@ -137,13 +137,15 @@ def test_a_stored_selection_imports_exactly_or_names_the_change(tmp_path, monkey
     monkeypatch.chdir(tmp_path)
     selection = portal_selection.resolve(run_ids=[RUN])
     stored = selection.write(tmp_path / "stored.json")
-    ok = CliRunner().invoke(cli, ["--selection", str(stored), "--output-dir", "a"])
+    ok = CliRunner().invoke(cli, ["data-portal", "--selection", str(stored), "--output-dir", "a"])
     assert ok.exit_code == 0, ok.output
 
     tampered = json.loads(stored.read_text())
     tampered["runs"][0]["rln_tomo_size"] = [1022, 1440, 400]
     (tmp_path / "tampered.json").write_text(json.dumps(tampered))
-    changed = CliRunner().invoke(cli, ["--selection", str(tmp_path / "tampered.json"), "--output-dir", "b"])
+    changed = CliRunner().invoke(
+        cli, ["data-portal", "--selection", str(tmp_path / "tampered.json"), "--output-dir", "b"]
+    )
     assert changed.exit_code != 0
     assert "changed since the selection was resolved" in changed.output and "rln_tomo_size" in changed.output
     assert not (tmp_path / "b").exists(), "a refused import writes nothing"
@@ -151,7 +153,9 @@ def test_a_stored_selection_imports_exactly_or_names_the_change(tmp_path, monkey
 
 def test_an_ambiguous_selection_is_refused_with_its_candidates(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    result = CliRunner().invoke(cli, ["--run-ids", str(RUN), "--tomogram-type", "raw", "--output-dir", "x"])
+    result = CliRunner().invoke(
+        cli, ["data-portal", "--run-ids", str(RUN), "--tomogram-type", "raw", "--output-dir", "x"]
+    )
     assert result.exit_code != 0
     assert "ambiguous" in result.output and "21115" in result.output and "21116" in result.output
     assert not (tmp_path / "x").exists()
