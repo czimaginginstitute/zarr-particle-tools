@@ -224,16 +224,28 @@ def read_single_table(path: str | Path) -> pd.DataFrame:
 
 
 def resolve_optimisation_set(optimisation_set_starfile: Path) -> tuple[Path, Path, Path | None]:
-    """Return (particles, tomograms, trajectories) paths from an optimisation_set.star."""
-    opt = read_single_table(optimisation_set_starfile)
+    """Return (particles, tomograms, trajectories) paths from an optimisation_set.star.
+
+    RELION (and zarr-particle-extract) write the set as one block of key-value pairs, which ``starfile`` reads as a
+    flat dict; a single-row table is accepted too. RELION writes relative paths relative to the project (the
+    working directory), so a relative path is taken from there first and only then from the set's own directory.
+    An empty entry (RELION writes ``""`` for a set without trajectories) is absent, not a path.
+    """
+    data = starfile.read(str(optimisation_set_starfile))
+    if isinstance(data, dict) and not any(isinstance(v, pd.DataFrame) for v in data.values()):
+        row = data
+    else:
+        opt = read_single_table(optimisation_set_starfile)
+        row = opt.iloc[0] if isinstance(opt, pd.DataFrame) else opt
     base = Path(optimisation_set_starfile).parent
-    row = opt.iloc[0] if isinstance(opt, pd.DataFrame) else opt
 
     def _resolve(val):
-        if val is None or isinstance(val, float):
+        if val is None or isinstance(val, float) or not str(val).strip().strip('"'):
             return None
         p = Path(str(val))
-        return p if p.is_absolute() else (base / p)
+        if p.is_absolute() or p.exists():
+            return p
+        return base / p
 
     particles = _resolve(row.get("rlnTomoParticlesFile"))
     tomograms = _resolve(row.get("rlnTomoTomogramsFile"))
