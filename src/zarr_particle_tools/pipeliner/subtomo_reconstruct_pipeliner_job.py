@@ -11,10 +11,17 @@ from pipeliner.jobs.tomography.relion_tomo.tomo_reconstructparticle_job import (
 )
 from pipeliner.nodes import (
     NODE_DENSITYMAP,
-    NODE_TOMOOPTIMISATIONSET,
 )
 from pipeliner.pipeliner_job import ExternalProgram, PipelinerCommand, PipelinerJob
 from pipeliner.results_display_objects import ResultsDisplayObject
+
+
+def _check_options(job) -> None:
+    """Refuse options the program does not implement (see zarr_particle_tools.validation)."""
+    from zarr_particle_tools import validation  # lazily: this module loads wherever pipeliner lists job types
+
+    options = {name: option.get_string() for name, option in job.joboptions.items()}
+    validation.raise_if(job.PROCESS_NAME, validation.check_options(job.PROCESS_NAME, options))
 
 
 class PythonRelionSubtomoReconstructJob(PipelinerJob):
@@ -33,9 +40,9 @@ class PythonRelionSubtomoReconstructJob(PipelinerJob):
         self.add_output_node("merged.mrc", NODE_DENSITYMAP, ["relion", "tomo", "reconstruct", "python"])
         self.add_output_node("half1.mrc", NODE_DENSITYMAP, ["relion", "halfmap", "reconstruct", "python"])
         self.add_output_node("half2.mrc", NODE_DENSITYMAP, ["relion", "halfmap", "reconstruct", "python"])
-        self.add_output_node("optimisation_set.star", NODE_TOMOOPTIMISATIONSET, ["relion", "reconstruct", "python"])
 
     def get_commands(self):
+        _check_options(self)
         cmd = ["zarr-particle-reconstruct", "local", "--overwrite", "--debug"]
 
         optimisation_starfile = self.joboptions["in_optimisation"].get_string()
