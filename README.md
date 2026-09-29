@@ -23,6 +23,7 @@ float32-scale tolerances.
   - [Extraction](#extraction)
   - [Reconstruction](#reconstruction)
   - [CTF refinement and polishing](#ctf-refinement-and-polishing)
+  - [Import portal runs for a RELION project](#import-portal-runs-for-a-relion-project)
   - [Export an on-disk project](#export-an-on-disk-project)
 - [Testing](#testing)
 - [Known limitations](#known-limitations)
@@ -77,6 +78,7 @@ IDs).
 | `zarr-particle-ctfrefine` | RELION `relion_tomo_refine_ctf` on zarr | `local`, `data-portal`, `copick-data-portal` |
 | `zarr-particle-polish` | RELION `relion_tomo_align` on zarr | `local`, `data-portal`, `copick-data-portal` |
 | `zarr-particle-tomograms` | Write a `tomograms.star` | `data-portal`, `copick-data-portal` |
+| `zarr-particle-importtomo` | Import portal runs into a RELION project (pipeliner: `zarrparticletools.importtomo`) | portal IDs or a stored selection |
 | `zarr-particle-export` | Self-contained on-disk project (downloads tilt series) | `data-portal`, `copick-data-portal` |
 
 `core/` can also be used directly for projection matrices and point projection, CTF premultiplication,
@@ -279,6 +281,29 @@ To generate only the `tomograms.star` (and feed it to the `local` variants yours
 
 ```bash
 zarr-particle-tomograms data-portal --dataset-ids 10426 --output-dir tests/output/sample_tomograms_test/
+```
+
+### Import portal runs for a RELION project
+
+`zarr-particle-importtomo` writes a RELION 5 tomography set for a pipeliner/RELION project whose tilt series stay
+on S3: `tomograms.star`, one tilt star per run and one sparse placeholder MRC. It is also the
+`zarrparticletools.importtomo` pipeliner job. For each run it resolves **one tomogram**, which fixes the alignment
+and voxel spacing, so picks made on that tomogram and the tilt geometry share a frame:
+
+- `--tomogram-type default|raw|filtered|denoised` (`default` = the run's visualization default), narrowed by
+  `--tomogram-software`, `--reconstruction-method` and `--voxel-spacing`, or pinned with `--tomogram-ids`.
+  A run with several matching tomograms is refused with the candidates listed, never picked for you.
+- `rlnTomoName` is the portal run ID (the run name in a portal-backed copick project), `rlnTomoSizeX/Y/Z` are in
+  unbinned tilt-series pixels, and every STAR path is relative to the working directory (the project).
+- A section the alignment excludes (e.g. an AreTomo dark frame) keeps its source index in `N@placeholder`, and is
+  listed with its reason in `portal_selection.json`, next to what was resolved and written.
+- `--selection portal_selection.json` imports a stored selection exactly, and fails if the portal changed since
+  it was resolved. `zarr_particle_tools.portal_selection.resolve()` produces one without the extraction stack.
+- The portal records neither amplitude contrast nor defocus handedness: `--amplitude-contrast` (default 0.07) and
+  `--hand` (default -1) set them.
+
+```bash
+zarr-particle-importtomo --dataset-ids 10426 --run-ids 16848,16849 --output-dir Import/job001
 ```
 
 ### Export an on-disk project

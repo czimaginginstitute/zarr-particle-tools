@@ -16,6 +16,8 @@ TILTSERIES_MRCS_PLACEHOLDER = "tiltseries/tiltseries_placeholder.mrcs"
 TILTSERIES_URI_RELION_COLUMN = "tomoTiltSeriesURI"
 DEFAULT_AMPLITUDE_CONTRAST = 0.07
 TOMO_HAND_DEFAULT_VALUE = -1
+# portal selection: "default" is each run's visualization default, the others match Tomogram.processing
+TOMOGRAM_TYPES = ("default", "raw", "filtered", "denoised")
 # TODO: actually validate against all these columns variables
 PARTICLES_DF_COLUMNS = [
     "rlnTomoName",
