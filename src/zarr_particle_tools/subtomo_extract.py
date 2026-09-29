@@ -21,6 +21,7 @@ from scipy.ndimage import fourier_shift
 
 import zarr_particle_tools.cli.options as cli_options
 import zarr_particle_tools.generate.cdp_generate_starfiles as cdp_generate
+from zarr_particle_tools import validation
 from zarr_particle_tools.core.constants import OPTICS_DF_COLUMNS
 from zarr_particle_tools.core.ctf import calculate_ctf
 from zarr_particle_tools.core.data import get_tiltseries_datareader
@@ -373,11 +374,11 @@ def write_starfiles(
         output_dir / "particles.star",
     )
     optimisation_set_dict = {
-        "rlnTomoParticlesFile": (output_dir / "particles.star").resolve(),
-        "rlnTomoTomogramsFile": tomograms_starfile.resolve(),
+        "rlnTomoParticlesFile": validation.project_relative(output_dir / "particles.star"),
+        "rlnTomoTomogramsFile": validation.project_relative(tomograms_starfile),
     }
     if trajectories_starfile:
-        optimisation_set_dict["rlnTomoTrajectoriesFile"] = trajectories_starfile.resolve()
+        optimisation_set_dict["rlnTomoTrajectoriesFile"] = validation.project_relative(trajectories_starfile)
 
     starfile.write(optimisation_set_dict, output_dir / "optimisation_set.star")
 
@@ -551,6 +552,7 @@ def parse_extract_local_subtomograms(
     optimisation_set_starfile: Path = None,
     overwrite: bool = False,
     debug: bool = False,
+    job_type: str = validation.EXTRACT,
 ) -> tuple[Path, Path, Path, Path, Path]:
     """
     Extracts subtomograms from local files using the provided parameters.
@@ -576,6 +578,12 @@ def parse_extract_local_subtomograms(
         tiltseries_relative_dir=tiltseries_relative_dir,
         tomograms_starfile=tomograms_starfile,
         optimisation_set_starfile=optimisation_set_starfile,
+    )
+    validation.raise_if(
+        job_type,
+        validation.check_inputs(
+            job_type, particles_starfile, tomograms_starfile, trajectories_starfile, tiltseries_relative_dir
+        ),
     )
 
     particles_count, total_skipped_count, individual_tiltseries_count = extract_subtomograms(

@@ -12,6 +12,7 @@ from pathlib import Path
 import click
 
 import zarr_particle_tools.cli.options as cli_options
+from zarr_particle_tools import validation
 from zarr_particle_tools.core.helpers import setup_logging
 from zarr_particle_tools.generate_tomograms import reject_optimisation_set, tomograms_star_for_job
 from zarr_particle_tools.subtomo_relion_job import run_relion_tomo_job
@@ -87,6 +88,7 @@ def run_ctf_refine(
     relion_bin: str = RELION_BIN,
     shm_dir: str | Path = "/dev/shm",
     keep_shm: bool = False,
+    require_ram_staging: bool = False,
     per_tomogram: bool = True,
     n_workers: int = 0,
 ) -> Path:
@@ -126,6 +128,8 @@ def run_ctf_refine(
         threads=threads,
         shm_dir=shm_dir,
         keep_shm=keep_shm,
+        require_ram_staging=require_ram_staging,
+        job_type=validation.CTFREFINE,
         per_tomogram=per_tomogram,
         n_workers=n_workers,
     )
