@@ -251,6 +251,9 @@ def test_extract_arbitrary_particle_names(tmp_path):
     )
 
     particles = starfile.read(output_dir / "particles.star")["particles"]
+    assert particles["rlnImageName"][1] == str(
+        (output_dir / "Subtomograms/session1_TS_1/ext1_-3_stack2d.mrcs").resolve()
+    )
     expected = [("session1_TS_1", i, name) for i, name in enumerate(ts1_names)]
     expected += [("session1_TS_0", i, name) for i, name in enumerate(ts0_names)]
     assert particles["rlnTomoParticleName"].tolist() == [name for _, _, name in expected]
@@ -259,3 +262,46 @@ def test_extract_arbitrary_particle_names(tmp_path):
         path = subtomogram_path(output_dir, tomo_name, name).resolve()
         assert image_name == str(path)
         assert mrc_equal(relion_dir / f"{i + 1}_stack2d.mrcs", path, tol=DATASET_CONFIGS["synthetic"]["tol"])
+
+
+def test_extract_keeps_numeric_particle_names(tmp_path):
+    data_root = DATASET_CONFIGS["synthetic"]["data_root"]
+    particles_data = starfile.read(data_root / "particles.star")
+    names = [f"{i:03d}" for i in range(1, len(particles_data["particles"]) + 1)]
+    particles_data["particles"]["rlnTomoParticleName"] = names
+    starfile.write(particles_data, tmp_path / "particles.star")
+
+    output_dir = tmp_path / "output"
+    extract_subtomograms(
+        box_size=64,
+        output_dir=output_dir,
+        particles_starfile=tmp_path / "particles.star",
+        tiltseries_relative_dir=data_root,
+        tomograms_starfile=data_root / "tomograms.star",
+    )
+
+    particles = starfile.read(output_dir / "particles.star", parse_as_string=["rlnTomoParticleName"])["particles"]
+    assert particles["rlnTomoParticleName"].tolist() == names
+    assert (output_dir / "Subtomograms/session1_TS_1/001_stack2d.mrcs").exists()
+
+
+def test_extract_rejects_particles_sharing_a_subtomogram_path(tmp_path):
+    # same slash-containing names in two tomograms map to the same RELION output path
+    data_root = DATASET_CONFIGS["synthetic"]["data_root"]
+    particles_data = starfile.read(data_root / "particles.star")
+    ts1_particles = particles_data["particles"]
+    particles_data["particles"] = pd.concat([ts1_particles, ts1_particles.assign(rlnTomoName="session1_TS_0")])
+    particles_data["particles"]["rlnTomoParticleName"] = "session1_TS_1/" + (
+        particles_data["particles"].groupby("rlnTomoName").cumcount() + 1
+    ).astype(str)
+    starfile.write(particles_data, tmp_path / "particles.star")
+
+    with pytest.raises(ValueError, match="more than one particle"):
+        extract_subtomograms(
+            box_size=64,
+            output_dir=tmp_path / "output",
+            particles_starfile=tmp_path / "particles.star",
+            tiltseries_relative_dir=data_root,
+            tomograms_starfile=data_root / "tomograms.star",
+        )
+    assert not (tmp_path / "output" / "Subtomograms").exists()

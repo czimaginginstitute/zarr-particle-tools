@@ -14,7 +14,7 @@ from zarr_particle_tools.subtomo_extract import subtomogram_path
         ("tomo_1_bin4", "tomo_1/12", "Subtomograms/tomo_1/12_stack2d.mrcs"),
         ("tomo_1", "tomo_1/run2/12", "Subtomograms/tomo_1/run2/12_stack2d.mrcs"),
         ("tomo_1", "p12", "Subtomograms/tomo_1/p12_stack2d.mrcs"),
-        ("tomo_1", 12, "Subtomograms/tomo_1/12_stack2d.mrcs"),
+        ("tomo_1", "/tomo_1/12", "Subtomograms/tomo_1/12_stack2d.mrcs"),
     ],
 )
 def test_subtomogram_path_matches_relion(tomo_name, particle_name, expected):

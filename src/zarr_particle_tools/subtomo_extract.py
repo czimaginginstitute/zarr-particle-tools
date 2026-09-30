@@ -49,15 +49,15 @@ EDGE_FALLOFF = 5.0
 
 def subtomogram_path(output_dir: Path, tomo_name: str, particle_name: str) -> Path:
     """Matches RELION's SubtomoProgram::getOutputFilename."""
-    particle_name = str(particle_name)
     if "/" not in particle_name:
         particle_name = f"{tomo_name}/{particle_name}"
-    return output_dir / "Subtomograms" / f"{particle_name}_stack2d.mrcs"
+    # RELION concatenates strings, so a leading slash stays inside Subtomograms/
+    return output_dir / "Subtomograms" / f"{particle_name.lstrip('/')}_stack2d.mrcs"
 
 
 def update_particles_df(
     particles_df: pd.DataFrame,
-    image_paths: dict,
+    image_paths: dict[str, Path],
     all_visible_sections_relion_column: list,
     skipped_particles: set,
     offsets_applied: bool = True,
@@ -118,11 +118,6 @@ def process_tiltseries(
     pre_bin_crop_size = crop_size * bin
 
     particles_tomo_name = tiltseries_row_entry["rlnTomoName"]
-    if "rlnTomoParticleName" not in filtered_particles_df.columns:
-        # RELION names unnamed particles <rlnTomoName>/<1-based index within the tomogram>
-        filtered_particles_df = filtered_particles_df.assign(
-            rlnTomoParticleName=[f"{particles_tomo_name}/{i}" for i in range(1, len(filtered_particles_df) + 1)]
-        )
     image_paths = {
         name: subtomogram_path(output_dir, particles_tomo_name, name)
         for name in filtered_particles_df["rlnTomoParticleName"]
@@ -411,8 +406,24 @@ def extract_subtomograms(
         crop_size = box_size
 
     logger.debug(f"Starting subtomogram extraction, reading file {particles_starfile} and {tomograms_starfile}")
-    particles_data = starfile.read(particles_starfile)
+    particles_data = starfile.read(particles_starfile, parse_as_string=["rlnTomoParticleName"])
     particles_df = particles_data["particles"]
+    if "rlnTomoParticleName" not in particles_df.columns:
+        # RELION names unnamed particles <rlnTomoName>/<1-based index within the tomogram>
+        index_in_tomo = particles_df.groupby("rlnTomoName", sort=False).cumcount() + 1
+        particles_df["rlnTomoParticleName"] = particles_df["rlnTomoName"].astype(str) + "/" + index_in_tomo.astype(str)
+    output_paths = pd.Series(
+        [
+            subtomogram_path(output_dir, tomo_name, name)
+            for tomo_name, name in zip(particles_df["rlnTomoName"], particles_df["rlnTomoParticleName"], strict=True)
+        ]
+    )
+    if output_paths.duplicated().any():
+        clashes = sorted({str(path) for path in output_paths[output_paths.duplicated()]})
+        raise ValueError(
+            f"{len(clashes)} subtomogram file(s) would be written by more than one particle, e.g. {clashes[0]}. "
+            "Make rlnTomoParticleName unique across the particles star file."
+        )
     if not dont_apply_offsets:
         particles_df = apply_offsets_to_coordinates(particles_df)
     optics_df = particles_data["optics"]
