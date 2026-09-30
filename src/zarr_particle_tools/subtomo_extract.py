@@ -420,13 +420,16 @@ def extract_subtomograms(
             f"Tomograms star file {tomograms_starfile} does not contain the required column 'rlnTomoTiltSeriesStarFile'. Please check the file."
         )
     # like RELION's ParticleSet::splitByTomogram, particles of tomograms missing from tomograms.star are not extracted
-    extracted_df = particles_df[particles_df["rlnTomoName"].isin(tomograms_df["rlnTomoName"])]
+    in_tomograms = particles_df["rlnTomoName"].isin(tomograms_df["rlnTomoName"])
+    if not in_tomograms.all():
+        undefined = ", ".join(sorted(set(particles_df.loc[~in_tomograms, "rlnTomoName"])))
+        logger.warning(f"Particles were found belonging to the following undefined tomograms: {undefined}")
+    extracted_df = particles_df[in_tomograms]
     output_paths = pd.Series(
         [
             subtomogram_path(output_dir, tomo_name, name)
             for tomo_name, name in zip(extracted_df["rlnTomoName"], extracted_df["rlnTomoParticleName"], strict=True)
-        ],
-        dtype=object,
+        ]
     )
     if output_paths.duplicated().any():
         clashes = sorted({str(path) for path in output_paths[output_paths.duplicated()]})
@@ -645,7 +648,7 @@ def parse_extract_copick_local_subtomograms(
         picks = get_copick_picks(copick_config, copick_name, copick_session_id, copick_user_id, copick_run_names)
         copick_run_names = [p.run.name for p in picks]
 
-    tomograms_df = starfile.read(tomograms_starfile)
+    tomograms_df = starfile.read(tomograms_starfile, parse_as_string=["rlnTomoName", "rlnOpticsGroupName"])
     if isinstance(tomograms_df, dict):
         tomograms_df = tomograms_df["global"]
     optics_df = tomograms_df[OPTICS_DF_COLUMNS].drop_duplicates().reset_index(drop=True)
