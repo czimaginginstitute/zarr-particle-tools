@@ -8,6 +8,7 @@ access, no copick project, no RELION binaries, no /dev/shm.
 """
 
 import importlib
+import inspect
 import re
 from pathlib import Path
 
@@ -88,6 +89,7 @@ def _write_tomograms_star(path: Path, pixel_size=1.54, n=2, tomo_names=("tomo1",
             "rlnAmplitudeContrast": [0.07] * n,
             "rlnTomoTiltSeriesPixelSize": [pixel_size] * n,
             "rlnTomoName": list(tomo_names)[:n],
+            "rlnTomoTiltSeriesStarFile": [f"tiltseries/{name}.star" for name in list(tomo_names)[:n]],
         }
     )
     starfile.write(df, path)
@@ -346,7 +348,11 @@ def test_portal_variants_generate_tomograms_and_pass_it_through(module, runner_a
 
 def test_extract_copick_local_flattens_run_names_and_dispatches(tmp_path, monkeypatch):
     seen = {}
-    monkeypatch.setattr(extract, "parse_extract_copick_local_subtomograms", lambda **k: seen.update(k))
+    # bind to the real signature so a CLI option the function doesn't accept fails here
+    signature = inspect.signature(extract.parse_extract_copick_local_subtomograms)
+    monkeypatch.setattr(
+        extract, "parse_extract_copick_local_subtomograms", lambda **k: seen.update(signature.bind(**k).arguments)
+    )
     tomograms = _write_tomograms_star(tmp_path / "tomograms.star")
 
     result = CliRunner().invoke(

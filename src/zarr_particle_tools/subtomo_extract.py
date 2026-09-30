@@ -633,6 +633,7 @@ def parse_extract_copick_local_subtomograms(
     tomograms_starfile: Path = None,
     overwrite: bool = False,
     dry_run: bool = False,
+    debug: bool = False,
 ) -> tuple[Path, Path, Path, Path, Path]:
     """
     Extracts subtomograms from local files using copick picks and the provided parameters.
@@ -693,6 +694,7 @@ def parse_extract_copick_local_subtomograms(
         particles_starfile=particles_path,
         tiltseries_relative_dir=tiltseries_relative_dir,
         tomograms_starfile=tomograms_starfile,
+        debug=debug,
     )
 
     end_time = time.time()
