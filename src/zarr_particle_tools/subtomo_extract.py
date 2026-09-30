@@ -51,7 +51,7 @@ def subtomogram_path(output_dir: Path, tomo_name: str, particle_name: str) -> Pa
     """Matches RELION's SubtomoProgram::getOutputFilename."""
     if "/" not in particle_name:
         particle_name = f"{tomo_name}/{particle_name}"
-    # RELION concatenates strings, so a leading slash stays inside Subtomograms/
+    # RELION concatenates strings, so a leading slash stays under Subtomograms/ (like RELION, ".." is not guarded)
     return output_dir / "Subtomograms" / f"{particle_name.lstrip('/')}_stack2d.mrcs"
 
 
@@ -404,19 +404,29 @@ def extract_subtomograms(
     """
     if crop_size is None:
         crop_size = box_size
+    output_dir = Path(output_dir)
 
     logger.debug(f"Starting subtomogram extraction, reading file {particles_starfile} and {tomograms_starfile}")
-    particles_data = starfile.read(particles_starfile, parse_as_string=["rlnTomoParticleName"])
+    particles_data = starfile.read(particles_starfile, parse_as_string=["rlnTomoName", "rlnTomoParticleName"])
     particles_df = particles_data["particles"]
     if "rlnTomoParticleName" not in particles_df.columns:
         # RELION names unnamed particles <rlnTomoName>/<1-based index within the tomogram>
         index_in_tomo = particles_df.groupby("rlnTomoName", sort=False).cumcount() + 1
-        particles_df["rlnTomoParticleName"] = particles_df["rlnTomoName"].astype(str) + "/" + index_in_tomo.astype(str)
+        particles_df["rlnTomoParticleName"] = particles_df["rlnTomoName"] + "/" + index_in_tomo.astype(str)
+    tomograms_data = starfile.read(tomograms_starfile, parse_as_string=["rlnTomoName"])
+    tomograms_df = tomograms_data["global"] if isinstance(tomograms_data, dict) else tomograms_data
+    if "rlnTomoTiltSeriesStarFile" not in tomograms_df.columns:
+        raise ValueError(
+            f"Tomograms star file {tomograms_starfile} does not contain the required column 'rlnTomoTiltSeriesStarFile'. Please check the file."
+        )
+    # like RELION's ParticleSet::splitByTomogram, particles of tomograms missing from tomograms.star are not extracted
+    extracted_df = particles_df[particles_df["rlnTomoName"].isin(tomograms_df["rlnTomoName"])]
     output_paths = pd.Series(
         [
             subtomogram_path(output_dir, tomo_name, name)
-            for tomo_name, name in zip(particles_df["rlnTomoName"], particles_df["rlnTomoParticleName"], strict=True)
-        ]
+            for tomo_name, name in zip(extracted_df["rlnTomoName"], extracted_df["rlnTomoParticleName"], strict=True)
+        ],
+        dtype=object,
     )
     if output_paths.duplicated().any():
         clashes = sorted({str(path) for path in output_paths[output_paths.duplicated()]})
@@ -428,12 +438,6 @@ def extract_subtomograms(
         particles_df = apply_offsets_to_coordinates(particles_df)
     optics_df = particles_data["optics"]
     trajectories_dict = starfile.read(trajectories_starfile) if trajectories_starfile else None
-    tomograms_data = starfile.read(tomograms_starfile)
-    tomograms_df = tomograms_data["global"] if isinstance(tomograms_data, dict) else tomograms_data
-    if "rlnTomoTiltSeriesStarFile" not in tomograms_df.columns:
-        raise ValueError(
-            f"Tomograms star file {tomograms_starfile} does not contain the required column 'rlnTomoTiltSeriesStarFile'. Please check the file."
-        )
     if not tiltseries_relative_dir:
         tiltseries_relative_dir = Path("./")
 
