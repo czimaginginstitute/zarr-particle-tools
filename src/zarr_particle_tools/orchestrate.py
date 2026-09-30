@@ -31,7 +31,7 @@ import zarr_particle_tools.generate.cdp_cache as cdp_cache
 import zarr_particle_tools.generate.cdp_generate_starfiles as cdp_generate
 import zarr_particle_tools.generate.copick_generate_starfiles as copick_generate
 from zarr_particle_tools.core.constants import OPTICS_DF_COLUMNS, THREAD_POOL_WORKER_COUNT
-from zarr_particle_tools.core.helpers import setup_logging
+from zarr_particle_tools.core.helpers import STAR_NAME_COLUMNS, setup_logging
 
 logger = logging.getLogger(__name__)
 
@@ -328,7 +328,7 @@ def read_tomograms_df(tomograms_star: Path):
     single-block file; a multi-block file must carry the RELION `global` block, matching how the
     rest of the codebase reads these (subtomo_relion_job.read_global_tomograms, subtomo_extract).
     """
-    df = starfile.read(tomograms_star)
+    df = starfile.read(tomograms_star, parse_as_string=STAR_NAME_COLUMNS)
     if isinstance(df, dict):
         if "global" not in df:
             raise click.ClickException(

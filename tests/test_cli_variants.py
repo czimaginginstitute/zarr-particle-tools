@@ -22,7 +22,8 @@ import zarr_particle_tools.orchestrate as orch
 import zarr_particle_tools.subtomo_ctfrefine as ctfrefine
 import zarr_particle_tools.subtomo_extract as extract
 import zarr_particle_tools.subtomo_polish as polish
-from zarr_particle_tools.core.constants import OPTICS_DF_COLUMNS
+from zarr_particle_tools.core.constants import OPTICS_DF_COLUMNS, PARTICLES_DF_COLUMNS
+from zarr_particle_tools.core.helpers import STAR_NAME_COLUMNS
 
 # The intended source matrix. ctf-refine / polish have no copick-local (they need a *refined*
 # particles.star, and raw picks are not refined); tomograms / export are portal-only by nature.
@@ -171,6 +172,46 @@ def test_orchestrate_local_rejects_stars_outside_output_dir(tmp_path, stub_pipel
 
     with pytest.raises(Exception, match="must be inside --output-dir"):
         orch.orchestrate_local(out, _cfg(), particles_starfile=particles, tomograms_starfile=outside)
+
+
+def test_orchestrate_copick_local_keeps_zero_padded_names(tmp_path, monkeypatch, stub_pipeline_tail):
+    # copick runs are matched to optics groups by name, and the written names must match tomograms.star
+    out = tmp_path / "run"
+    tomograms = _write_tomograms_star(out / "input" / "tomograms.star", tomo_names=("007", "008"))
+    starfile.write(
+        {
+            "global": starfile.read(tomograms, parse_as_string=STAR_NAME_COLUMNS).assign(
+                rlnOpticsGroupName=["007", "008"]
+            )
+        },
+        tomograms,
+        overwrite=True,
+    )
+    picks = pd.DataFrame({c: [1.0] for c in PARTICLES_DF_COLUMNS if c not in ("rlnTomoName", "rlnOpticsGroup")})
+
+    class Pick:
+        def __init__(self, run_name):
+            self.run = type("Run", (), {"name": run_name})
+
+        def df(self, format):
+            return picks.copy()
+
+    monkeypatch.setattr(orch.copick_generate, "get_copick_picks", lambda *args: [Pick("007"), Pick("008")])
+
+    orch.orchestrate_copick_local(
+        out,
+        _cfg(),
+        tomograms_starfile=tomograms,
+        copick_config=Path("cfg.json"),
+        copick_name="ribosome",
+        copick_session_id="1",
+        copick_user_id="octopi",
+        copick_run_names=["007", "008"],
+    )
+
+    written = starfile.read(stub_pipeline_tail["particles"], parse_as_string=STAR_NAME_COLUMNS)
+    assert written["particles"]["rlnTomoName"].tolist() == ["007", "008"]
+    assert written["optics"]["rlnOpticsGroupName"].tolist() == ["007", "008"]
 
 
 def test_orchestrate_copick_local_generates_particles(tmp_path, monkeypatch, stub_pipeline_tail):
