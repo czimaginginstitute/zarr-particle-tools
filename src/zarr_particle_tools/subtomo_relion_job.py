@@ -43,7 +43,7 @@ from zarr_particle_tools.core.data import (
     resolve_staging_dir,
     write_tiltseries_to_mrc,
 )
-from zarr_particle_tools.core.helpers import auto_worker_count
+from zarr_particle_tools.core.helpers import STAR_NAME_COLUMNS, auto_worker_count, read_tomograms_starfile
 
 logger = logging.getLogger(__name__)
 
@@ -215,7 +215,7 @@ def _slug(name: str, max_len: int = 200) -> str:
 
 def read_single_table(path: str | Path) -> pd.DataFrame:
     """Read a star file that holds a single (optionally named) data block as a DataFrame."""
-    data = starfile.read(str(path))
+    data = starfile.read(str(path), parse_as_string=STAR_NAME_COLUMNS)
     if isinstance(data, dict):
         if len(data) != 1:
             raise ValueError(f"Expected a single data block in {path}, found {list(data)}.")
@@ -245,10 +245,7 @@ def resolve_optimisation_set(optimisation_set_starfile: Path) -> tuple[Path, Pat
 
 def read_global_tomograms(tomograms_starfile: Path) -> tuple[pd.DataFrame, Path]:
     """Return (global tomograms DataFrame, base dir for resolving rlnTomoTiltSeriesStarFile)."""
-    data = starfile.read(str(tomograms_starfile))
-    global_df = data["global"] if isinstance(data, dict) else data
-    if "rlnTomoTiltSeriesStarFile" not in global_df.columns:
-        raise ValueError(f"{tomograms_starfile} has no rlnTomoTiltSeriesStarFile column.")
+    _, global_df = read_tomograms_starfile(tomograms_starfile)
     return global_df.copy(), Path(tomograms_starfile).parent
 
 
@@ -405,6 +402,26 @@ def _phase1_worker(task) -> str:
     return str(output_dir)
 
 
+def _stage_per_tomogram(global_df, particles_star, p1_root: Path) -> list[tuple[str, Path, pd.DataFrame]]:
+    """Write each tomogram's particles to p1_root/<slug>/particles.star; return (name, star, global row) per tomogram."""
+    parts = starfile.read(str(particles_star), parse_as_string=STAR_NAME_COLUMNS)
+    parts = parts if isinstance(parts, dict) else {"particles": parts}
+    pdf = parts["particles"]
+    staged = []
+    for name in global_df["rlnTomoName"]:
+        sub_particles = pdf[pdf["rlnTomoName"] == name]
+        if len(sub_particles) == 0:  # RELION skips 0-particle tomograms; don't launch a run for one
+            logger.info("Skipping tomogram %s in phase 1: no particles.", name)
+            continue
+        ps = p1_root / _slug(name) / "particles.star"  # slug: our internal dir must be filesystem-safe
+        ps.parent.mkdir(parents=True, exist_ok=True)
+        starfile.write(
+            {k: (sub_particles if k == "particles" else v) for k, v in parts.items()}, str(ps), overwrite=True
+        )
+        staged.append((name, ps, global_df[global_df["rlnTomoName"] == name].copy()))
+    return staged
+
+
 def _two_phase(
     build_cmd,
     relion_bin,
@@ -430,36 +447,10 @@ def _two_phase(
     (defocus/scale/aberrations/motion) runs with no stack loaded. Matches all-at-once for every fit
     type.
     """
-    names = [str(r["rlnTomoName"]) for _, r in global_df.iterrows()]
-    parts = starfile.read(str(particles_star))
-    parts = parts if isinstance(parts, dict) else {"particles": parts}
-    pdf = parts["particles"]
-
     p1_root = output_dir / "_phase1"
-    tasks, processed = [], []
-    for name in names:
-        # names are str, but starfile parses an all-digit rlnTomoName as int64
-        sub_particles = pdf[pdf["rlnTomoName"].astype(str) == name]
-        if len(sub_particles) == 0:  # RELION skips 0-particle tomograms; don't launch a run for one
-            logger.info("Skipping tomogram %s in phase 1: no particles.", name)
-            continue
-        d = p1_root / _slug(name)  # slug: our internal dir must be filesystem-safe
-        d.mkdir(parents=True, exist_ok=True)
-        ps = d / "particles.star"
-        sub = {k: (sub_particles if k == "particles" else v) for k, v in parts.items()}
-        starfile.write(sub, str(ps), overwrite=True)
-        tasks.append(
-            (
-                build_cmd,
-                relion_bin,
-                global_df[global_df["rlnTomoName"].astype(str) == name].copy(),
-                ps,
-                trajectories,
-                d,
-                common,
-            )
-        )
-        processed.append(name)
+    staged = _stage_per_tomogram(global_df, particles_star, p1_root)
+    tasks = [(build_cmd, relion_bin, tomo_df, ps, trajectories, ps.parent, common) for _, ps, tomo_df in staged]
+    processed = [name for name, _, _ in staged]
     if n_workers and n_workers > 1:
         with mp.get_context("spawn").Pool(min(n_workers, len(tasks))) as pool:
             pool.map(_phase1_worker, tasks)
@@ -595,13 +586,10 @@ def run_relion_tomo_job(
         raise ValueError("Provide either an optimisation set or both particles and tomograms star files.")
 
     global_df, src_base = read_global_tomograms(Path(tomograms_starfile))
-    if not global_df["rlnTomoName"].is_unique:  # RELION's per-tomogram key; duplicates are malformed
-        dups = global_df["rlnTomoName"][global_df["rlnTomoName"].duplicated()].unique().tolist()
-        raise ValueError(f"Duplicate rlnTomoName in {tomograms_starfile}: {dups}. Names must be unique.")
 
     # Hard-error if the particles reference no tomogram in this set (e.g. a generated tomograms.star
     # whose rlnTomoName scheme doesn't match refined particles) — otherwise RELION silently does nothing.
-    _parts = starfile.read(str(particles_starfile))
+    _parts = starfile.read(str(particles_starfile), parse_as_string=STAR_NAME_COLUMNS)
     _pdf = _parts["particles"] if isinstance(_parts, dict) else _parts
     if "rlnTomoName" in _pdf.columns:
         p_names, t_names = set(_pdf["rlnTomoName"].astype(str)), set(global_df["rlnTomoName"].astype(str))

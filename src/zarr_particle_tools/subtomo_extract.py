@@ -32,7 +32,14 @@ from zarr_particle_tools.core.forwardprojection import (
     get_particle_crop_and_visibility,
     get_particles_to_tiltseries_coordinates,
 )
-from zarr_particle_tools.core.helpers import auto_worker_count, get_tiltseries_data, setup_logging, validate_and_setup
+from zarr_particle_tools.core.helpers import (
+    STAR_NAME_COLUMNS,
+    auto_worker_count,
+    get_tiltseries_data,
+    read_tomograms_starfile,
+    setup_logging,
+    validate_and_setup,
+)
 from zarr_particle_tools.core.mask import circular_mask, circular_soft_mask
 from zarr_particle_tools.generate.copick_generate_starfiles import (
     copick_picks_to_starfile,
@@ -47,34 +54,27 @@ logger = logging.getLogger(__name__)
 EDGE_FALLOFF = 5.0
 
 
+def subtomogram_path(output_dir: Path, tomo_name: str, particle_name: str) -> Path:
+    """Matches RELION's SubtomoProgram::getOutputFilename."""
+    if "/" not in particle_name:
+        particle_name = f"{tomo_name}/{particle_name}"
+    # RELION concatenates strings, so a leading slash stays under Subtomograms/ (like RELION, ".." is not guarded)
+    return output_dir / "Subtomograms" / f"{particle_name.lstrip('/')}_stack2d.mrcs"
+
+
 def update_particles_df(
     particles_df: pd.DataFrame,
-    output_folder: Path,
+    image_paths: dict[str, Path],
     all_visible_sections_relion_column: list,
     skipped_particles: set,
     offsets_applied: bool = True,
 ) -> pd.DataFrame:
     """Updates the particles DataFrame to include the new columns and values for RELION format."""
-    updated_particles_df = particles_df.copy()
-    updated_particles_df = updated_particles_df.drop(
+    updated_particles_df = particles_df[~particles_df["rlnTomoParticleName"].isin(skipped_particles)].drop(
         columns=["rlnCoordinateX", "rlnCoordinateY", "rlnCoordinateZ"], errors="ignore"
     )
-    if "rlnTomoParticleName" not in updated_particles_df.columns:
-        updated_particles_df = updated_particles_df.reset_index(drop=True)
-        updated_particles_df.index += 1  # increment index by 1 to match RELION's 1-indexing
-        updated_particles_df["rlnTomoParticleName"] = (
-            updated_particles_df["rlnTomoName"] + "/" + updated_particles_df.index.astype(str)
-        )
-    # set index to be based on rlnTomoParticleName for easier processing
-    updated_particles_df.index = updated_particles_df["rlnTomoParticleName"].str.split("/").str[-1].astype(int)
-    updated_particles_df["rlnImageName"] = updated_particles_df.index.to_series().apply(
-        lambda idx: (output_folder / f"{idx}_stack2d.mrcs").resolve()
-    )
-    # drop rows by particle_id that were skipped
-    updated_particles_df = updated_particles_df.drop(
-        updated_particles_df.index[
-            updated_particles_df["rlnTomoParticleName"].str.split("/").str[-1].astype(int).isin(skipped_particles)
-        ]
+    updated_particles_df["rlnImageName"] = updated_particles_df["rlnTomoParticleName"].map(
+        lambda name: image_paths[name].resolve()
     )
     updated_particles_df["rlnTomoVisibleFrames"] = all_visible_sections_relion_column
     if offsets_applied:
@@ -125,8 +125,12 @@ def process_tiltseries(
     pre_bin_crop_size = crop_size * bin
 
     particles_tomo_name = tiltseries_row_entry["rlnTomoName"]
-    output_folder = output_dir / "Subtomograms" / particles_tomo_name
-    output_folder.mkdir(parents=True, exist_ok=True)
+    image_paths = {
+        name: subtomogram_path(output_dir, particles_tomo_name, name)
+        for name in filtered_particles_df["rlnTomoParticleName"]
+    }
+    for folder in {path.parent for path in image_paths.values()}:
+        folder.mkdir(parents=True, exist_ok=True)
     logger.debug(
         f"Extracting subtomograms for {len(filtered_particles_df)} particles (filtered by rlnTomoName: {particles_tomo_name})"
     )
@@ -236,11 +240,6 @@ def process_tiltseries(
             )
             tilt_stack[tilt] = padded_crop
 
-            if particle_id % 100 == 0:
-                logger.debug(
-                    f"particle {particle_id}, tilt {tilt}, crop min/max: {padded_crop.min()}/{padded_crop.max()}, key: {tiltseries_key}, pre/post padding: ({y_pre_padding},{x_pre_padding})/({y_post_padding},{x_post_padding})"
-                )
-
         if circle_precrop:
             pre_bin_background_mean = tilt_stack[:, pre_bin_background_mask].mean(axis=1)
             tilt_stack -= pre_bin_background_mean[:, None, None]
@@ -302,7 +301,7 @@ def process_tiltseries(
             (box_size - crop_size) // 2 : (box_size + crop_size) // 2,
         ]
 
-        output_path = output_folder / f"{particle_id}_stack2d.mrcs"
+        output_path = image_paths[particle_id]
         with mrcfile.new(output_path) as mrc:
             mrc.set_data(cropped_tilt_stack.astype(np.float16 if float16 else np.float32))
             mrc.voxel_size = (tiltseries_pixel_size * bin, tiltseries_pixel_size * bin, 1.0)
@@ -318,7 +317,7 @@ def process_tiltseries(
                     "write_fourier requires no_circle_crop and crop_size == box_size "
                     "(real-space masking/cropping would lose Nyquist-frequency phase)."
                 )
-            np.save(output_folder / f"{particle_id}_stack2d.npy", final_fourier_tilt_stack)
+            np.save(output_path.with_suffix(".npy"), final_fourier_tilt_stack)
 
     start_time = time.time()
     with ThreadPoolExecutor(max_workers=4) as executor:  # emperically determined 4 threads is optimal for this task
@@ -328,7 +327,7 @@ def process_tiltseries(
 
     updated_filtered_particles_df = update_particles_df(
         filtered_particles_df,
-        output_folder,
+        image_paths,
         all_visible_sections_relion_column,
         skipped_particles,
         offsets_applied=not dont_apply_offsets,
@@ -356,10 +355,6 @@ def write_starfiles(
     """
     Writes the updated particles and optimisation set star files, as per RELION expected format & outputs.
     """
-    merged_particles_df["ParticleID"] = merged_particles_df["rlnTomoParticleName"].str.split("/").str[-1].astype(int)
-    merged_particles_df = merged_particles_df.sort_values(by=["rlnTomoName", "ParticleID"]).reset_index(drop=True)
-    merged_particles_df = merged_particles_df.drop(columns="ParticleID")
-
     updated_optics_df = particle_optics_df.copy()
     updated_optics_df["rlnCtfDataAreCtfPremultiplied"] = 0 if no_ctf else 1
     updated_optics_df["rlnImageDimensionality"] = 2
@@ -416,20 +411,45 @@ def extract_subtomograms(
     """
     if crop_size is None:
         crop_size = box_size
+    output_dir = Path(output_dir)
+    tomograms_starfile = Path(tomograms_starfile)
+    trajectories_starfile = trajectories_starfile and Path(trajectories_starfile)
 
     logger.debug(f"Starting subtomogram extraction, reading file {particles_starfile} and {tomograms_starfile}")
-    particles_data = starfile.read(particles_starfile)
+    particles_data = starfile.read(particles_starfile, parse_as_string=STAR_NAME_COLUMNS)
     particles_df = particles_data["particles"]
+    if "rlnTomoParticleName" not in particles_df.columns:
+        # RELION names unnamed particles <rlnTomoName>/<1-based index within the tomogram>
+        index_in_tomo = particles_df.groupby("rlnTomoName", sort=False).cumcount() + 1
+        particles_df["rlnTomoParticleName"] = particles_df["rlnTomoName"] + "/" + index_in_tomo.astype(str)
+    tomograms_data, tomograms_df = read_tomograms_starfile(tomograms_starfile)
+    # like RELION's ParticleSet::splitByTomogram, particles of tomograms missing from tomograms.star are not extracted
+    in_tomograms = particles_df["rlnTomoName"].isin(tomograms_df["rlnTomoName"])
+    if not in_tomograms.all():
+        undefined = ", ".join(sorted(set(particles_df.loc[~in_tomograms, "rlnTomoName"])))
+        logger.warning(f"Particles were found belonging to the following undefined tomograms: {undefined}")
+    if not in_tomograms.any():
+        raise ValueError(
+            "No particles found that belong to any of the defined tomograms. "
+            "Please compare the tomogram names in the particle file to those in the tomogram file."
+        )
+    extracted_df = particles_df[in_tomograms]
+    output_paths = pd.Series(
+        [
+            subtomogram_path(output_dir, tomo_name, name)
+            for tomo_name, name in zip(extracted_df["rlnTomoName"], extracted_df["rlnTomoParticleName"], strict=True)
+        ]
+    )
+    if output_paths.duplicated().any():
+        clashes = sorted({str(path) for path in output_paths[output_paths.duplicated()]})
+        raise ValueError(
+            f"{len(clashes)} subtomogram file(s) would be written by more than one particle, e.g. {clashes[0]}. "
+            "Make rlnTomoParticleName unique across the particles star file."
+        )
     if not dont_apply_offsets:
         particles_df = apply_offsets_to_coordinates(particles_df)
     optics_df = particles_data["optics"]
     trajectories_dict = starfile.read(trajectories_starfile) if trajectories_starfile else None
-    tomograms_data = starfile.read(tomograms_starfile)
-    tomograms_df = tomograms_data["global"] if isinstance(tomograms_data, dict) else tomograms_data
-    if "rlnTomoTiltSeriesStarFile" not in tomograms_df.columns:
-        raise ValueError(
-            f"Tomograms star file {tomograms_starfile} does not contain the required column 'rlnTomoTiltSeriesStarFile'. Please check the file."
-        )
     if not tiltseries_relative_dir:
         tiltseries_relative_dir = Path("./")
 
@@ -489,7 +509,11 @@ def extract_subtomograms(
     if not particles_df_results:
         raise ValueError("No particles were extracted. Please check the input files and parameters.")
 
-    merged_particles_df = pd.concat(particles_df_results, ignore_index=True)
+    # RELION order: tomograms as listed in tomograms.star, particles in input order within each
+    tomo_order = {name: i for i, name in enumerate(tomograms_df["rlnTomoName"])}
+    merged_particles_df = pd.concat(particles_df_results).sort_values(
+        "rlnTomoName", key=lambda names: names.map(tomo_order), kind="stable", ignore_index=True
+    )
     # update all the relevant star files
     write_starfiles(
         merged_particles_df,
@@ -527,7 +551,6 @@ def parse_extract_local_subtomograms(
     optimisation_set_starfile: Path = None,
     overwrite: bool = False,
     debug: bool = False,
-    no_logging: bool = False,
 ) -> tuple[Path, Path, Path, Path, Path]:
     """
     Extracts subtomograms from local files using the provided parameters.
@@ -575,10 +598,9 @@ def parse_extract_local_subtomograms(
         debug=debug,
     )
     end_time = time.time()
-    if not no_logging:
-        logger.info(
-            f"Subtomogram extraction completed in {end_time - start_time:.2f} seconds. Extracted {particles_count} particles from {individual_tiltseries_count} tiltseries, skipped {total_skipped_count} particles due to out-of-bounds coordinates. Wrote to {output_dir}."
-        )
+    logger.info(
+        f"Subtomogram extraction completed in {end_time - start_time:.2f} seconds. Extracted {particles_count} particles from {individual_tiltseries_count} tiltseries, skipped {total_skipped_count} particles due to out-of-bounds coordinates. Wrote to {output_dir}."
+    )
 
     return (
         output_dir / "particles.star",
@@ -611,6 +633,7 @@ def parse_extract_copick_local_subtomograms(
     tomograms_starfile: Path = None,
     overwrite: bool = False,
     dry_run: bool = False,
+    debug: bool = False,
 ) -> tuple[Path, Path, Path, Path, Path]:
     """
     Extracts subtomograms from local files using copick picks and the provided parameters.
@@ -633,9 +656,7 @@ def parse_extract_copick_local_subtomograms(
         picks = get_copick_picks(copick_config, copick_name, copick_session_id, copick_user_id, copick_run_names)
         copick_run_names = [p.run.name for p in picks]
 
-    tomograms_df = starfile.read(tomograms_starfile)
-    if isinstance(tomograms_df, dict):
-        tomograms_df = tomograms_df["global"]
+    _, tomograms_df = read_tomograms_starfile(tomograms_starfile)
     optics_df = tomograms_df[OPTICS_DF_COLUMNS].drop_duplicates().reset_index(drop=True)
 
     # add copick particles to particles.star file
@@ -656,32 +677,29 @@ def parse_extract_copick_local_subtomograms(
         logger.info("Dry run enabled, skipping subtomogram extraction.")
         return
 
-    parse_extract_local_subtomograms(
+    # output_dir was validated above and now holds particles.star, so extract directly rather than re-validating
+    particles_count, total_skipped_count, individual_tiltseries_count = extract_subtomograms(
         box_size=box_size,
+        crop_size=crop_size,
         bin=bin,
         float16=float16,
         no_ctf=no_ctf,
         circle_precrop=circle_precrop,
         no_circle_crop=no_circle_crop,
-        dont_apply_offsets=dont_apply_offsets,
         no_ic=no_ic,
         normalize_bin=normalize_bin,
         write_fourier=write_fourier,
+        dont_apply_offsets=dont_apply_offsets,
         output_dir=output_dir,
-        crop_size=crop_size,
         particles_starfile=particles_path,
-        trajectories_starfile=None,
         tiltseries_relative_dir=tiltseries_relative_dir,
         tomograms_starfile=tomograms_starfile,
-        optimisation_set_starfile=None,
-        overwrite=overwrite,
-        debug=False,
-        no_logging=True,
+        debug=debug,
     )
 
     end_time = time.time()
     logger.info(
-        f"Subtomogram extraction completed in {end_time - start_time:.2f} seconds. Extracted {len(particles_df)} particles from {len(tomograms_df)} tiltseries. Wrote to {output_dir}."
+        f"Subtomogram extraction completed in {end_time - start_time:.2f} seconds. Extracted {particles_count} particles from {individual_tiltseries_count} tiltseries, skipped {total_skipped_count} particles due to out-of-bounds coordinates. Wrote to {output_dir}."
     )
 
     return (

@@ -171,14 +171,14 @@ def calculate_projection_matrix_from_starfile_df(tiltseries_df: pd.DataFrame) ->
 # can likely be parallelized
 def get_particles_to_tiltseries_coordinates(
     filtered_particles_df: pd.DataFrame,
-    filtered_trajectories_dict: dict[int, pd.DataFrame] | None,
+    filtered_trajectories_dict: dict[str, pd.DataFrame] | None,
     tiltseries_df: pd.DataFrame,
     projection_matrices: list[np.ndarray],
     use_tomo_particle_name_for_id: bool = True,
-) -> dict[int, dict[int, tuple[np.ndarray, np.ndarray]]]:
+) -> dict[int | str, dict[int, tuple[np.ndarray, np.ndarray]]]:
     """
-    Maps particle indices to their 2D coordinates in each of the tilts (projected from their 3D coordinates via the projection matrices).
-    The output is a dictionary where the keys are particle indices and the values are another dictionary with tilt section indices as keys and tuples of (3D coordinate, projected 2D coordinate) as values.
+    Maps particles to their 2D coordinates in each of the tilts (projected from their 3D coordinates via the projection matrices).
+    The output is a dictionary keyed by rlnTomoParticleName (or 1-based row index if use_tomo_particle_name_for_id is False); the values are another dictionary with tilt section indices as keys and tuples of (3D coordinate, projected 2D coordinate) as values.
     """
     particles_to_tiltseries_coordinates = {}
     for i, tilt in tiltseries_df.iterrows():
@@ -196,7 +196,7 @@ def get_particles_to_tiltseries_coordinates(
                 ]
             )
             particle_id = (
-                int(particle.rlnTomoParticleName.split("/")[-1])
+                particle.rlnTomoParticleName
                 if "rlnTomoParticleName" in filtered_particles_df.columns and use_tomo_particle_name_for_id
                 else default_particle_id
             )
@@ -229,7 +229,7 @@ def get_particles_to_tiltseries_coordinates(
 
 def get_particle_crop_and_visibility(
     tiltseries_data: DataReader,
-    particle_id: int,
+    particle_id: int | str,
     sections: dict,
     tiltseries_x: int,
     tiltseries_y: int,
