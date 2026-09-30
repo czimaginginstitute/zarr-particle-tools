@@ -6,8 +6,14 @@ import pytest
 import starfile
 from click.testing import CliRunner
 
+import zarr_particle_tools.generate.copick_generate_starfiles as copick_generate
 from tests.helpers.compare import mrc_equal
-from zarr_particle_tools.subtomo_extract import cli, extract_subtomograms, subtomogram_path
+from zarr_particle_tools.subtomo_extract import (
+    cli,
+    extract_subtomograms,
+    parse_extract_copick_local_subtomograms,
+    subtomogram_path,
+)
 
 DATASET_CONFIGS = {
     "synthetic": {
@@ -345,3 +351,70 @@ def test_extract_rejects_particles_sharing_a_subtomogram_path(tmp_path):
             tomograms_starfile=tmp_path / "tomograms.star",
         )
     assert not (tmp_path / "output" / "Subtomograms").exists()
+
+
+def test_extract_warns_about_undefined_tomograms(tmp_path, caplog):
+    data_root = DATASET_CONFIGS["synthetic"]["data_root"]
+    particles_data = starfile.read(data_root / "particles.star")
+    particles_data["particles"]["rlnTomoName"] = "unlisted"
+    starfile.write(particles_data, tmp_path / "particles.star")
+
+    with pytest.raises(ValueError, match="No particles were extracted"):
+        extract_subtomograms(
+            box_size=64,
+            output_dir=tmp_path / "output",
+            particles_starfile=tmp_path / "particles.star",
+            tiltseries_relative_dir=data_root,
+            tomograms_starfile=data_root / "tomograms.star",
+        )
+    assert "Particles were found belonging to the following undefined tomograms: unlisted" in caplog.text
+
+
+def test_extract_copick_local_keeps_zero_padded_names(tmp_path, monkeypatch):
+    # copick runs are matched to optics groups by name; zero-padded names must not be parsed as ints
+    data_root = DATASET_CONFIGS["synthetic"]["data_root"]
+    tomograms = starfile.read(data_root / "tomograms.star")
+    tomograms = pd.concat(
+        [
+            tomograms.assign(rlnTomoName=name, rlnOpticsGroupName=name, rlnOpticsGroup=i)
+            for i, name in enumerate(["007", "008"], start=1)
+        ]
+    )
+    starfile.write({"global": tomograms}, tmp_path / "tomograms.star")
+    picked = starfile.read(data_root / "particles.star")["particles"].iloc[:3]
+
+    class Pick:
+        def __init__(self, run_name):
+            self.run = type("Run", (), {"name": run_name})
+
+        def df(self, format):
+            return picked.drop(columns=["rlnTomoName", "rlnOpticsGroup"])
+
+    monkeypatch.setattr(copick_generate, "get_copick_picks", lambda *args: [Pick("007"), Pick("008")])
+
+    output_dir = tmp_path / "output"
+    parse_extract_copick_local_subtomograms(
+        box_size=64,
+        output_dir=output_dir,
+        copick_config=None,
+        copick_name="particle",
+        copick_session_id="0",
+        copick_user_id="user",
+        copick_run_names=["007", "008"],
+        tiltseries_relative_dir=data_root,
+        tomograms_starfile=tmp_path / "tomograms.star",
+        overwrite=True,  # the flow writes particles.star into output_dir before extracting into it
+    )
+
+    particles = starfile.read(output_dir / "particles.star", parse_as_string=["rlnTomoName", "rlnTomoParticleName"])
+    assert particles["particles"]["rlnTomoParticleName"].tolist() == [
+        f"{t}/{i}" for t in ["007", "008"] for i in (1, 2, 3)
+    ]
+    relion_dir = data_root / "Extract/relion_output_baseline/Subtomograms/session1_TS_1"
+    for tomo_name in ["007", "008"]:
+        for i in (1, 2, 3):
+            assert mrc_equal(
+                relion_dir / f"{i}_stack2d.mrcs",
+                output_dir / f"Subtomograms/{tomo_name}/{i}_stack2d.mrcs",
+                tol=DATASET_CONFIGS["synthetic"]["tol"],
+            )
