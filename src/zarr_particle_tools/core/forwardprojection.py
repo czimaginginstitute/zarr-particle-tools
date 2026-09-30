@@ -9,7 +9,6 @@ import pandas as pd
 from cryoet_alignment.io.aretomo3 import AreTomo3ALN
 
 from zarr_particle_tools.core.data import DataReader
-from zarr_particle_tools.core.helpers import particle_id_from_name
 
 
 def in_plane_rotation_to_tilt_axis_rotation(rotation_matrix: list[list[float]]) -> float:
@@ -176,7 +175,7 @@ def get_particles_to_tiltseries_coordinates(
     tiltseries_df: pd.DataFrame,
     projection_matrices: list[np.ndarray],
     use_tomo_particle_name_for_id: bool = True,
-) -> dict[int, dict[int, tuple[np.ndarray, np.ndarray]]]:
+) -> dict[int | str, dict[int, tuple[np.ndarray, np.ndarray]]]:
     """
     Maps particle indices to their 2D coordinates in each of the tilts (projected from their 3D coordinates via the projection matrices).
     The output is a dictionary where the keys are particle indices and the values are another dictionary with tilt section indices as keys and tuples of (3D coordinate, projected 2D coordinate) as values.
@@ -197,7 +196,7 @@ def get_particles_to_tiltseries_coordinates(
                 ]
             )
             particle_id = (
-                particle_id_from_name(particle.rlnTomoParticleName)
+                particle.rlnTomoParticleName
                 if "rlnTomoParticleName" in filtered_particles_df.columns and use_tomo_particle_name_for_id
                 else default_particle_id
             )
