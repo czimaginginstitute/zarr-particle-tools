@@ -42,7 +42,13 @@ from zarr_particle_tools.core.forwardprojection import (
     calculate_projection_matrix_from_starfile_df,
     get_particles_to_tiltseries_coordinates,
 )
-from zarr_particle_tools.core.helpers import auto_worker_count, get_tiltseries_data, setup_logging
+from zarr_particle_tools.core.helpers import (
+    STAR_NAME_COLUMNS,
+    auto_worker_count,
+    get_tiltseries_data,
+    read_tomograms_starfile,
+    setup_logging,
+)
 from zarr_particle_tools.core.mask import spherical_soft_mask
 from zarr_particle_tools.core.symmetry import (
     get_transforms_from_symmetry,
@@ -429,16 +435,11 @@ def reconstruct(
     if not crop_size:
         crop_size = box_size
 
-    particles_metadata = starfile.read(particles_starfile)
+    particles_metadata = starfile.read(particles_starfile, parse_as_string=STAR_NAME_COLUMNS)
     particles_df = apply_offsets_to_coordinates(particles_metadata["particles"])
     optics_df = particles_metadata["optics"]
     trajectories_dict = starfile.read(trajectories_starfile) if trajectories_starfile else None
-    tomograms_data = starfile.read(tomograms_starfile)
-    tomograms_df = tomograms_data["global"] if isinstance(tomograms_data, dict) else tomograms_data
-    if "rlnTomoTiltSeriesStarFile" not in tomograms_df.columns:
-        raise ValueError(
-            f"Tomograms star file {tomograms_starfile} does not contain the required column 'rlnTomoTiltSeriesStarFile'. Please check the file."
-        )
+    tomograms_data, tomograms_df = read_tomograms_starfile(tomograms_starfile)
     if not tiltseries_relative_dir:
         tiltseries_relative_dir = Path("./")
 

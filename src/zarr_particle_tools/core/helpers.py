@@ -199,6 +199,24 @@ def validate_and_setup(
     )
 
 
+# names are opaque strings in RELION; starfile would otherwise parse e.g. "007" as 7
+STAR_NAME_COLUMNS = ["rlnTomoName", "rlnTomoParticleName", "rlnOpticsGroupName"]
+
+
+def read_tomograms_starfile(tomograms_starfile: Path) -> tuple[dict | pd.DataFrame, pd.DataFrame]:
+    """Reads a tomograms star file, returning its raw contents and its global table."""
+    tomograms_data = starfile.read(tomograms_starfile, parse_as_string=STAR_NAME_COLUMNS)
+    tomograms_df = tomograms_data["global"] if isinstance(tomograms_data, dict) else tomograms_data
+    if "rlnTomoTiltSeriesStarFile" not in tomograms_df.columns:
+        raise ValueError(
+            f"Tomograms star file {tomograms_starfile} does not contain the required column 'rlnTomoTiltSeriesStarFile'. Please check the file."
+        )
+    duplicated = sorted(set(tomograms_df.loc[tomograms_df["rlnTomoName"].duplicated(), "rlnTomoName"]))
+    if duplicated:
+        raise ValueError(f"Tomograms listed more than once in {tomograms_starfile}: {', '.join(duplicated)}")
+    return tomograms_data, tomograms_df
+
+
 def get_tiltseries_data(
     particles_df: pd.DataFrame,
     optics_df: pd.DataFrame,

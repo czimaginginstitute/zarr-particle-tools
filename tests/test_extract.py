@@ -8,6 +8,7 @@ from click.testing import CliRunner
 
 import zarr_particle_tools.generate.copick_generate_starfiles as copick_generate
 from tests.helpers.compare import mrc_equal
+from zarr_particle_tools.core.helpers import STAR_NAME_COLUMNS
 from zarr_particle_tools.subtomo_extract import (
     cli,
     extract_subtomograms,
@@ -272,10 +273,11 @@ def test_extract_arbitrary_particle_names(tmp_path):
 
 def test_extract_keeps_numeric_names(tmp_path):
     data_root = DATASET_CONFIGS["synthetic"]["data_root"]
-    tomograms = starfile.read(data_root / "tomograms.star").assign(rlnTomoName="007")
+    tomograms = starfile.read(data_root / "tomograms.star").assign(rlnTomoName="007", rlnOpticsGroupName="007")
     starfile.write({"global": tomograms}, tmp_path / "tomograms.star")
     particles_data = starfile.read(data_root / "particles.star")
     names = [f"{i:03d}" for i in range(1, len(particles_data["particles"]) + 1)]
+    particles_data["optics"] = particles_data["optics"].assign(rlnOpticsGroupName="007")
     particles_data["particles"] = particles_data["particles"].assign(rlnTomoName="007", rlnTomoParticleName=names)
     starfile.write(particles_data, tmp_path / "particles.star")
 
@@ -288,9 +290,9 @@ def test_extract_keeps_numeric_names(tmp_path):
         tomograms_starfile=tmp_path / "tomograms.star",
     )
 
-    particles = starfile.read(output_dir / "particles.star", parse_as_string=["rlnTomoName", "rlnTomoParticleName"])[
-        "particles"
-    ]
+    output = starfile.read(output_dir / "particles.star", parse_as_string=STAR_NAME_COLUMNS)
+    assert output["optics"]["rlnOpticsGroupName"].eq("007").all()
+    particles = output["particles"]
     assert particles["rlnTomoName"].eq("007").all()
     assert particles["rlnTomoParticleName"].tolist() == names
     assert (output_dir / "Subtomograms/007/001_stack2d.mrcs").exists()
@@ -314,8 +316,8 @@ def test_extract_unnamed_particles_with_trajectories(tmp_path):
         output_dir=output_dir,
         particles_starfile=data_root / "particles.star",
         tiltseries_relative_dir=data_root,
-        tomograms_starfile=data_root / "tomograms.star",
-        trajectories_starfile=tmp_path / "motion.star",
+        tomograms_starfile=str(data_root / "tomograms.star"),
+        trajectories_starfile=str(tmp_path / "motion.star"),
     )
 
     relion_dir = data_root / "Extract/relion_output_baseline/Subtomograms/session1_TS_1"
@@ -359,7 +361,7 @@ def test_extract_warns_about_undefined_tomograms(tmp_path, caplog):
     particles_data["particles"]["rlnTomoName"] = "unlisted"
     starfile.write(particles_data, tmp_path / "particles.star")
 
-    with pytest.raises(ValueError, match="No particles were extracted"):
+    with pytest.raises(ValueError, match="No particles found that belong to any of the defined tomograms"):
         extract_subtomograms(
             box_size=64,
             output_dir=tmp_path / "output",
@@ -403,7 +405,6 @@ def test_extract_copick_local_keeps_zero_padded_names(tmp_path, monkeypatch):
         copick_run_names=["007", "008"],
         tiltseries_relative_dir=data_root,
         tomograms_starfile=tmp_path / "tomograms.star",
-        overwrite=True,  # the flow writes particles.star into output_dir before extracting into it
     )
 
     particles = starfile.read(output_dir / "particles.star", parse_as_string=["rlnTomoName", "rlnTomoParticleName"])
@@ -418,3 +419,19 @@ def test_extract_copick_local_keeps_zero_padded_names(tmp_path, monkeypatch):
                 output_dir / f"Subtomograms/{tomo_name}/{i}_stack2d.mrcs",
                 tol=DATASET_CONFIGS["synthetic"]["tol"],
             )
+
+
+def test_extract_rejects_duplicate_tomograms(tmp_path):
+    data_root = DATASET_CONFIGS["synthetic"]["data_root"]
+    tomograms = starfile.read(data_root / "tomograms.star")
+    starfile.write({"global": pd.concat([tomograms, tomograms])}, tmp_path / "tomograms.star")
+
+    with pytest.raises(ValueError, match="listed more than once.*session1_TS_1"):
+        extract_subtomograms(
+            box_size=64,
+            output_dir=tmp_path / "output",
+            particles_starfile=data_root / "particles.star",
+            tiltseries_relative_dir=data_root,
+            tomograms_starfile=tmp_path / "tomograms.star",
+        )
+    assert not (tmp_path / "output" / "Subtomograms").exists()
