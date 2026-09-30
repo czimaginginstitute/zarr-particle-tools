@@ -5,7 +5,7 @@ Writes, into ``--output-dir``:
 
 - ``tomograms.star``: one row per run, ``rlnTomoName`` = the portal run id (the run name of a portal-backed copick
   project), ``rlnTomoSizeX/Y/Z`` in unbinned tilt-series pixels (RELION's unit), ``tomoTiltSeriesURI`` = the tilt
-  series' OME-Zarr on S3.
+  series' OME-Zarr on S3, and one optics group per dataset (``dataset_<id>``), never one per tomogram.
 - ``tiltseries/<run id>.star``: per-tilt CTF, projection geometry and pre-exposure. ``rlnMicrographName`` is
   ``N@.../tiltseries_placeholder.mrcs`` where ``N`` is the **source** section (``z_index + 1``), so a section the
   alignment excluded leaves a gap rather than renumbering the rest.
@@ -45,7 +45,7 @@ from zarr_particle_tools.core.constants import (
     TILTSERIES_URI_RELION_COLUMN,
     TOMO_HAND_DEFAULT_VALUE,
 )
-from zarr_particle_tools.core.helpers import get_optics_group_name, setup_logging
+from zarr_particle_tools.core.helpers import setup_logging
 from zarr_particle_tools.generate.cdp_generate_starfiles import per_section_alignment_df, per_section_ctf_df
 
 logger = logging.getLogger(__name__)
@@ -146,7 +146,7 @@ def build(
                 "rlnAmplitudeContrast": amplitude_contrast,
                 "rlnMicrographOriginalPixelSize": run.tiltseries_pixel_size,
                 "rlnTomoHand": hand,
-                "rlnOpticsGroupName": get_optics_group_name(run.run_id, run.tiltseries_id),
+                "rlnOpticsGroupName": None,  # one per dataset, assigned below
                 "rlnTomoTiltSeriesPixelSize": run.tiltseries_pixel_size,
                 "rlnTomoTiltSeriesStarFile": _project_relative(output_dir / "tiltseries" / f"{run.tomo_name}.star"),
                 "rlnTomoSizeX": size_x,
@@ -157,8 +157,36 @@ def build(
             }
         )
     tomograms = pd.DataFrame(globals_rows)
-    tomograms.insert(0, "rlnOpticsGroup", range(1, len(tomograms) + 1))
+    names = optics_group_names(selection.runs, amplitude_contrast)
+    tomograms["rlnOpticsGroupName"] = [names[run.run_id] for run in selection.runs]
+    numbers = {name: i for i, name in enumerate(dict.fromkeys(tomograms["rlnOpticsGroupName"]), start=1)}
+    tomograms.insert(0, "rlnOpticsGroup", [numbers[n] for n in tomograms["rlnOpticsGroupName"]])
     return tomograms, per_tilt
+
+
+def optics_group_names(runs: list[portal_selection.RunSelection], amplitude_contrast: float) -> dict[int, str]:
+    """One optics group per dataset: ``run_id -> rlnOpticsGroupName``.
+
+    A dataset is one acquisition, and its runs share their optics; one group lets RELION estimate one noise model
+    over all of them instead of one per tomogram from a few particles each. A dataset whose runs do *not* share
+    voltage, spherical aberration and tilt-series pixel size cannot be one optics group; it is split by those
+    values (``dataset_<id>_optics<k>``) and the split is logged.
+    """
+    by_dataset: dict[int, dict[tuple, list[int]]] = {}
+    for run in runs:
+        optics = (run.voltage_kv, run.spherical_aberration_mm, amplitude_contrast, run.tiltseries_pixel_size)
+        by_dataset.setdefault(run.dataset_id, {}).setdefault(optics, []).append(run.run_id)
+    names: dict[int, str] = {}
+    for dataset_id, groups in by_dataset.items():
+        if len(groups) > 1:
+            logger.warning(
+                f"dataset {dataset_id}: runs differ in optics (voltage, Cs, Q0, tilt pixel), so it is imported as "
+                f"{len(groups)} optics groups: {sorted(groups)}"
+            )
+        for k, run_ids in enumerate(groups.values(), start=1):
+            name = f"dataset_{dataset_id}" if len(groups) == 1 else f"dataset_{dataset_id}_optics{k}"
+            names.update(dict.fromkeys(run_ids, name))
+    return names
 
 
 def _write_placeholder(path: Path, selection: portal_selection.Selection) -> None:
