@@ -31,7 +31,7 @@ import zarr_particle_tools.generate.cdp_cache as cdp_cache
 import zarr_particle_tools.generate.cdp_generate_starfiles as cdp_generate
 import zarr_particle_tools.generate.copick_generate_starfiles as copick_generate
 from zarr_particle_tools.core.constants import OPTICS_DF_COLUMNS, THREAD_POOL_WORKER_COUNT
-from zarr_particle_tools.core.helpers import STAR_NAME_COLUMNS, setup_logging
+from zarr_particle_tools.core.helpers import STAR_NAME_COLUMNS, check_unique_tomograms, setup_logging
 
 logger = logging.getLogger(__name__)
 
@@ -338,6 +338,8 @@ def read_tomograms_df(tomograms_star: Path):
         df = df["global"]
     if df is None or len(df.columns) == 0:
         raise click.ClickException(f"{tomograms_star} has no tabular data.")
+    if "rlnTomoName" in df.columns:
+        check_unique_tomograms(df, tomograms_star)
     return df
 
 

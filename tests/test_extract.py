@@ -1,6 +1,9 @@
 import shutil
+import subprocess
 from pathlib import Path
 
+import mrcfile
+import numpy as np
 import pandas as pd
 import pytest
 import starfile
@@ -435,3 +438,82 @@ def test_extract_rejects_duplicate_tomograms(tmp_path):
             tomograms_starfile=tmp_path / "tomograms.star",
         )
     assert not (tmp_path / "output" / "Subtomograms").exists()
+
+
+def _write_trajectories(path, particle_names, shifts):
+    """motion.star: one block per particle with a per-tilt rlnOrigin{X,Y,Z}Angst shift."""
+    columns = ["rlnOriginXAngst", "rlnOriginYAngst", "rlnOriginZAngst"]
+    blocks = {name: pd.DataFrame(shift, columns=columns) for name, shift in zip(particle_names, shifts, strict=True)}
+    starfile.write({"general": {"rlnParticleNumber": len(blocks)}, **blocks}, path)
+
+
+def test_extract_applies_trajectories(tmp_path):
+    # without CTF, shifting every tilt by d is the same as moving the particle by d
+    data_root = DATASET_CONFIGS["synthetic"]["data_root"]
+    particles_data = starfile.read(data_root / "particles.star")
+    particles = particles_data["particles"]
+    names = [f"session1_TS_1/{i}" for i in range(1, len(particles) + 1)]
+    n_tilts = len(starfile.read(data_root / "tiltseries/TS_1.star"))
+    shift = np.array([12.0, -7.5, 4.0])
+    _write_trajectories(tmp_path / "motion.star", names, [np.tile(shift, (n_tilts, 1))] * len(names))
+    moved = particles_data | {
+        "particles": particles.assign(
+            rlnCenteredCoordinateXAngst=particles["rlnCenteredCoordinateXAngst"] + shift[0],
+            rlnCenteredCoordinateYAngst=particles["rlnCenteredCoordinateYAngst"] + shift[1],
+            rlnCenteredCoordinateZAngst=particles["rlnCenteredCoordinateZAngst"] + shift[2],
+        )
+    }
+    starfile.write(moved, tmp_path / "moved.star")
+
+    for name, particles_starfile, trajectories_starfile in [
+        ("trajectories", data_root / "particles.star", tmp_path / "motion.star"),
+        ("moved", tmp_path / "moved.star", None),
+    ]:
+        extract_subtomograms(
+            box_size=64,
+            no_ctf=True,
+            output_dir=tmp_path / name,
+            particles_starfile=particles_starfile,
+            tiltseries_relative_dir=data_root,
+            tomograms_starfile=data_root / "tomograms.star",
+            trajectories_starfile=trajectories_starfile,
+        )
+    for i in range(1, len(particles) + 1):
+        np.testing.assert_allclose(
+            mrcfile.read(tmp_path / f"trajectories/Subtomograms/session1_TS_1/{i}_stack2d.mrcs"),
+            mrcfile.read(tmp_path / f"moved/Subtomograms/session1_TS_1/{i}_stack2d.mrcs"),
+            atol=1e-5,
+        )
+
+
+@pytest.mark.skipif(shutil.which("relion_tomo_subtomo") is None, reason="relion_tomo_subtomo not on PATH")
+def test_extract_with_trajectories_matches_relion(tmp_path):
+    # per-tilt trajectories, extracted by RELION and by us from the same inputs
+    data_root = DATASET_CONFIGS["synthetic"]["data_root"]
+    (tmp_path / "tiltseries").symlink_to((data_root / "tiltseries").resolve())
+    shutil.copy(data_root / "tomograms.star", tmp_path)
+    particles_data = starfile.read(data_root / "particles.star")
+    names = [f"session1_TS_1/{i}" for i in range(1, len(particles_data["particles"]) + 1)]
+    particles_data["particles"]["rlnTomoParticleName"] = names
+    starfile.write(particles_data, tmp_path / "particles.star")
+    n_tilts = len(starfile.read(data_root / "tiltseries/TS_1.star"))
+    rng = np.random.default_rng(0)
+    _write_trajectories(tmp_path / "motion.star", names, rng.uniform(-8, 8, (len(names), n_tilts, 3)))
+
+    relion_args = ["--p", "particles.star", "--t", "tomograms.star", "--mot", "motion.star", "--o", "relion/"]
+    relion_args += ["--b", "64", "--crop", "64", "--bin", "1", "--stack2d", "--j", "4"]
+    subprocess.run(["relion_tomo_subtomo", *relion_args], cwd=tmp_path, check=True, capture_output=True)
+    extract_subtomograms(
+        box_size=64,
+        output_dir=tmp_path / "ours",
+        particles_starfile=tmp_path / "particles.star",
+        tiltseries_relative_dir=tmp_path,
+        tomograms_starfile=tmp_path / "tomograms.star",
+        trajectories_starfile=tmp_path / "motion.star",
+    )
+
+    for i in range(1, len(names) + 1):
+        stack = f"Subtomograms/session1_TS_1/{i}_stack2d.mrcs"
+        assert mrc_equal(
+            tmp_path / "relion" / stack, tmp_path / "ours" / stack, tol=DATASET_CONFIGS["synthetic"]["tol"]
+        )
