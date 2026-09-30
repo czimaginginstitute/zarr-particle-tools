@@ -216,3 +216,30 @@ def test_reconstruct_half_maps_selfconsistency(tmp_path):
         assert mrc_headers_match(output_dir / "merged.mrc", path)
 
     assert not np.allclose(_read_mrc(output_dir / "half1.mrc"), _read_mrc(output_dir / "half2.mrc"))
+
+
+def test_reconstruct_keeps_zero_padded_names(tmp_path):
+    # tilt series embedded in tomograms.star are keyed by rlnTomoName, so "007" must not be read as 7
+    data_root = DATASET_CONFIGS["synthetic"]["data_root"]
+    tomograms = starfile.read(data_root / "tomograms.star").assign(rlnTomoName="007", rlnOpticsGroupName="007")
+    tiltseries = starfile.read(data_root / "tiltseries/TS_1.star")
+    starfile.write({"global": tomograms, "007": tiltseries}, tmp_path / "tomograms.star")
+    particles_data = starfile.read(data_root / "particles.star")
+    n_particles = len(particles_data["particles"])
+    particles_data["optics"] = particles_data["optics"].assign(rlnOpticsGroupName="007")
+    particles_data["particles"] = particles_data["particles"].assign(
+        rlnTomoName="007", rlnTomoParticleName=[f"{i:03d}" for i in range(1, n_particles + 1)]
+    )
+    starfile.write(particles_data, tmp_path / "particles.star")
+
+    output_dir = tmp_path / "output"
+    reconstruct_local(
+        box_size=64,
+        output_dir=output_dir,
+        particles_starfile=tmp_path / "particles.star",
+        tiltseries_relative_dir=data_root,
+        tomograms_starfile=tmp_path / "tomograms.star",
+    )
+
+    relion_dir = data_root / "Reconstruct/relion_output_baseline"
+    assert mrc_close_unmasked(relion_dir / "merged.mrc", output_dir / "merged.mrc", ulp_factor=DEFAULT_ULP_FACTOR)

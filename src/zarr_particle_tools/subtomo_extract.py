@@ -32,7 +32,14 @@ from zarr_particle_tools.core.forwardprojection import (
     get_particle_crop_and_visibility,
     get_particles_to_tiltseries_coordinates,
 )
-from zarr_particle_tools.core.helpers import auto_worker_count, get_tiltseries_data, setup_logging, validate_and_setup
+from zarr_particle_tools.core.helpers import (
+    STAR_NAME_COLUMNS,
+    auto_worker_count,
+    get_tiltseries_data,
+    read_tomograms_starfile,
+    setup_logging,
+    validate_and_setup,
+)
 from zarr_particle_tools.core.mask import circular_mask, circular_soft_mask
 from zarr_particle_tools.generate.copick_generate_starfiles import (
     copick_picks_to_starfile,
@@ -49,15 +56,15 @@ EDGE_FALLOFF = 5.0
 
 def subtomogram_path(output_dir: Path, tomo_name: str, particle_name: str) -> Path:
     """Matches RELION's SubtomoProgram::getOutputFilename."""
-    particle_name = str(particle_name)
     if "/" not in particle_name:
         particle_name = f"{tomo_name}/{particle_name}"
-    return output_dir / "Subtomograms" / f"{particle_name}_stack2d.mrcs"
+    # RELION concatenates strings, so a leading slash stays under Subtomograms/ (like RELION, ".." is not guarded)
+    return output_dir / "Subtomograms" / f"{particle_name.lstrip('/')}_stack2d.mrcs"
 
 
 def update_particles_df(
     particles_df: pd.DataFrame,
-    image_paths: dict,
+    image_paths: dict[str, Path],
     all_visible_sections_relion_column: list,
     skipped_particles: set,
     offsets_applied: bool = True,
@@ -118,11 +125,6 @@ def process_tiltseries(
     pre_bin_crop_size = crop_size * bin
 
     particles_tomo_name = tiltseries_row_entry["rlnTomoName"]
-    if "rlnTomoParticleName" not in filtered_particles_df.columns:
-        # RELION names unnamed particles <rlnTomoName>/<1-based index within the tomogram>
-        filtered_particles_df = filtered_particles_df.assign(
-            rlnTomoParticleName=[f"{particles_tomo_name}/{i}" for i in range(1, len(filtered_particles_df) + 1)]
-        )
     image_paths = {
         name: subtomogram_path(output_dir, particles_tomo_name, name)
         for name in filtered_particles_df["rlnTomoParticleName"]
@@ -409,20 +411,45 @@ def extract_subtomograms(
     """
     if crop_size is None:
         crop_size = box_size
+    output_dir = Path(output_dir)
+    tomograms_starfile = Path(tomograms_starfile)
+    trajectories_starfile = trajectories_starfile and Path(trajectories_starfile)
 
     logger.debug(f"Starting subtomogram extraction, reading file {particles_starfile} and {tomograms_starfile}")
-    particles_data = starfile.read(particles_starfile)
+    particles_data = starfile.read(particles_starfile, parse_as_string=STAR_NAME_COLUMNS)
     particles_df = particles_data["particles"]
+    if "rlnTomoParticleName" not in particles_df.columns:
+        # RELION names unnamed particles <rlnTomoName>/<1-based index within the tomogram>
+        index_in_tomo = particles_df.groupby("rlnTomoName", sort=False).cumcount() + 1
+        particles_df["rlnTomoParticleName"] = particles_df["rlnTomoName"] + "/" + index_in_tomo.astype(str)
+    tomograms_data, tomograms_df = read_tomograms_starfile(tomograms_starfile)
+    # like RELION's ParticleSet::splitByTomogram, particles of tomograms missing from tomograms.star are not extracted
+    in_tomograms = particles_df["rlnTomoName"].isin(tomograms_df["rlnTomoName"])
+    if not in_tomograms.all():
+        undefined = ", ".join(sorted(set(particles_df.loc[~in_tomograms, "rlnTomoName"])))
+        logger.warning(f"Particles were found belonging to the following undefined tomograms: {undefined}")
+    if not in_tomograms.any():
+        raise ValueError(
+            "No particles found that belong to any of the defined tomograms. "
+            "Please compare the tomogram names in the particle file to those in the tomogram file."
+        )
+    extracted_df = particles_df[in_tomograms]
+    output_paths = pd.Series(
+        [
+            subtomogram_path(output_dir, tomo_name, name)
+            for tomo_name, name in zip(extracted_df["rlnTomoName"], extracted_df["rlnTomoParticleName"], strict=True)
+        ]
+    )
+    if output_paths.duplicated().any():
+        clashes = sorted({str(path) for path in output_paths[output_paths.duplicated()]})
+        raise ValueError(
+            f"{len(clashes)} subtomogram file(s) would be written by more than one particle, e.g. {clashes[0]}. "
+            "Make rlnTomoParticleName unique across the particles star file."
+        )
     if not dont_apply_offsets:
         particles_df = apply_offsets_to_coordinates(particles_df)
     optics_df = particles_data["optics"]
     trajectories_dict = starfile.read(trajectories_starfile) if trajectories_starfile else None
-    tomograms_data = starfile.read(tomograms_starfile)
-    tomograms_df = tomograms_data["global"] if isinstance(tomograms_data, dict) else tomograms_data
-    if "rlnTomoTiltSeriesStarFile" not in tomograms_df.columns:
-        raise ValueError(
-            f"Tomograms star file {tomograms_starfile} does not contain the required column 'rlnTomoTiltSeriesStarFile'. Please check the file."
-        )
     if not tiltseries_relative_dir:
         tiltseries_relative_dir = Path("./")
 
@@ -524,7 +551,6 @@ def parse_extract_local_subtomograms(
     optimisation_set_starfile: Path = None,
     overwrite: bool = False,
     debug: bool = False,
-    no_logging: bool = False,
 ) -> tuple[Path, Path, Path, Path, Path]:
     """
     Extracts subtomograms from local files using the provided parameters.
@@ -572,10 +598,9 @@ def parse_extract_local_subtomograms(
         debug=debug,
     )
     end_time = time.time()
-    if not no_logging:
-        logger.info(
-            f"Subtomogram extraction completed in {end_time - start_time:.2f} seconds. Extracted {particles_count} particles from {individual_tiltseries_count} tiltseries, skipped {total_skipped_count} particles due to out-of-bounds coordinates. Wrote to {output_dir}."
-        )
+    logger.info(
+        f"Subtomogram extraction completed in {end_time - start_time:.2f} seconds. Extracted {particles_count} particles from {individual_tiltseries_count} tiltseries, skipped {total_skipped_count} particles due to out-of-bounds coordinates. Wrote to {output_dir}."
+    )
 
     return (
         output_dir / "particles.star",
@@ -608,6 +633,7 @@ def parse_extract_copick_local_subtomograms(
     tomograms_starfile: Path = None,
     overwrite: bool = False,
     dry_run: bool = False,
+    debug: bool = False,
 ) -> tuple[Path, Path, Path, Path, Path]:
     """
     Extracts subtomograms from local files using copick picks and the provided parameters.
@@ -630,9 +656,7 @@ def parse_extract_copick_local_subtomograms(
         picks = get_copick_picks(copick_config, copick_name, copick_session_id, copick_user_id, copick_run_names)
         copick_run_names = [p.run.name for p in picks]
 
-    tomograms_df = starfile.read(tomograms_starfile)
-    if isinstance(tomograms_df, dict):
-        tomograms_df = tomograms_df["global"]
+    _, tomograms_df = read_tomograms_starfile(tomograms_starfile)
     optics_df = tomograms_df[OPTICS_DF_COLUMNS].drop_duplicates().reset_index(drop=True)
 
     # add copick particles to particles.star file
@@ -653,32 +677,29 @@ def parse_extract_copick_local_subtomograms(
         logger.info("Dry run enabled, skipping subtomogram extraction.")
         return
 
-    parse_extract_local_subtomograms(
+    # output_dir was validated above and now holds particles.star, so extract directly rather than re-validating
+    particles_count, total_skipped_count, individual_tiltseries_count = extract_subtomograms(
         box_size=box_size,
+        crop_size=crop_size,
         bin=bin,
         float16=float16,
         no_ctf=no_ctf,
         circle_precrop=circle_precrop,
         no_circle_crop=no_circle_crop,
-        dont_apply_offsets=dont_apply_offsets,
         no_ic=no_ic,
         normalize_bin=normalize_bin,
         write_fourier=write_fourier,
+        dont_apply_offsets=dont_apply_offsets,
         output_dir=output_dir,
-        crop_size=crop_size,
         particles_starfile=particles_path,
-        trajectories_starfile=None,
         tiltseries_relative_dir=tiltseries_relative_dir,
         tomograms_starfile=tomograms_starfile,
-        optimisation_set_starfile=None,
-        overwrite=overwrite,
-        debug=False,
-        no_logging=True,
+        debug=debug,
     )
 
     end_time = time.time()
     logger.info(
-        f"Subtomogram extraction completed in {end_time - start_time:.2f} seconds. Extracted {len(particles_df)} particles from {len(tomograms_df)} tiltseries. Wrote to {output_dir}."
+        f"Subtomogram extraction completed in {end_time - start_time:.2f} seconds. Extracted {particles_count} particles from {individual_tiltseries_count} tiltseries, skipped {total_skipped_count} particles due to out-of-bounds coordinates. Wrote to {output_dir}."
     )
 
     return (

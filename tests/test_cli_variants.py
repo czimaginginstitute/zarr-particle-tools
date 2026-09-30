@@ -8,6 +8,7 @@ access, no copick project, no RELION binaries, no /dev/shm.
 """
 
 import importlib
+import inspect
 import re
 from pathlib import Path
 
@@ -21,7 +22,8 @@ import zarr_particle_tools.orchestrate as orch
 import zarr_particle_tools.subtomo_ctfrefine as ctfrefine
 import zarr_particle_tools.subtomo_extract as extract
 import zarr_particle_tools.subtomo_polish as polish
-from zarr_particle_tools.core.constants import OPTICS_DF_COLUMNS
+from zarr_particle_tools.core.constants import OPTICS_DF_COLUMNS, PARTICLES_DF_COLUMNS
+from zarr_particle_tools.core.helpers import STAR_NAME_COLUMNS
 
 # The intended source matrix. ctf-refine / polish have no copick-local (they need a *refined*
 # particles.star, and raw picks are not refined); tomograms / export are portal-only by nature.
@@ -88,6 +90,7 @@ def _write_tomograms_star(path: Path, pixel_size=1.54, n=2, tomo_names=("tomo1",
             "rlnAmplitudeContrast": [0.07] * n,
             "rlnTomoTiltSeriesPixelSize": [pixel_size] * n,
             "rlnTomoName": list(tomo_names)[:n],
+            "rlnTomoTiltSeriesStarFile": [f"tiltseries/{name}.star" for name in list(tomo_names)[:n]],
         }
     )
     starfile.write(df, path)
@@ -169,6 +172,46 @@ def test_orchestrate_local_rejects_stars_outside_output_dir(tmp_path, stub_pipel
 
     with pytest.raises(Exception, match="must be inside --output-dir"):
         orch.orchestrate_local(out, _cfg(), particles_starfile=particles, tomograms_starfile=outside)
+
+
+def test_orchestrate_copick_local_keeps_zero_padded_names(tmp_path, monkeypatch, stub_pipeline_tail):
+    # copick runs are matched to optics groups by name, and the written names must match tomograms.star
+    out = tmp_path / "run"
+    tomograms = _write_tomograms_star(out / "input" / "tomograms.star", tomo_names=("007", "008"))
+    starfile.write(
+        {
+            "global": starfile.read(tomograms, parse_as_string=STAR_NAME_COLUMNS).assign(
+                rlnOpticsGroupName=["007", "008"]
+            )
+        },
+        tomograms,
+        overwrite=True,
+    )
+    picks = pd.DataFrame({c: [1.0] for c in PARTICLES_DF_COLUMNS if c not in ("rlnTomoName", "rlnOpticsGroup")})
+
+    class Pick:
+        def __init__(self, run_name):
+            self.run = type("Run", (), {"name": run_name})
+
+        def df(self, format):
+            return picks.copy()
+
+    monkeypatch.setattr(orch.copick_generate, "get_copick_picks", lambda *args: [Pick("007"), Pick("008")])
+
+    orch.orchestrate_copick_local(
+        out,
+        _cfg(),
+        tomograms_starfile=tomograms,
+        copick_config=Path("cfg.json"),
+        copick_name="ribosome",
+        copick_session_id="1",
+        copick_user_id="octopi",
+        copick_run_names=["007", "008"],
+    )
+
+    written = starfile.read(stub_pipeline_tail["particles"], parse_as_string=STAR_NAME_COLUMNS)
+    assert written["particles"]["rlnTomoName"].tolist() == ["007", "008"]
+    assert written["optics"]["rlnOpticsGroupName"].tolist() == ["007", "008"]
 
 
 def test_orchestrate_copick_local_generates_particles(tmp_path, monkeypatch, stub_pipeline_tail):
@@ -346,7 +389,11 @@ def test_portal_variants_generate_tomograms_and_pass_it_through(module, runner_a
 
 def test_extract_copick_local_flattens_run_names_and_dispatches(tmp_path, monkeypatch):
     seen = {}
-    monkeypatch.setattr(extract, "parse_extract_copick_local_subtomograms", lambda **k: seen.update(k))
+    # bind to the real signature so a CLI option the function doesn't accept fails here
+    signature = inspect.signature(extract.parse_extract_copick_local_subtomograms)
+    monkeypatch.setattr(
+        extract, "parse_extract_copick_local_subtomograms", lambda **k: seen.update(signature.bind(**k).arguments)
+    )
     tomograms = _write_tomograms_star(tmp_path / "tomograms.star")
 
     result = CliRunner().invoke(

@@ -171,14 +171,14 @@ def calculate_projection_matrix_from_starfile_df(tiltseries_df: pd.DataFrame) ->
 # can likely be parallelized
 def get_particles_to_tiltseries_coordinates(
     filtered_particles_df: pd.DataFrame,
-    filtered_trajectories_dict: dict[int, pd.DataFrame] | None,
+    filtered_trajectories_dict: dict[str, pd.DataFrame] | None,
     tiltseries_df: pd.DataFrame,
     projection_matrices: list[np.ndarray],
     use_tomo_particle_name_for_id: bool = True,
 ) -> dict[int | str, dict[int, tuple[np.ndarray, np.ndarray]]]:
     """
-    Maps particle indices to their 2D coordinates in each of the tilts (projected from their 3D coordinates via the projection matrices).
-    The output is a dictionary where the keys are particle indices and the values are another dictionary with tilt section indices as keys and tuples of (3D coordinate, projected 2D coordinate) as values.
+    Maps particles to their 2D coordinates in each of the tilts (projected from their 3D coordinates via the projection matrices).
+    The output is a dictionary keyed by rlnTomoParticleName (or 1-based row index if use_tomo_particle_name_for_id is False); the values are another dictionary with tilt section indices as keys and tuples of (3D coordinate, projected 2D coordinate) as values.
     """
     particles_to_tiltseries_coordinates = {}
     for i, tilt in tiltseries_df.iterrows():
