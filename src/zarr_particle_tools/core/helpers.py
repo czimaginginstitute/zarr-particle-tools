@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 def _mem_budget_bytes() -> int | None:
-    """This process's memory budget: SLURM allocation, then cgroup limit, else None."""
+    """This process's memory budget: SLURM allocation, then cgroup limit, then physical RAM, else None."""
     mpn = os.environ.get("SLURM_MEM_PER_NODE")  # MB
     if mpn and mpn.isdigit():
         return int(mpn) * 1024**2
@@ -44,7 +44,10 @@ def _mem_budget_bytes() -> int | None:
                     return int(v)
     except OSError:
         pass
-    return None
+    try:  # e.g. a workstation or CI runner: no allocation, so the machine's RAM is the limit
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except (AttributeError, ValueError, OSError):
+        return None
 
 
 def auto_worker_count(cpu_cap: int, per_worker_gb: float = 10.0) -> int:
