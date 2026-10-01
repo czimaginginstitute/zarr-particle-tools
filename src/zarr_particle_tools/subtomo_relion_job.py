@@ -16,6 +16,7 @@ shared between the CTF-refine and polish jobs.
 
 import atexit
 import hashlib
+import json
 import logging
 import multiprocessing as mp
 import os
@@ -34,6 +35,7 @@ import numpy as np
 import pandas as pd
 import starfile
 
+from zarr_particle_tools import validation
 from zarr_particle_tools.core.constants import TILTSERIES_URI_RELION_COLUMN
 from zarr_particle_tools.core.data import (
     DataReader,
@@ -88,8 +90,10 @@ def _locator_shape_and_source_bytes(locator: str) -> tuple[tuple[int, ...], int]
         reader.close()
 
 
-# Track materialized shm MRCs so a graceful exit/SIGTERM cleans them (SIGKILL is uncatchable).
+# Track materialized shm MRCs and job-owned staging dirs so a graceful exit/SIGTERM cleans them (SIGKILL is
+# uncatchable).
 _ACTIVE_SHM: set = set()
+_ACTIVE_DIRS: set = set()
 
 
 def _cleanup_shm(*_):
@@ -99,6 +103,9 @@ def _cleanup_shm(*_):
         except OSError:
             pass
         _ACTIVE_SHM.discard(p)
+    for d in list(_ACTIVE_DIRS):
+        shutil.rmtree(d, ignore_errors=True)
+        _ACTIVE_DIRS.discard(d)
 
 
 atexit.register(_cleanup_shm)
@@ -224,20 +231,12 @@ def read_single_table(path: str | Path) -> pd.DataFrame:
 
 
 def resolve_optimisation_set(optimisation_set_starfile: Path) -> tuple[Path, Path, Path | None]:
-    """Return (particles, tomograms, trajectories) paths from an optimisation_set.star."""
-    opt = read_single_table(optimisation_set_starfile)
-    base = Path(optimisation_set_starfile).parent
-    row = opt.iloc[0] if isinstance(opt, pd.DataFrame) else opt
+    """Return (particles, tomograms, trajectories) paths from an optimisation_set.star.
 
-    def _resolve(val):
-        if val is None or isinstance(val, float):
-            return None
-        p = Path(str(val))
-        return p if p.is_absolute() else (base / p)
-
-    particles = _resolve(row.get("rlnTomoParticlesFile"))
-    tomograms = _resolve(row.get("rlnTomoTomogramsFile"))
-    trajectories = _resolve(row.get("rlnTomoTrajectoriesFile")) if "rlnTomoTrajectoriesFile" in row else None
+    See :func:`zarr_particle_tools.validation.read_optimisation_set`: RELION's key-value form, relative paths from
+    the working directory (the project) first, an empty entry absent.
+    """
+    particles, tomograms, trajectories = validation.read_optimisation_set(optimisation_set_starfile)
     if particles is None or tomograms is None:
         raise ValueError(f"{optimisation_set_starfile} is missing rlnTomoParticlesFile/rlnTomoTomogramsFile.")
     return particles, tomograms, trajectories
@@ -552,6 +551,29 @@ def _restore_zarr_source(output_dir: Path, global_df, src_base, tiltseries_relat
     starfile.write({"global": gdf}, str(out_tomo), overwrite=True)
 
 
+def _project_relative_outputs(output_dir: Path) -> None:
+    """Write the output optimisation set and tilt-star references relative to the project, as RELION does.
+
+    RELION runs from the staging directory, so the paths it writes are absolute; a project that is moved or copied
+    would then still point at the old location.
+    """
+    opt = output_dir / "optimisation_set.star"
+    if opt.exists():
+        entries = starfile.read(str(opt))
+        if isinstance(entries, dict) and not any(isinstance(v, pd.DataFrame) for v in entries.values()):
+            rewritten = {k: validation.project_relative(v) if str(v).strip() else v for k, v in entries.items()}
+            starfile.write(rewritten, str(opt), overwrite=True)
+    tomograms = output_dir / "tomograms.star"
+    if tomograms.exists():
+        gdf = read_single_table(tomograms)
+        if "rlnTomoTiltSeriesStarFile" in gdf.columns:
+            gdf["rlnTomoTiltSeriesStarFile"] = [
+                validation.project_relative(p) if Path(str(p)).is_absolute() else p
+                for p in gdf["rlnTomoTiltSeriesStarFile"]
+            ]
+            starfile.write({"global": gdf}, str(tomograms), overwrite=True)
+
+
 def run_relion_tomo_job(
     build_cmd: Callable,
     relion_bin: str,
@@ -572,8 +594,17 @@ def run_relion_tomo_job(
     keep_shm: bool = False,
     per_tomogram: bool = True,
     n_workers: int = 0,
+    require_ram_staging: bool = False,
+    job_type: str | None = None,
 ) -> Path:
-    """Generic driver: resolve inputs, then run per-tomogram two-phase (default) or all-at-once."""
+    """Generic driver: resolve inputs, then run per-tomogram two-phase (default) or all-at-once.
+
+    Tilt series are staged in a job-owned directory under ``shm_dir`` (removed on success, error and SIGTERM,
+    unless ``keep_shm``). With ``require_ram_staging`` the job fails before streaming unless that directory is on
+    tmpfs; otherwise a fallback to the system temp directory is allowed and recorded. ``staging_report.json`` in
+    ``output_dir`` says where staging happened and whether it was removed. ``job_type`` names the checks of
+    :func:`zarr_particle_tools.validation.check_inputs` to run on the resolved inputs first.
+    """
     start = time.time()
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -585,6 +616,11 @@ def run_relion_tomo_job(
     if particles_starfile is None or tomograms_starfile is None:
         raise ValueError("Provide either an optimisation set or both particles and tomograms star files.")
 
+    if job_type:
+        validation.raise_if(
+            job_type,
+            validation.check_inputs(job_type, particles_starfile, tomograms_starfile, trajectories_starfile),
+        )
     global_df, src_base = read_global_tomograms(Path(tomograms_starfile))
 
     # Hard-error if the particles reference no tomogram in this set (e.g. a generated tomograms.star
@@ -613,18 +649,97 @@ def run_relion_tomo_job(
         all_at_once=not two_phase,
         source_bytes=source_bytes,
     )
-    shm_dir = resolve_staging_dir(shm_dir, required_bytes=peak_stage_bytes)
+    staging_root = resolve_staging_dir(shm_dir, required_bytes=peak_stage_bytes)
+    staging_fs = _fs_type(staging_root)
+    ram_backed = staging_fs in ("tmpfs", "ramfs")
+    if require_ram_staging and (staging_root != shm_dir or not ram_backed):
+        raise RuntimeError(
+            f"RAM staging required, but {shm_dir} is unusable and the only staging directory is {staging_root} "
+            f"({staging_fs})."
+            if staging_root != shm_dir
+            else f"RAM staging required, but {shm_dir} is on {staging_fs}, not tmpfs."
+        )
     _preflight_budget(
-        shm_dir,
+        staging_root,
         stack_bytes,
         n_workers or 1,
         all_at_once=not two_phase,
         source_bytes=source_bytes,
     )
+    stage_root = staging_root / f"zpt-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    stage_root.mkdir(parents=True)
+    _ACTIVE_DIRS.add(str(stage_root))
+    report = {
+        "requested": str(shm_dir),
+        "staging_dir": str(stage_root),
+        "filesystem": staging_fs,
+        "ram_backed": ram_backed,
+        "fell_back": staging_root != shm_dir,
+        "ram_required": require_ram_staging,
+        "estimated_peak_bytes": int(peak_stage_bytes),
+        "free_bytes_at_start": int(shutil.disk_usage(staging_root).free),
+        "workers": int(n_workers or 1),
+    }
+    try:
+        _run_staged(
+            build_cmd,
+            relion_bin,
+            output_dir,
+            box_size,
+            ref1,
+            ref2,
+            opts,
+            global_df,
+            src_base,
+            particles_starfile,
+            trajectories_starfile,
+            tiltseries_relative_dir,
+            mask,
+            fsc,
+            threads,
+            stage_root,
+            keep_shm,
+            two_phase,
+            n_workers,
+        )
+    finally:
+        if not keep_shm:
+            shutil.rmtree(stage_root, ignore_errors=True)
+            _ACTIVE_DIRS.discard(str(stage_root))
+        report.update(kept=keep_shm, removed=not stage_root.exists())
+        (output_dir / "staging_report.json").write_text(json.dumps(report, indent=2) + "\n")
 
+    # make the output re-consumable by our tools (restore zarr locator, drop stale staging refs)
+    _restore_zarr_source(output_dir, global_df, src_base, tiltseries_relative_dir)
+    _project_relative_outputs(output_dir)
+    logger.info("%s finished in %.1fs. Output: %s", Path(relion_bin).name, time.time() - start, output_dir)
+    return output_dir
+
+
+def _run_staged(
+    build_cmd,
+    relion_bin,
+    output_dir,
+    box_size,
+    ref1,
+    ref2,
+    opts,
+    global_df,
+    src_base,
+    particles_starfile,
+    trajectories_starfile,
+    tiltseries_relative_dir,
+    mask,
+    fsc,
+    threads,
+    stage_root,
+    keep_shm,
+    two_phase,
+    n_workers,
+) -> None:
     common = dict(
         src_base=src_base,
-        shm_dir=shm_dir,
+        shm_dir=stage_root,
         tiltseries_relative_dir=tiltseries_relative_dir,
         box_size=box_size,
         ref1=ref1,
@@ -672,8 +787,3 @@ def run_relion_tomo_job(
             output_dir=output_dir,
             **common,
         )
-
-    # make the output re-consumable by our tools (restore zarr locator, drop stale staging refs)
-    _restore_zarr_source(output_dir, global_df, src_base, tiltseries_relative_dir)
-    logger.info("%s finished in %.1fs. Output: %s", Path(relion_bin).name, time.time() - start, output_dir)
-    return output_dir

@@ -4,6 +4,7 @@ import copy
 from collections.abc import Sequence
 
 from pipeliner.data_structure import BAYESPOLISH_DIR
+from pipeliner.job_options import BooleanJobOption, StringJobOption
 from pipeliner.jobs.tomography.relion_tomo.tomo_bayesianpolish_job import TomoRelionBayesPolishJob
 from pipeliner.nodes import (
     NODE_PARTICLEGROUPMETADATA,
@@ -13,6 +14,29 @@ from pipeliner.nodes import (
 )
 from pipeliner.pipeliner_job import ExternalProgram, PipelinerCommand, PipelinerJob
 from pipeliner.results_display_objects import ResultsDisplayObject
+
+
+def _add_staging_options(job) -> None:
+    """Where the tilt series are staged for stock RELION, and whether that must be RAM."""
+    job.joboptions["staging_dir"] = StringJobOption(
+        label="Staging directory:",
+        default_value="/dev/shm",
+        help_text="Each tilt series is streamed here as a temporary MRC for RELION, in a job-owned subdirectory "
+        "removed when the job ends.",
+    )
+    job.joboptions["do_require_ram_staging"] = BooleanJobOption(
+        label="Require RAM-backed staging?",
+        default_value=True,
+        help_text="Fail before streaming unless the staging directory is tmpfs with room for the staged stacks, "
+        "instead of falling back to the system temp directory.",
+    )
+
+
+def _staging_args(job) -> list[str]:
+    args = ["--shm-dir", job.joboptions["staging_dir"].get_string()]
+    if job.joboptions["do_require_ram_staging"].get_boolean():
+        args.append("--require-ram-staging")
+    return args
 
 
 class PythonRelionSubtomoPolishJob(PipelinerJob):
@@ -26,11 +50,14 @@ class PythonRelionSubtomoPolishJob(PipelinerJob):
         self.jobinfo.display_name = "Bayesian polishing / frame alignment (Python)."
         self.jobinfo.short_desc = "Polish tilt series stored as OME-Zarr using zarr-particle-polish and stock RELION."
         self.joboptions = copy.deepcopy(TomoRelionBayesPolishJob().joboptions)
+        _add_staging_options(self)
 
     def create_output_nodes(self):
-        self.add_output_node("motion.star", NODE_TOMOTRAJECTORYDATA, ["relion", "tomo", "polish", "python"])
+        # shift-only alignment refines tilt shifts (tomograms.star) and writes no trajectories or particles
+        if self.joboptions["do_motion"].get_boolean():
+            self.add_output_node("motion.star", NODE_TOMOTRAJECTORYDATA, ["relion", "tomo", "polish", "python"])
+            self.add_output_node("particles.star", NODE_PARTICLEGROUPMETADATA, ["relion", "tomo", "polish", "python"])
         self.add_output_node("tomograms.star", NODE_TOMOGRAMGROUPMETADATA, ["relion", "tomo", "polish", "python"])
-        self.add_output_node("particles.star", NODE_PARTICLEGROUPMETADATA, ["relion", "tomo", "polish", "python"])
         self.add_output_node("optimisation_set.star", NODE_TOMOOPTIMISATIONSET, ["relion", "tomo", "polish", "python"])
 
     def get_commands(self):
@@ -82,10 +109,14 @@ class PythonRelionSubtomoPolishJob(PipelinerJob):
                 "--s-div",
                 self.joboptions["sigma_div"].get_string(),
             ]
-        else:
-            raise AssertionError("Per-particle motion and shift-only corrections cannot be applied simultaneously")
+        else:  # both or neither: refused by validation.check_options
+            from zarr_particle_tools import validation
+
+            options = {name: option.get_string() for name, option in self.joboptions.items()}
+            validation.raise_if(self.PROCESS_NAME, validation.check_options(self.PROCESS_NAME, options))
 
         cmd += ["--threads", self.joboptions["nr_threads"].get_string()]
+        cmd += _staging_args(self)
 
         return [PipelinerCommand(cmd)]
 
