@@ -262,8 +262,14 @@ zarr-particle-reconstruct local \
 ### CTF refinement and polishing
 
 - CTF refinement runs `relion_tomo_refine_ctf`; polishing runs `relion_tomo_align`.
-- Zarr tilt series are streamed into temporary MRC files for RELION to read. `/dev/shm` is used when
-  it is writable and has enough space; otherwise the system temp directory is used.
+- Zarr tilt series are streamed into temporary MRC files for RELION to read, in a job-owned directory under
+  `--shm-dir` (default `/dev/shm`) that is removed when the job ends, fails or receives SIGTERM. When
+  `--shm-dir` is unusable the system temp directory is used, unless `--require-ram-staging` is given: then the
+  job fails before streaming unless the staging directory is tmpfs with room for the staged stacks. The
+  pipeliner jobs require RAM staging by default (`do_require_ram_staging`). Every run writes
+  `staging_report.json` (directory, filesystem, estimated peak bytes, whether it was removed).
+- The output optimisation set and tilt-star references are written relative to the working directory (the
+  project), as RELION writes them.
 - Both jobs require a refined `particles.star` and reference half-maps from a prior Refine3D job.
 - There is no `copick-local` variant because raw copick picks are not refined particles.
 - `--per-tomogram` is the default and uses a staging-bounded two-phase workflow. `--all-at-once`
@@ -381,6 +387,13 @@ OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 uv run --locked pytes
 ## Known limitations
 
 If you would like to see a feature added, on or off this list, please open an issue.
+
+Every job checks its options and inputs before it starts (`zarr_particle_tools.validation.check`, also usable
+by a planner before submission) and refuses, naming the option or column and file, rather than ignoring what it
+cannot honour: the extraction options below, and in the input stars nonzero subtomogram orientations, non-zero
+Zernike coefficients, a non-identity magnification matrix or 2D deformations (for extraction and
+reconstruction), and tilt series with no readable pixels (for every job). Particle reconstruction writes the
+maps only, like RELION's; the internal extraction it runs is removed with its star files.
 
 ### Extraction and reconstruction
 

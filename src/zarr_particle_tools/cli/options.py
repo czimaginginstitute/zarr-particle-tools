@@ -391,6 +391,12 @@ def ctfrefine_options():
             help="Preferred staging dir for tilt-series MRCs; falls back to the system temp dir.",
         ),
         click.option(
+            "--require-ram-staging",
+            is_flag=True,
+            help="Stage only on RAM-backed storage (tmpfs) under --shm-dir: fail before streaming instead of "
+            "falling back to the system temp dir.",
+        ),
+        click.option(
             "--per-tomogram/--all-at-once",
             default=True,
             show_default=True,
@@ -484,6 +490,12 @@ def polish_options():
             default=Path("/dev/shm"),
             show_default=True,
             help="Preferred staging dir for tilt-series MRCs; falls back to the system temp dir.",
+        ),
+        click.option(
+            "--require-ram-staging",
+            is_flag=True,
+            help="Stage only on RAM-backed storage (tmpfs) under --shm-dir: fail before streaming instead of "
+            "falling back to the system temp dir.",
         ),
         click.option(
             "--per-tomogram/--all-at-once",

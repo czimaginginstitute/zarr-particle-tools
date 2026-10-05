@@ -13,6 +13,14 @@ from pipeliner.pipeliner_job import ExternalProgram, PipelinerCommand, Pipeliner
 from pipeliner.results_display_objects import ResultsDisplayObject
 
 
+def _check_options(job) -> None:
+    """Refuse options the program does not implement (see zarr_particle_tools.validation)."""
+    from zarr_particle_tools import validation  # lazily: this module loads wherever pipeliner lists job types
+
+    options = {name: option.get_string() for name, option in job.joboptions.items()}
+    validation.raise_if(job.PROCESS_NAME, validation.check_options(job.PROCESS_NAME, options))
+
+
 class PythonRelionPseudoSubtomoJob(PipelinerJob):
     PROCESS_NAME = "zarrparticletools.pseudosubtomo"
     OUT_DIR = TOMO_SUBTOMO_DIR
@@ -32,6 +40,7 @@ class PythonRelionPseudoSubtomoJob(PipelinerJob):
         self.add_output_node("optimisation_set.star", NODE_TOMOOPTIMISATIONSET, ["relion", "tomo", "extract", "python"])
 
     def get_commands(self):
+        _check_options(self)
         command = ["zarr-particle-extract", "local", "--overwrite"]
 
         optimisation_starfile = self.joboptions["in_optimisation"].get_string()
@@ -50,22 +59,8 @@ class PythonRelionPseudoSubtomoJob(PipelinerJob):
         if crop_size != "-1":
             command.extend(["--crop-size", crop_size])
 
-        max_dose = float(self.joboptions["max_dose"].get_string())
-        if max_dose > 0.0:
-            raise NotImplementedError("Max dose handling not implemented in the Python implementation")
-        if self.joboptions["min_nr_frames"].get_string() != "1":
-            raise NotImplementedError("Min frames handling not implemented in the Python implementation")
-
         if self.joboptions["do_float16"].get_boolean():
             command.extend(["--float16"])
-
-        if not self.joboptions["do_output_2dstacks"].get_boolean():
-            raise NotImplementedError("3D subtomogram extraction not implemented in the Python implementation")
-
-        if self.joboptions["do_extract_reproject"].get_boolean():
-            raise NotImplementedError(
-                "Reprojected 2D (real subtomogram) extraction not implemented in the Python implementation"
-            )
 
         return [PipelinerCommand(command)]
 

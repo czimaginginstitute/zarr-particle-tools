@@ -25,6 +25,7 @@ import starfile
 from rich.progress import Progress
 
 import zarr_particle_tools.cli.options as cli_options
+from zarr_particle_tools import validation
 from zarr_particle_tools.core.backprojection import (
     backproject_slice_backward,
     ctf_correct_3d_heuristic,
@@ -46,6 +47,7 @@ from zarr_particle_tools.core.helpers import (
     STAR_NAME_COLUMNS,
     auto_worker_count,
     get_tiltseries_data,
+    particles_and_optics,
     read_tomograms_starfile,
     setup_logging,
 )
@@ -436,10 +438,11 @@ def reconstruct(
         crop_size = box_size
 
     particles_metadata = starfile.read(particles_starfile, parse_as_string=STAR_NAME_COLUMNS)
-    particles_df = apply_offsets_to_coordinates(particles_metadata["particles"])
-    optics_df = particles_metadata["optics"]
     trajectories_dict = starfile.read(trajectories_starfile) if trajectories_starfile else None
     tomograms_data, tomograms_df = read_tomograms_starfile(tomograms_starfile)
+    # a particle STAR without optics (relion_tomo_import_coordinates) takes them from tomograms.star, as in RELION
+    particles_df, optics_df = particles_and_optics(particles_metadata, tomograms_df)
+    particles_df = apply_offsets_to_coordinates(particles_df)
     if not tiltseries_relative_dir:
         tiltseries_relative_dir = Path("./")
 
@@ -546,10 +549,14 @@ def reconstruct(
         taper=taper,
     )
 
-    # remove bulky intermediate subtomograms; keep the star files (optimisation_set.star is a pipeliner output)
+    # remove the internal extraction: its subtomograms, and the particles.star / optimisation_set.star that point at
+    # them (a consumer binding those would read deleted images with the CTF-premultiplied flag of a no-CTF
+    # extraction). Like RELION's own particle reconstruction, the job's products are the maps.
     subtomos_dir = Path(output_dir) / "Subtomograms"
     if subtomos_dir.exists() and subtomos_dir.is_dir():
         shutil.rmtree(subtomos_dir)
+    for internal in ("particles.star", "optimisation_set.star"):
+        (Path(output_dir) / internal).unlink(missing_ok=True)
 
     end_time = time.time()
     logger.info(f"Reconstructing particles took {end_time - start_time:.2f} seconds.")
@@ -599,6 +606,7 @@ def reconstruct_local(
         tomograms_starfile=tomograms_starfile,
         optimisation_set_starfile=optimisation_set_starfile,
         overwrite=overwrite,
+        job_type=validation.RECONSTRUCT,
     )
 
     reconstruct(

@@ -21,6 +21,7 @@ from scipy.ndimage import fourier_shift
 
 import zarr_particle_tools.cli.options as cli_options
 import zarr_particle_tools.generate.cdp_generate_starfiles as cdp_generate
+from zarr_particle_tools import validation
 from zarr_particle_tools.core.constants import OPTICS_DF_COLUMNS
 from zarr_particle_tools.core.ctf import calculate_ctf
 from zarr_particle_tools.core.data import get_tiltseries_datareader
@@ -36,6 +37,7 @@ from zarr_particle_tools.core.helpers import (
     STAR_NAME_COLUMNS,
     auto_worker_count,
     get_tiltseries_data,
+    particles_and_optics,
     read_tomograms_starfile,
     setup_logging,
     validate_and_setup,
@@ -373,11 +375,11 @@ def write_starfiles(
         output_dir / "particles.star",
     )
     optimisation_set_dict = {
-        "rlnTomoParticlesFile": (output_dir / "particles.star").resolve(),
-        "rlnTomoTomogramsFile": tomograms_starfile.resolve(),
+        "rlnTomoParticlesFile": validation.project_relative(output_dir / "particles.star"),
+        "rlnTomoTomogramsFile": validation.project_relative(tomograms_starfile),
     }
     if trajectories_starfile:
-        optimisation_set_dict["rlnTomoTrajectoriesFile"] = trajectories_starfile.resolve()
+        optimisation_set_dict["rlnTomoTrajectoriesFile"] = validation.project_relative(trajectories_starfile)
 
     starfile.write(optimisation_set_dict, output_dir / "optimisation_set.star")
 
@@ -417,12 +419,13 @@ def extract_subtomograms(
 
     logger.debug(f"Starting subtomogram extraction, reading file {particles_starfile} and {tomograms_starfile}")
     particles_data = starfile.read(particles_starfile, parse_as_string=STAR_NAME_COLUMNS)
-    particles_df = particles_data["particles"]
+    tomograms_data, tomograms_df = read_tomograms_starfile(tomograms_starfile)
+    # a particle STAR without optics (relion_tomo_import_coordinates) takes them from tomograms.star, as in RELION
+    particles_df, optics_df = particles_and_optics(particles_data, tomograms_df)
     if "rlnTomoParticleName" not in particles_df.columns:
         # RELION names unnamed particles <rlnTomoName>/<1-based index within the tomogram>
         index_in_tomo = particles_df.groupby("rlnTomoName", sort=False).cumcount() + 1
         particles_df["rlnTomoParticleName"] = particles_df["rlnTomoName"] + "/" + index_in_tomo.astype(str)
-    tomograms_data, tomograms_df = read_tomograms_starfile(tomograms_starfile)
     # like RELION's ParticleSet::splitByTomogram, particles of tomograms missing from tomograms.star are not extracted
     in_tomograms = particles_df["rlnTomoName"].isin(tomograms_df["rlnTomoName"])
     if not in_tomograms.all():
@@ -448,7 +451,6 @@ def extract_subtomograms(
         )
     if not dont_apply_offsets:
         particles_df = apply_offsets_to_coordinates(particles_df)
-    optics_df = particles_data["optics"]
     trajectories_dict = starfile.read(trajectories_starfile) if trajectories_starfile else None
     if not tiltseries_relative_dir:
         tiltseries_relative_dir = Path("./")
@@ -517,7 +519,7 @@ def extract_subtomograms(
     # update all the relevant star files
     write_starfiles(
         merged_particles_df,
-        particles_data["optics"],
+        optics_df,
         tomograms_starfile,
         box_size,
         crop_size,
@@ -551,6 +553,7 @@ def parse_extract_local_subtomograms(
     optimisation_set_starfile: Path = None,
     overwrite: bool = False,
     debug: bool = False,
+    job_type: str = validation.EXTRACT,
 ) -> tuple[Path, Path, Path, Path, Path]:
     """
     Extracts subtomograms from local files using the provided parameters.
@@ -576,6 +579,12 @@ def parse_extract_local_subtomograms(
         tiltseries_relative_dir=tiltseries_relative_dir,
         tomograms_starfile=tomograms_starfile,
         optimisation_set_starfile=optimisation_set_starfile,
+    )
+    validation.raise_if(
+        job_type,
+        validation.check_inputs(
+            job_type, particles_starfile, tomograms_starfile, trajectories_starfile, tiltseries_relative_dir
+        ),
     )
 
     particles_count, total_skipped_count, individual_tiltseries_count = extract_subtomograms(
