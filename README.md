@@ -367,16 +367,21 @@ If you would like to see a feature added, on or off this list, please open an is
 
 Every job checks its options and inputs before it starts (`zarr_particle_tools.validation.check`, also usable
 by a planner before submission) and refuses, naming the option or column and file, rather than ignoring what it
-cannot honour: the extraction options below, and in the input stars nonzero subtomogram orientations, non-zero
-Zernike coefficients, a non-identity magnification matrix or 2D deformations (for extraction and
-reconstruction), and tilt series with no readable pixels (for every job). Particle reconstruction writes the
-maps only, like RELION's; the internal extraction it runs is removed with its star files.
+cannot honour: the extraction options below, and in the input stars non-zero Zernike coefficients, a
+non-identity magnification matrix or 2D deformations (for extraction and reconstruction), and tilt series with
+no readable pixels (for every job). Particle reconstruction writes the maps only, like RELION's; the internal
+extraction it runs is removed with its star files.
+
+Subtomogram orientations (`rlnTomoSubtomogramRot`, `rlnTomoSubtomogramTilt`, `rlnTomoSubtomogramPsi`, e.g.
+the filament frame of helical picks) are applied as RELION applies them. Extraction carries them, and every
+other particle column (helical tube IDs, track lengths, priors, flip ratios), through to `particles.star`; the
+2D stacks depend on them only through the origin offsets, which are rotated into the tomogram as
+`coordinate - A_sub · origin`. Reconstruction projects with `A_sub · A_part`.
 
 ### Extraction and reconstruction
 
-- Does not apply particle subtomogram orientations (`rlnTomoSubtomogramRot`,
-  `rlnTomoSubtomogramTilt`, `rlnTomoSubtomogramPsi`); extraction also lacks RELION's
-  `--apply_orientations` mode
+- Extraction lacks RELION's `--apply_orientations` mode (writing `A_sub · A_part` into the subtomogram
+  angles and zeroing `rlnAngle*`); subtomogram orientations themselves are applied (see above)
 - Does not apply higher-order optical-aberration corrections from RELION optics metadata
   (even-Zernike gamma offsets or odd-Zernike phase corrections)
 - Does not support whitening (power spectral flattening)

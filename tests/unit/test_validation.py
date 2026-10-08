@@ -72,7 +72,6 @@ def test_clean_inputs_pass(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     "kwargs, subject",
     [
-        ({"particles_extra": {"rlnTomoSubtomogramRot": [0.0, 12.0]}}, "rlnTomoSubtomogramRot"),
         ({"optics_extra": {"rlnOddZernike": ["[0.0,0.3]"]}}, "rlnOddZernike"),
         ({"optics_extra": {"rlnMagMat00": [1.01], "rlnMagMat11": [1.0]}}, "rlnMagMat00"),
         ({"tilts_extra": {"rlnTomoDeformationType": ["spline", "spline"]}}, "rlnTomoDeformationType"),

@@ -9,6 +9,7 @@ import pandas as pd
 from cryoet_alignment.io.aretomo3 import AreTomo3ALN
 
 from zarr_particle_tools.core.data import DataReader
+from zarr_particle_tools.core.orientation import has_subtomogram_orientation, subtomogram_matrices
 
 
 def in_plane_rotation_to_tilt_axis_rotation(rotation_matrix: list[list[float]]) -> float:
@@ -306,15 +307,19 @@ def get_particle_crop_and_visibility(
 
 
 def apply_offsets_to_coordinates(particles_df: pd.DataFrame) -> pd.DataFrame:
-    # apply alignment rlnOriginXAngst/YAngst/ZAngst to rlnCenteredCoordinateXAngst/YAngst/ZAngst, subtract to follow RELION's convention
-    if (
-        "rlnOriginXAngst" in particles_df.columns
-        and "rlnOriginYAngst" in particles_df.columns
-        and "rlnOriginZAngst" in particles_df.columns
-    ):
-        particles_df["rlnCenteredCoordinateXAngst"] -= particles_df["rlnOriginXAngst"]
-        particles_df["rlnCenteredCoordinateYAngst"] -= particles_df["rlnOriginYAngst"]
-        particles_df["rlnCenteredCoordinateZAngst"] -= particles_df["rlnOriginZAngst"]
+    """Fold rlnOrigin{X,Y,Z}Angst into rlnCenteredCoordinate{X,Y,Z}Angst as RELION does.
+
+    The offsets are in the subtomogram frame, so the position is ``coordinate - A_sub · origin``
+    (``ParticleSet::getPosition``); without rlnTomoSubtomogram* angles ``A_sub`` is the identity.
+    """
+    origin_columns = ["rlnOriginXAngst", "rlnOriginYAngst", "rlnOriginZAngst"]
+    if all(column in particles_df.columns for column in origin_columns):
+        offsets = particles_df[origin_columns].to_numpy(dtype=float)
+        if has_subtomogram_orientation(particles_df):
+            offsets = np.einsum("nij,nj->ni", subtomogram_matrices(particles_df), offsets)
+        particles_df["rlnCenteredCoordinateXAngst"] -= offsets[:, 0]
+        particles_df["rlnCenteredCoordinateYAngst"] -= offsets[:, 1]
+        particles_df["rlnCenteredCoordinateZAngst"] -= offsets[:, 2]
 
     return particles_df
 
