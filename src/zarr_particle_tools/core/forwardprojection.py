@@ -169,6 +169,24 @@ def calculate_projection_matrix_from_starfile_df(tiltseries_df: pd.DataFrame) ->
     return projection_matrices
 
 
+TOMOGRAM_SIZE_COLUMNS = ("rlnTomoSizeX", "rlnTomoSizeY", "rlnTomoSizeZ")
+
+
+def specimen_center_offset(tiltseries_row_entry: pd.Series, tiltseries_pixel_size: float) -> np.ndarray:
+    """Where RELION projects a particle from, relative to its centered coordinate, in Angstrom.
+
+    RELION decenters a particle about the tomogram center ``size / 2.0`` (TomogramSet::loadTomogram, tomogram_set.cpp:313,
+    used by ParticleSet::getParticleCoordDecenteredPixel) but rotates the specimen about ``int(size / 2)``
+    (Tomogram::setProjectionMatrix, tomogram.cpp:44). Along an odd tomogram dimension every particle is therefore
+    projected from half a tilt-series pixel further along that axis. The CTF depth is unaffected: getDepthOffset
+    measures it from the same ``size / 2.0`` center. Zero when tomograms.star gives no rlnTomoSize*.
+    """
+    sizes = [tiltseries_row_entry.get(column) for column in TOMOGRAM_SIZE_COLUMNS]
+    if any(size is None or pd.isna(size) for size in sizes):
+        return np.zeros(3)
+    return np.array([int(size) / 2.0 - int(size) // 2 for size in sizes]) * tiltseries_pixel_size
+
+
 # can likely be parallelized
 def get_particles_to_tiltseries_coordinates(
     filtered_particles_df: pd.DataFrame,
@@ -176,10 +194,13 @@ def get_particles_to_tiltseries_coordinates(
     tiltseries_df: pd.DataFrame,
     projection_matrices: list[np.ndarray],
     use_tomo_particle_name_for_id: bool = True,
+    projection_offset: np.ndarray | None = None,
 ) -> dict[int | str, dict[int, tuple[np.ndarray, np.ndarray]]]:
     """
     Maps particles to their 2D coordinates in each of the tilts (projected from their 3D coordinates via the projection matrices).
     The output is a dictionary keyed by rlnTomoParticleName (or 1-based row index if use_tomo_particle_name_for_id is False); the values are another dictionary with tilt section indices as keys and tuples of (3D coordinate, projected 2D coordinate) as values.
+    ``projection_offset`` (Angstrom, see :func:`specimen_center_offset`) moves the projected position only, not the
+    3D coordinate returned for the CTF.
     """
     particles_to_tiltseries_coordinates = {}
     for i, tilt in tiltseries_df.iterrows():
@@ -218,6 +239,8 @@ def get_particles_to_tiltseries_coordinates(
                         ]
                     )
 
+            if projection_offset is not None:
+                projection_coordinate = projection_coordinate + projection_offset
             projected_point = project_3d_point_to_2d(projection_coordinate, projection_matrix)[:2]
 
             if particle_id not in particles_to_tiltseries_coordinates:
@@ -250,9 +273,14 @@ def get_particle_crop_and_visibility(
     for section, coords in sections.items():
         coordinate, projected_point = coords
         x, y = projected_point
-        # convert physical angstroms to floating-point pixel coordinates
-        x_px_float = (x + tiltseries_x * tiltseries_pixel_size / 2.0) / tiltseries_pixel_size
-        y_px_float = (y + tiltseries_y * tiltseries_pixel_size / 2.0) / tiltseries_pixel_size
+        # convert physical angstroms to floating-point pixel coordinates. RELION's tilt-image center is int(size / 2)
+        # (Tomogram::setProjectionMatrix, tomogram.cpp:53), half a pixel short of size / 2.0 along an odd dimension
+        x_px_float = (x + tiltseries_x * tiltseries_pixel_size / 2.0) / tiltseries_pixel_size - (
+            tiltseries_x / 2.0 - tiltseries_x // 2
+        )
+        y_px_float = (y + tiltseries_y * tiltseries_pixel_size / 2.0) / tiltseries_pixel_size - (
+            tiltseries_y / 2.0 - tiltseries_y // 2
+        )
         x_start_px_float = x_px_float - pre_bin_box_size / 2.0
         y_start_px_float = y_px_float - pre_bin_box_size / 2.0
         x_start_px = int(round(x_start_px_float))
