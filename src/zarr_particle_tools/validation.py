@@ -2,10 +2,15 @@
 What zarr-particle-tools can honour, checked before a job runs.
 
 The Python extraction and reconstruction reimplement part of RELION. An option they do not implement used to raise
-from inside a pipeliner wrapper; input metadata they do not apply (subtomogram orientations, higher-order
-aberrations, anisotropic magnification, 2D deformations) was silently ignored, so a job succeeded and produced a
-different result. :func:`check` reports both, as :class:`Problem` s naming the option or column and the file it was
-found in, so a caller can refuse a job before it is submitted and a program can refuse it before it streams.
+from inside a pipeliner wrapper; input metadata they do not apply (higher-order aberrations, anisotropic
+magnification, 2D deformations) was silently ignored, so a job succeeded and produced a different result.
+:func:`check` reports both, as :class:`Problem` s naming the option or column and the file it was found in, so a
+caller can refuse a job before it is submitted and a program can refuse it before it streams.
+
+Subtomogram orientations (``rlnTomoSubtomogram{Rot,Tilt,Psi}``, e.g. a filament frame) are honored as RELION honors
+them: 2D-stack extraction carries them through and rotates the origin offsets by them, and reconstruction composes
+``A_sub · A_part`` (:mod:`zarr_particle_tools.core.orientation`). 3D pseudo-subtomograms, the only extraction output
+whose pixels ``A_sub`` changes in RELION, are not implemented and stay refused (``do_output_2dstacks``).
 
 Imports only the standard library and ``starfile``, so a process that plans jobs can call it. The programs call
 :func:`check_inputs` on their resolved inputs; the pipeliner wrappers call :func:`check_options` in
@@ -30,7 +35,6 @@ POLISH = "zarrparticletools.polish"
 PYTHON_IMPLEMENTED = (EXTRACT, RECONSTRUCT)
 
 TILTSERIES_URI_COLUMN = "tomoTiltSeriesURI"
-SUBTOMOGRAM_ORIENTATION = ("rlnTomoSubtomogramRot", "rlnTomoSubtomogramTilt", "rlnTomoSubtomogramPsi")
 ZERNIKE = ("rlnEvenZernike", "rlnOddZernike")
 MAGNIFICATION = {"rlnMagMat00": 1.0, "rlnMagMat01": 0.0, "rlnMagMat10": 0.0, "rlnMagMat11": 1.0}
 DEFORMATION = ("rlnTomoDeformationType", "rlnTomoDeformationCoefficients")
@@ -201,12 +205,6 @@ def check_inputs(
         parts = blocks.get("particles", next(iter(blocks.values())))
         optics = blocks.get("optics")
         if job_type in PYTHON_IMPLEMENTED:
-            for column in SUBTOMOGRAM_ORIENTATION:
-                if column in parts.columns and (parts[column].astype(float).abs() > 1e-6).any():
-                    problems.append(
-                        Problem(column, "subtomogram orientations are not applied by the Python implementation")
-                    )
-                    break
             tables = [t for t in (optics, parts) if t is not None]
             for column in ZERNIKE:
                 if any(column in t.columns and t[column].map(_nontrivial_vector).any() for t in tables):
