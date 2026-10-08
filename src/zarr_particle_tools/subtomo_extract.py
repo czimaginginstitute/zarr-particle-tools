@@ -33,6 +33,7 @@ from zarr_particle_tools.core.forwardprojection import (
     fourier_crop,
     get_particle_crop_and_visibility,
     get_particles_to_tiltseries_coordinates,
+    specimen_center_offset,
 )
 from zarr_particle_tools.core.helpers import (
     STAR_NAME_COLUMNS,
@@ -170,6 +171,7 @@ def process_tiltseries(
         filtered_trajectories_dict,
         individual_tiltseries_df,
         projection_matrices,
+        projection_offset=specimen_center_offset(tiltseries_row_entry, tiltseries_pixel_size),
         deformations=deformations,
     )
     sections = individual_tiltseries_df["rlnMicrographName"].str.split("@").str[0].astype(int).tolist()
