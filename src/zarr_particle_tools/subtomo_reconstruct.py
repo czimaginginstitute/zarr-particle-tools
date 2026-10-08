@@ -30,7 +30,6 @@ from zarr_particle_tools.core.backprojection import (
     backproject_slice_backward,
     ctf_correct_3d_heuristic,
     ctf_correct_3d_wiener,
-    get_rotation_matrix_from_euler,
     gridding_correct_3d_sinc2,
 )
 from zarr_particle_tools.core.ctf import calculate_ctf
@@ -52,6 +51,7 @@ from zarr_particle_tools.core.helpers import (
     setup_logging,
 )
 from zarr_particle_tools.core.mask import spherical_soft_mask
+from zarr_particle_tools.core.orientation import particle_to_tomogram_matrices
 from zarr_particle_tools.core.symmetry import (
     get_transforms_from_symmetry,
     symmetrise_fs_complex,
@@ -221,12 +221,9 @@ def reconstruct_single_tiltseries(
     ctf_premultiplied = bool(optics_row["rlnCtfDataAreCtfPremultiplied"].iloc[0])
     if ctf_premultiplied:
         raise ValueError("CTF premultiplied particles are not supported for reconstruction.")
-    if {"rlnAngleRot", "rlnAngleTilt", "rlnAnglePsi"}.issubset(filtered_particles_df.columns):
-        particle_rotation_matrices = get_rotation_matrix_from_euler(
-            filtered_particles_df[["rlnAngleRot", "rlnAngleTilt", "rlnAnglePsi"]].to_numpy()
-        )
-    else:
-        particle_rotation_matrices = np.tile(np.eye(3), (len(filtered_particles_df), 1, 1))
+    # A = A_sub · A_part, RELION's particle-to-tomogram rotation (ParticleSet::getMatrix3x3), which
+    # relion_tomo_reconstruct_particle composes into every tilt's projection (projCut · getMatrix4x4)
+    particle_rotation_matrices = particle_to_tomogram_matrices(filtered_particles_df)
 
     # tiltseries variables
     tiltseries_pixel_size = tiltseries_row_entry["rlnTomoTiltSeriesPixelSize"]
