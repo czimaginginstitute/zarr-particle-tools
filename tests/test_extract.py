@@ -232,7 +232,7 @@ def test_extract_arbitrary_particle_names(tmp_path):
     # tomograms.star order then input order. session1_TS_0 is a copy of session1_TS_1 listed after it, and every
     # particle is a copy of RELION's session1_TS_1/{i + 1} in the reference output.
     data_root = DATASET_CONFIGS["synthetic"]["data_root"]
-    (tmp_path / "tiltseries").mkdir()
+    (tmp_path / "tiltseries").mkdir(parents=True)
     for f in ["TS_1.mrcs", "TS_1.star"]:
         (tmp_path / "tiltseries" / f).symlink_to((data_root / "tiltseries" / f).resolve())
     ts_star = (data_root / "tiltseries/TS_1.star").read_text()
@@ -517,3 +517,154 @@ def test_extract_with_trajectories_matches_relion(tmp_path):
         assert mrc_equal(
             tmp_path / "relion" / stack, tmp_path / "ours" / stack, tol=DATASET_CONFIGS["synthetic"]["tol"]
         )
+
+
+# ----------------------------------------------------------------------------- RELION-5 2D deformations
+def _write_deformed_project(tmp_path, data_root, deformation_type, grid, coefficient_rows, names):
+    """The synthetic project with rlnTomoDeformation* columns added (tilt images symlinked, stars rewritten)."""
+    (tmp_path / "tiltseries").mkdir(parents=True)
+    (tmp_path / "tiltseries" / "TS_1.mrcs").symlink_to((data_root / "tiltseries" / "TS_1.mrcs").resolve())
+    tomograms = starfile.read(data_root / "tomograms.star", always_dict=True)
+    global_df = tomograms["global"].copy()
+    global_df["rlnTomoDeformationGridSizeX"] = grid[0]
+    global_df["rlnTomoDeformationGridSizeY"] = grid[1]
+    global_df["rlnTomoDeformationType"] = deformation_type
+    starfile.write({"global": global_df}, tmp_path / "tomograms.star")
+    tiltseries = starfile.read(data_root / "tiltseries" / "TS_1.star", always_dict=True)
+    block_name, tilt_df = next(iter(tiltseries.items()))
+    tilt_df = tilt_df.copy()
+    tilt_df["rlnTomoDeformationCoefficients"] = [
+        "[" + ",".join(f"{v:.12g}" for v in row) + "]" for row in coefficient_rows
+    ]
+    starfile.write({block_name: tilt_df}, tmp_path / "tiltseries" / "TS_1.star")
+    particles_data = starfile.read(data_root / "particles.star")
+    particles_data["particles"]["rlnTomoParticleName"] = names
+    starfile.write(particles_data, tmp_path / "particles.star")
+
+
+def _synthetic_names(data_root):
+    n = len(starfile.read(data_root / "particles.star")["particles"])
+    return [f"session1_TS_1/{i}" for i in range(1, n + 1)]
+
+
+def _random_deformation(deformation_type, n_tilts, image, rng):
+    """(grid, per-tilt coefficient rows) with shifts of a few pixels, different in every tilt."""
+    if deformation_type == "spline":
+        grid = (3, 3)
+        rows = []
+        for _ in range(n_tilts):
+            nodes = np.zeros((2, grid[1], grid[0], 4))
+            nodes[..., 0] = rng.uniform(-5, 5, nodes.shape[:3])  # value (px)
+            nodes[..., 1:3] = rng.uniform(-3, 3, nodes.shape[:3] + (2,))  # slope_x, slope_y (px per cell)
+            nodes[..., 3] = rng.uniform(-1, 1, nodes.shape[:3])  # twist
+            rows.append(nodes.ravel())
+        return grid, rows
+    if deformation_type == "linear":
+        return (1, 1), [rng.uniform(-0.01, 0.01, 3) for _ in range(n_tilts)]
+    if deformation_type == "Fourier":
+        grid = (4, 4)
+        # RELION copies (gx/2+1)*gy complex numbers per dim from the vector and reads the first n_freq of each
+        n = (grid[0] // 2 + 1) * grid[1] * 2 * 2
+        return grid, [rng.uniform(-3, 3, n) for _ in range(n_tilts)]
+    raise ValueError(deformation_type)
+
+
+def test_extract_deformation_equals_trajectory(tmp_path):
+    # a spline with a constant value field shifts every crop by s pixels in every tilt; the same crop positions
+    # follow from a per-tilt 3D trajectory v_t with P_t[:2, :3] v_t = s * pixel_size (least-norm solution)
+    from zarr_particle_tools.core.forwardprojection import calculate_projection_matrix_from_starfile_df
+
+    data_root = DATASET_CONFIGS["synthetic"]["data_root"]
+    names = _synthetic_names(data_root)
+    tilt_df = starfile.read(data_root / "tiltseries" / "TS_1.star")
+    pixel_size = float(starfile.read(data_root / "tomograms.star")["rlnTomoTiltSeriesPixelSize"].iloc[0])
+    shift_px = np.array([6.3, -4.1])
+    nodes = np.zeros((2, 3, 3, 4))
+    nodes[0, :, :, 0], nodes[1, :, :, 0] = shift_px
+    _write_deformed_project(tmp_path / "deformed", data_root, "spline", (3, 3), [nodes.ravel()] * len(tilt_df), names)
+
+    trajectory = []
+    for matrix in calculate_projection_matrix_from_starfile_df(tilt_df):
+        a = matrix[:2, :3]
+        trajectory.append(a.T @ np.linalg.solve(a @ a.T, shift_px * pixel_size))
+    _write_trajectories(tmp_path / "motion.star", names, [np.array(trajectory)] * len(names))
+    particles_data = starfile.read(data_root / "particles.star")
+    particles_data["particles"]["rlnTomoParticleName"] = names
+    starfile.write(particles_data, tmp_path / "particles.star")
+
+    extract_subtomograms(
+        box_size=64,
+        output_dir=tmp_path / "deformation",
+        particles_starfile=tmp_path / "deformed" / "particles.star",
+        tiltseries_relative_dir=tmp_path / "deformed",
+        tomograms_starfile=tmp_path / "deformed" / "tomograms.star",
+    )
+    extract_subtomograms(
+        box_size=64,
+        output_dir=tmp_path / "trajectory",
+        particles_starfile=tmp_path / "particles.star",
+        tiltseries_relative_dir=data_root,
+        tomograms_starfile=data_root / "tomograms.star",
+        trajectories_starfile=tmp_path / "motion.star",
+    )
+    extract_subtomograms(
+        box_size=64,
+        output_dir=tmp_path / "ignored",
+        particles_starfile=tmp_path / "deformed" / "particles.star",
+        tiltseries_relative_dir=tmp_path / "deformed",
+        tomograms_starfile=tmp_path / "deformed" / "tomograms.star",
+        ignore_deformations=True,
+    )
+    extract_subtomograms(
+        box_size=64,
+        output_dir=tmp_path / "plain",
+        particles_starfile=tmp_path / "particles.star",
+        tiltseries_relative_dir=data_root,
+        tomograms_starfile=data_root / "tomograms.star",
+    )
+    n_differ = 0
+    for i in range(1, len(names) + 1):
+        stack = f"Subtomograms/session1_TS_1/{i}_stack2d.mrcs"
+        deformed = mrcfile.read(tmp_path / "deformation" / stack)
+        np.testing.assert_allclose(deformed, mrcfile.read(tmp_path / "trajectory" / stack), atol=1e-5)
+        # --ignore-deformations is exactly the undeformed extraction, and differs from the deformed one
+        plain = mrcfile.read(tmp_path / "plain" / stack)
+        np.testing.assert_array_equal(mrcfile.read(tmp_path / "ignored" / stack), plain)
+        # the shift can also change which tilts are visible, so a shape difference counts as a difference
+        n_differ += deformed.shape != plain.shape or not np.allclose(deformed, plain, atol=1e-5)
+    assert n_differ == len(names)
+
+
+@pytest.mark.skipif(shutil.which("relion_tomo_subtomo") is None, reason="relion_tomo_subtomo not on PATH")
+@pytest.mark.parametrize("deformation_type", ["spline", "linear", "Fourier"])
+def test_extract_with_deformations_matches_relion(tmp_path, deformation_type):
+    # per-tilt 2D deformations, extracted by RELION and by us from the same inputs
+    data_root = DATASET_CONFIGS["synthetic"]["data_root"]
+    names = _synthetic_names(data_root)
+    n_tilts = len(starfile.read(data_root / "tiltseries" / "TS_1.star"))
+    rng = np.random.default_rng({"spline": 1, "linear": 2, "Fourier": 3}[deformation_type])
+    grid, rows = _random_deformation(deformation_type, n_tilts, (630, 630), rng)
+    _write_deformed_project(tmp_path, data_root, deformation_type, grid, rows, names)
+
+    relion_args = ["--p", "particles.star", "--t", "tomograms.star", "--o", "relion/"]
+    relion_args += ["--b", "64", "--crop", "64", "--bin", "1", "--stack2d", "--j", "4"]
+    subprocess.run(["relion_tomo_subtomo", *relion_args], cwd=tmp_path, check=True, capture_output=True)
+    for name, ignore in (("ours", False), ("ignored", True)):
+        extract_subtomograms(
+            box_size=64,
+            output_dir=tmp_path / name,
+            particles_starfile=tmp_path / "particles.star",
+            tiltseries_relative_dir=tmp_path,
+            tomograms_starfile=tmp_path / "tomograms.star",
+            ignore_deformations=ignore,
+        )
+
+    tol = DATASET_CONFIGS["synthetic"]["tol"]
+    n_ignored_differ = 0
+    for i in range(1, len(names) + 1):
+        stack = f"Subtomograms/session1_TS_1/{i}_stack2d.mrcs"
+        assert mrc_equal(tmp_path / "relion" / stack, tmp_path / "ours" / stack, tol=tol)
+        relion, ignored = mrcfile.read(tmp_path / "relion" / stack), mrcfile.read(tmp_path / "ignored" / stack)
+        n_ignored_differ += relion.shape != ignored.shape or not np.allclose(relion, ignored, atol=tol)
+    # the comparison is sensitive: without the deformation the same crops do not match RELION
+    assert n_ignored_differ == len(names)

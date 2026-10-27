@@ -235,6 +235,13 @@ zarr-particle-extract local \
   --box-size 64 --bin 1 --no-ctf --no-circle-crop
 ```
 
+Polished RELION-5 projects can carry per-tilt 2D image deformations (tomo Bayesian polishing with
+"model 2D deformations": `rlnTomoDeformationGridSizeX/Y` and `rlnTomoDeformationType` in `tomograms.star`,
+`rlnTomoDeformationCoefficients` in each tilt-series star). They are applied to every projected particle
+position exactly as `relion_tomo_subtomo` does (spline, linear and Fourier models), on top of any
+`--trajectories-starfile` motion; pass `--ignore-deformations` to extract without them. Skipping them on a
+project that was refined with them mis-centres the crops by the local field value, typically tens of Å.
+
 From the portal without first materializing the tilt series locally:
 
 ```bash

@@ -175,15 +175,21 @@ def get_particles_to_tiltseries_coordinates(
     tiltseries_df: pd.DataFrame,
     projection_matrices: list[np.ndarray],
     use_tomo_particle_name_for_id: bool = True,
+    deformations: list | None = None,
 ) -> dict[int | str, dict[int, tuple[np.ndarray, np.ndarray]]]:
     """
     Maps particles to their 2D coordinates in each of the tilts (projected from their 3D coordinates via the projection matrices).
     The output is a dictionary keyed by rlnTomoParticleName (or 1-based row index if use_tomo_particle_name_for_id is False); the values are another dictionary with tilt section indices as keys and tuples of (3D coordinate, projected 2D coordinate) as values.
+
+    ``deformations`` (optional, one entry per tiltseries_df row, same order as ``projection_matrices``) are RELION's
+    per-tilt 2D image deformations (``core.deformation.build_deformations``); each is applied to the projected 2D
+    point exactly where ``Tomogram::projectPoint`` applies it, after the projection and the trajectory offset.
     """
     particles_to_tiltseries_coordinates = {}
     for i, tilt in tiltseries_df.iterrows():
         section = int(tilt["rlnMicrographName"].split("@")[0])
         projection_matrix = projection_matrices[i]
+        deformation = deformations[i] if deformations is not None else None
 
         # match 1-indexing of RELION
         for default_particle_id, particle in enumerate(filtered_particles_df.itertuples(), start=1):
@@ -218,6 +224,8 @@ def get_particles_to_tiltseries_coordinates(
                     )
 
             projected_point = project_3d_point_to_2d(projection_coordinate, projection_matrix)[:2]
+            if deformation is not None:
+                projected_point = deformation(projected_point)
 
             if particle_id not in particles_to_tiltseries_coordinates:
                 particles_to_tiltseries_coordinates[particle_id] = {}
