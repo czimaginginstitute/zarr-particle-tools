@@ -545,6 +545,20 @@ def _write_deformed_project(tmp_path, data_root, deformation_type, grid, coeffic
     starfile.write(particles_data, tmp_path / "particles.star")
 
 
+def _make_odd_sized(project, data_root):
+    """Crop the project's tilt images to 629 x 629 and declare a 629 x 629 x 199 tomogram: every size odd."""
+    stack = project / "tiltseries" / "TS_1.mrcs"
+    with mrcfile.open(data_root / "tiltseries" / "TS_1.mrcs", permissive=True) as source:
+        data, voxel_size = source.data[:, :-1, :-1].copy(), source.voxel_size.copy()
+    stack.unlink()
+    with mrcfile.new(stack) as cropped:
+        cropped.set_data(data)
+        cropped.voxel_size = voxel_size
+    tomograms = starfile.read(project / "tomograms.star", always_dict=True)
+    tomograms["global"][["rlnTomoSizeX", "rlnTomoSizeY", "rlnTomoSizeZ"]] = [629, 629, 199]
+    starfile.write(tomograms, project / "tomograms.star")
+
+
 def _synthetic_names(data_root):
     n = len(starfile.read(data_root / "particles.star")["particles"])
     return [f"session1_TS_1/{i}" for i in range(1, n + 1)]
@@ -640,14 +654,18 @@ def test_extract_deformation_equals_trajectory(tmp_path):
 
 @pytest.mark.skipif(shutil.which("relion_tomo_subtomo") is None, reason="relion_tomo_subtomo not on PATH")
 @pytest.mark.parametrize("deformation_type", ["spline", "linear", "Fourier"])
-def test_extract_with_deformations_matches_relion(tmp_path, deformation_type):
-    # per-tilt 2D deformations, extracted by RELION and by us from the same inputs
+@pytest.mark.parametrize("odd", [False, True], ids=["even", "odd"])
+def test_extract_with_deformations_matches_relion(tmp_path, deformation_type, odd):
+    # per-tilt 2D deformations, extracted by RELION and by us from the same inputs; on odd sizes RELION's centers
+    # (int(size / 2) for the tilt image and the specimen) also decide where the field is evaluated
     data_root = DATASET_CONFIGS["synthetic"]["data_root"]
     names = _synthetic_names(data_root)
     n_tilts = len(starfile.read(data_root / "tiltseries" / "TS_1.star"))
     rng = np.random.default_rng({"spline": 1, "linear": 2, "Fourier": 3}[deformation_type])
-    grid, rows = _random_deformation(deformation_type, n_tilts, (630, 630), rng)
+    grid, rows = _random_deformation(deformation_type, n_tilts, (629, 629) if odd else (630, 630), rng)
     _write_deformed_project(tmp_path, data_root, deformation_type, grid, rows, names)
+    if odd:
+        _make_odd_sized(tmp_path, data_root)
 
     relion_args = ["--p", "particles.star", "--t", "tomograms.star", "--o", "relion/"]
     relion_args += ["--b", "64", "--crop", "64", "--bin", "1", "--stack2d", "--j", "4"]
