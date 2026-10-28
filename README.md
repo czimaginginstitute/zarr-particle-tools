@@ -398,8 +398,8 @@ If you would like to see a feature added, on or off this list, please open an is
 Every job checks its options and inputs before it starts (`zarr_particle_tools.validation.check`, also usable
 by a planner before submission) and refuses, naming the option or column and file, rather than ignoring what it
 cannot honour: the extraction options below, and in the input stars nonzero subtomogram orientations, non-zero
-Zernike coefficients, a non-identity magnification matrix or 2D deformations (for extraction and
-reconstruction), and tilt series with no readable pixels (for every job). Particle reconstruction writes the
+Zernike coefficients or a non-identity magnification matrix (for extraction and reconstruction), 2D deformations
+(for reconstruction), and tilt series with no readable pixels (for every job). Particle reconstruction writes the
 maps only, like RELION's; the internal extraction it runs is removed with its star files.
 
 ### Extraction and reconstruction
@@ -412,9 +412,6 @@ maps only, like RELION's; the internal extraction it runs is removed with its st
 - Does not support whitening (power spectral flattening)
 - Does not support anisotropic magnification matrices (`EMDL_IMAGE_MAG_MATRIX_00`,
   `EMDL_IMAGE_MAG_MATRIX_01`, `EMDL_IMAGE_MAG_MATRIX_10`, `EMDL_IMAGE_MAG_MATRIX_11`)
-- Does not support 2D deformations (`EMDL_TOMO_DEFORMATION_GRID_SIZE_X`,
-  `EMDL_TOMO_DEFORMATION_GRID_SIZE_Y`, `EMDL_TOMO_DEFORMATION_TYPE`,
-  `EMDL_TOMO_DEFORMATION_COEFFICIENTS`)
 - Does not support `--only_do_unfinished`
 
 ### Extraction
@@ -427,6 +424,9 @@ maps only, like RELION's; the internal extraction it runs is removed with its st
 
 ### Reconstruction
 
+- Refuses a project with 2D deformations (`EMDL_TOMO_DEFORMATION_GRID_SIZE_X`, `EMDL_TOMO_DEFORMATION_GRID_SIZE_Y`,
+  `EMDL_TOMO_DEFORMATION_TYPE`, `EMDL_TOMO_DEFORMATION_COEFFICIENTS`) until its maps are checked against RELION on
+  deformed data; extraction applies them (see [Extraction](#extraction))
 - Does not support helical symmetry
 - Only reproduces RELION's `--no_circle_crop` mode; its default circle cropping is not implemented
 - Does not support `--dont_apply_offsets` (extraction supports `--dont-apply-offsets`)

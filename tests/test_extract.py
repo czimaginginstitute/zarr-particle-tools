@@ -11,13 +11,16 @@ from click.testing import CliRunner
 
 import zarr_particle_tools.generate.copick_generate_starfiles as copick_generate
 from tests.helpers.compare import mrc_equal
+from zarr_particle_tools import validation
 from zarr_particle_tools.core.helpers import STAR_NAME_COLUMNS
 from zarr_particle_tools.subtomo_extract import (
     cli,
     extract_subtomograms,
     parse_extract_copick_local_subtomograms,
+    parse_extract_local_subtomograms,
     subtomogram_path,
 )
+from zarr_particle_tools.subtomo_reconstruct import reconstruct_copick_local, reconstruct_local
 
 DATASET_CONFIGS = {
     "synthetic": {
@@ -668,3 +671,33 @@ def test_extract_with_deformations_matches_relion(tmp_path, deformation_type):
         n_ignored_differ += relion.shape != ignored.shape or not np.allclose(relion, ignored, atol=tol)
     # the comparison is sensitive: without the deformation the same crops do not match RELION
     assert n_ignored_differ == len(names)
+
+
+def test_reconstruction_refuses_deformations_that_extraction_applies(tmp_path):
+    # extraction applies them; reconstruction refuses them until it is checked against RELION on deformed data
+    data_root = DATASET_CONFIGS["synthetic"]["data_root"]
+    names = _synthetic_names(data_root)
+    n_tilts = len(starfile.read(data_root / "tiltseries" / "TS_1.star"))
+    grid, rows = _random_deformation("linear", n_tilts, (630, 630), np.random.default_rng(2))
+    _write_deformed_project(tmp_path, data_root, "linear", grid, rows, names)
+    inputs = {"tiltseries_relative_dir": tmp_path, "tomograms_starfile": tmp_path / "tomograms.star"}
+
+    parse_extract_local_subtomograms(
+        box_size=64, output_dir=tmp_path / "extract", particles_starfile=tmp_path / "particles.star", **inputs
+    )
+    assert len(list((tmp_path / "extract" / "Subtomograms" / "session1_TS_1").glob("*_stack2d.mrcs"))) == len(names)
+    with pytest.raises(validation.UnsupportedError, match="rlnTomoDeformationType"):
+        reconstruct_local(
+            box_size=64, output_dir=tmp_path / "local", particles_starfile=tmp_path / "particles.star", **inputs
+        )
+    # refused before the copick project is opened
+    with pytest.raises(validation.UnsupportedError, match="rlnTomoDeformationType"):
+        reconstruct_copick_local(
+            box_size=64,
+            output_dir=tmp_path / "copick",
+            copick_config=tmp_path / "absent.json",
+            copick_name="ribosome",
+            copick_session_id="0",
+            copick_user_id="test",
+            **inputs,
+        )

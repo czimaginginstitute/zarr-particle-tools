@@ -7,7 +7,9 @@ import starfile
 from zarr_particle_tools import validation as v
 
 
-def _project(tmp_path, monkeypatch, *, particles_extra=None, optics_extra=None, tilts_extra=None, uri=True):
+def _project(
+    tmp_path, monkeypatch, *, particles_extra=None, optics_extra=None, tilts_extra=None, global_extra=None, uri=True
+):
     """A minimal RELION project: tomograms.star + one tilt star + particles.star, cwd = project."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / "Import").mkdir()
@@ -17,10 +19,10 @@ def _project(tmp_path, monkeypatch, *, particles_extra=None, optics_extra=None, 
     for column, value in (tilts_extra or {}).items():
         tilts[column] = value
     starfile.write({"16848": tilts}, "Import/16848.star")
-    starfile.write(
-        {"global": pd.DataFrame({"rlnTomoName": ["16848"], "rlnTomoTiltSeriesStarFile": ["Import/16848.star"]})},
-        "Import/tomograms.star",
-    )
+    tomograms = pd.DataFrame({"rlnTomoName": ["16848"], "rlnTomoTiltSeriesStarFile": ["Import/16848.star"]})
+    for column, value in (global_extra or {}).items():
+        tomograms[column] = value
+    starfile.write({"global": tomograms}, "Import/tomograms.star")
     optics = pd.DataFrame({"rlnOpticsGroup": [1], "rlnImagePixelSize": [8.66], "rlnImageSize": [64]})
     for column, value in (optics_extra or {}).items():
         optics[column] = value
@@ -75,7 +77,6 @@ def test_clean_inputs_pass(tmp_path, monkeypatch):
         ({"particles_extra": {"rlnTomoSubtomogramRot": [0.0, 12.0]}}, "rlnTomoSubtomogramRot"),
         ({"optics_extra": {"rlnOddZernike": ["[0.0,0.3]"]}}, "rlnOddZernike"),
         ({"optics_extra": {"rlnMagMat00": [1.01], "rlnMagMat11": [1.0]}}, "rlnMagMat00"),
-        ({"tilts_extra": {"rlnTomoDeformationType": ["spline", "spline"]}}, "rlnTomoDeformationType"),
     ],
 )
 def test_metadata_the_python_implementation_would_ignore(tmp_path, monkeypatch, kwargs, subject):
@@ -83,6 +84,39 @@ def test_metadata_the_python_implementation_would_ignore(tmp_path, monkeypatch, 
     assert subject in [p.subject for p in v.check_inputs(v.EXTRACT, particles, tomograms)]
     # stock RELION applies it, so CTF refinement is not refused for it
     assert subject not in [p.subject for p in v.check_inputs(v.CTFREFINE, particles, tomograms)]
+
+
+DEFORMED = {
+    "rlnTomoDeformationGridSizeX": [2],
+    "rlnTomoDeformationGridSizeY": [2],
+    "rlnTomoDeformationType": ["linear"],
+}
+COEFFICIENTS = {"rlnTomoDeformationCoefficients": ["[0.001,0,0]", "[0,0,0.001]"]}
+
+
+def test_2d_deformations_are_extracted_but_not_reconstructed(tmp_path, monkeypatch):
+    particles, tomograms = _project(tmp_path, monkeypatch, global_extra=DEFORMED, tilts_extra=COEFFICIENTS)
+    assert v.check_inputs(v.EXTRACT, particles, tomograms) == []
+    assert v.check_inputs(v.CTFREFINE, particles, tomograms) == []
+    assert [p.subject for p in v.check_inputs(v.RECONSTRUCT, particles, tomograms)] == ["rlnTomoDeformationType"]
+
+
+def test_coefficients_without_grid_sizes_are_not_deformations(tmp_path, monkeypatch):
+    """RELION reads deformations only when the tomogram row has both grid sizes, and ignores stray coefficients."""
+    particles, tomograms = _project(tmp_path, monkeypatch, tilts_extra=COEFFICIENTS)
+    assert v.check_inputs(v.RECONSTRUCT, particles, tomograms) == []
+
+
+@pytest.mark.parametrize(
+    "global_extra, tilts_extra, subject",
+    [
+        ({**DEFORMED, "rlnTomoDeformationType": ["bspline"]}, COEFFICIENTS, "rlnTomoDeformationType"),
+        (DEFORMED, None, "rlnTomoDeformationCoefficients"),
+    ],
+)
+def test_deformations_extraction_could_not_build_are_refused(tmp_path, monkeypatch, global_extra, tilts_extra, subject):
+    particles, tomograms = _project(tmp_path, monkeypatch, global_extra=global_extra, tilts_extra=tilts_extra)
+    assert [p.subject for p in v.check_inputs(v.EXTRACT, particles, tomograms)] == [subject]
 
 
 def test_a_series_with_no_readable_pixels_is_refused(tmp_path, monkeypatch):

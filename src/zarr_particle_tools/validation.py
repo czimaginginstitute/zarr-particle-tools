@@ -7,6 +7,12 @@ aberrations, anisotropic magnification, 2D deformations) was silently ignored, s
 different result. :func:`check` reports both, as :class:`Problem` s naming the option or column and the file it was
 found in, so a caller can refuse a job before it is submitted and a program can refuse it before it streams.
 
+RELION-5 2D deformations (``rlnTomoDeformation*``, written by polishing with deformations) are applied by extraction
+as ``Tomogram::projectPoint`` applies them (:mod:`zarr_particle_tools.core.deformation`); a declaration it could not
+build (no or an unknown type, no coefficients) is refused before it streams. Reconstruction takes its crops and
+visibility from that extraction, as RELION's takes them from ``projectPoint``, but it refuses deformations until
+its maps are checked against ``relion_tomo_reconstruct_particle`` on deformed data.
+
 Imports only the standard library and ``starfile``, so a process that plans jobs can call it. The programs call
 :func:`check_inputs` on their resolved inputs; the pipeliner wrappers call :func:`check_options` in
 ``get_commands``; a planner calls :func:`check` with the job's options and lets it resolve the inputs.
@@ -33,7 +39,12 @@ TILTSERIES_URI_COLUMN = "tomoTiltSeriesURI"
 SUBTOMOGRAM_ORIENTATION = ("rlnTomoSubtomogramRot", "rlnTomoSubtomogramTilt", "rlnTomoSubtomogramPsi")
 ZERNIKE = ("rlnEvenZernike", "rlnOddZernike")
 MAGNIFICATION = {"rlnMagMat00": 1.0, "rlnMagMat01": 0.0, "rlnMagMat10": 0.0, "rlnMagMat11": 1.0}
-DEFORMATION = ("rlnTomoDeformationType", "rlnTomoDeformationCoefficients")
+#: RELION reads 2D deformations iff a tomogram row has both grid sizes (TomogramSet::loadTomogram); the type sits
+#: beside them, the coefficients in the tilt-series star. Mirrors core.deformation, which the extraction applies.
+DEFORMATION_GRID = ("rlnTomoDeformationGridSizeX", "rlnTomoDeformationGridSizeY")
+DEFORMATION_TYPE = "rlnTomoDeformationType"
+DEFORMATION_COEFFICIENTS = "rlnTomoDeformationCoefficients"
+DEFORMATION_TYPES = ("spline", "linear", "Fourier")
 
 
 @dataclass(frozen=True)
@@ -272,11 +283,33 @@ def _check_series(
             )
     if len(locators) > 1:
         problems.append(Problem(TILTSERIES_URI_COLUMN, f"tomogram {name}: several tilt-series locators", where))
-    if job_type in PYTHON_IMPLEMENTED:
-        for column in DEFORMATION:
-            if column in tilts.columns and not tilts[column].map(_blank).all():
-                problems.append(Problem(column, f"tomogram {name}: 2D deformations are not applied", where))
-                break
+    if job_type in PYTHON_IMPLEMENTED and all(c in row and not _blank(row[c]) for c in DEFORMATION_GRID):
+        kind = row.get(DEFORMATION_TYPE)
+        if job_type == RECONSTRUCT:
+            problems.append(
+                Problem(
+                    DEFORMATION_TYPE,
+                    f"tomogram {name}: reconstruction with 2D deformations is not verified against RELION yet",
+                    str(tomograms),
+                )
+            )
+        elif _blank(kind) or str(kind) not in DEFORMATION_TYPES:
+            problems.append(
+                Problem(
+                    DEFORMATION_TYPE,
+                    f"tomogram {name}: deformations are declared with type {kind!r}; RELION knows "
+                    + ", ".join(DEFORMATION_TYPES),
+                    str(tomograms),
+                )
+            )
+        elif DEFORMATION_COEFFICIENTS not in tilts.columns:
+            problems.append(
+                Problem(
+                    DEFORMATION_COEFFICIENTS,
+                    f"tomogram {name}: {kind} deformations are declared but the tilt series has no coefficients",
+                    where,
+                )
+            )
     return problems
 
 
