@@ -648,14 +648,6 @@ def reconstruct_copick_local(
     """
     Reconstruct a particle map from local tiltseries using copick particles.
     """
-    # The copick extraction checks no inputs (and takes 2D deformations): refuse what reconstruction does not
-    # honour in the tomograms star before extracting.
-    validation.raise_if(
-        validation.RECONSTRUCT,
-        validation.check_inputs(
-            validation.RECONSTRUCT, tomograms=tomograms_starfile, tiltseries_relative_dir=tiltseries_relative_dir
-        ),
-    )
     (
         particles_starfile,
         trajectories_starfile,

@@ -266,6 +266,10 @@ zarr-particle-reconstruct local \
   --box-size 384 --crop-size 256
 ```
 
+Reconstruction cuts its particles with the extraction above, so polished projects' 2D deformations are applied
+as `relion_tomo_reconstruct_particle` applies them: to where each particle is cut from a tilt image and to whether
+it is visible there.
+
 ### CTF refinement and polishing
 
 - CTF refinement runs `relion_tomo_refine_ctf`; polishing runs `relion_tomo_align`.
@@ -399,9 +403,8 @@ Every job checks its options and inputs before it starts (`zarr_particle_tools.v
 by a planner before submission) and refuses, naming the option or column and file, rather than ignoring what it
 cannot honour: the extraction options below and a non-empty `other_args` (for every job; none passes it on), in
 the input stars non-zero Zernike coefficients, a non-identity magnification matrix or angles left blank in some
-rows (for extraction and reconstruction), 2D deformations (for reconstruction), and tilt series with no readable
-pixels (for every job). Particle reconstruction writes the maps only, like RELION's; the internal extraction it
-runs is removed with its star files.
+rows (for extraction and reconstruction), and tilt series with no readable pixels (for every job). Particle
+reconstruction writes the maps only, like RELION's; the internal extraction it runs is removed with its star files.
 
 Subtomogram orientations (`rlnTomoSubtomogramRot`, `rlnTomoSubtomogramTilt`, `rlnTomoSubtomogramPsi`, e.g.
 the filament frame of helical picks) are applied as RELION applies them. Extraction carries them, and every
@@ -431,9 +434,6 @@ other particle column (helical tube IDs, track lengths, priors, flip ratios), th
 
 ### Reconstruction
 
-- Refuses a project with 2D deformations (`EMDL_TOMO_DEFORMATION_GRID_SIZE_X`, `EMDL_TOMO_DEFORMATION_GRID_SIZE_Y`,
-  `EMDL_TOMO_DEFORMATION_TYPE`, `EMDL_TOMO_DEFORMATION_COEFFICIENTS`) until its maps are checked against RELION on
-  deformed data; extraction applies them (see [Extraction](#extraction))
 - Does not support helical symmetry
 - Only reproduces RELION's `--no_circle_crop` mode; its default circle cropping is not implemented
 - Does not support `--dont_apply_offsets` (extraction supports `--dont-apply-offsets`)

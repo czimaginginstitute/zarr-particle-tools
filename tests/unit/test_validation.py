@@ -101,17 +101,18 @@ DEFORMED = {
 COEFFICIENTS = {"rlnTomoDeformationCoefficients": ["[0.001,0,0]", "[0,0,0.001]"]}
 
 
-def test_2d_deformations_are_extracted_but_not_reconstructed(tmp_path, monkeypatch):
+def test_2d_deformations_are_honoured(tmp_path, monkeypatch):
     particles, tomograms = _project(tmp_path, monkeypatch, global_extra=DEFORMED, tilts_extra=COEFFICIENTS)
-    assert v.check_inputs(v.EXTRACT, particles, tomograms) == []
-    assert v.check_inputs(v.CTFREFINE, particles, tomograms) == []
-    assert [p.subject for p in v.check_inputs(v.RECONSTRUCT, particles, tomograms)] == ["rlnTomoDeformationType"]
+    for job_type in (v.EXTRACT, v.RECONSTRUCT, v.CTFREFINE, v.POLISH):
+        assert v.check_inputs(job_type, particles, tomograms) == []
 
 
 def test_coefficients_without_grid_sizes_are_not_deformations(tmp_path, monkeypatch):
-    """RELION reads deformations only when the tomogram row has both grid sizes, and ignores stray coefficients."""
-    particles, tomograms = _project(tmp_path, monkeypatch, tilts_extra=COEFFICIENTS)
-    assert v.check_inputs(v.RECONSTRUCT, particles, tomograms) == []
+    """RELION reads deformations only when the tomogram row has both grid sizes, and ignores a stray type and
+    coefficients, so neither is refused."""
+    stray = {"rlnTomoDeformationType": ["bspline"]}
+    particles, tomograms = _project(tmp_path, monkeypatch, global_extra=stray, tilts_extra=COEFFICIENTS)
+    assert v.check_inputs(v.EXTRACT, particles, tomograms) == []
 
 
 @pytest.mark.parametrize(
@@ -123,7 +124,8 @@ def test_coefficients_without_grid_sizes_are_not_deformations(tmp_path, monkeypa
 )
 def test_deformations_extraction_could_not_build_are_refused(tmp_path, monkeypatch, global_extra, tilts_extra, subject):
     particles, tomograms = _project(tmp_path, monkeypatch, global_extra=global_extra, tilts_extra=tilts_extra)
-    assert [p.subject for p in v.check_inputs(v.EXTRACT, particles, tomograms)] == [subject]
+    for job_type in (v.EXTRACT, v.RECONSTRUCT):  # reconstruction builds them in its internal extraction
+        assert [p.subject for p in v.check_inputs(job_type, particles, tomograms)] == [subject]
 
 
 @pytest.mark.parametrize(

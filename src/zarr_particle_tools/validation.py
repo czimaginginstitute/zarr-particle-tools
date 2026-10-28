@@ -17,8 +17,8 @@ blank angle in some rows, as a merged STAR leaves for particles without a frame,
 RELION-5 2D deformations (``rlnTomoDeformation*``, written by polishing with deformations) are applied by extraction
 as ``Tomogram::projectPoint`` applies them (:mod:`zarr_particle_tools.core.deformation`); a declaration it could not
 build (no or an unknown type, no coefficients) is refused before it streams. Reconstruction takes its crops and
-visibility from that extraction, as RELION's takes them from ``projectPoint``, but it refuses deformations until
-its maps are checked against ``relion_tomo_reconstruct_particle`` on deformed data.
+visibility from that extraction, as ``relion_tomo_reconstruct_particle`` takes them from ``projectPoint``, so it
+applies them too.
 
 Imports only the standard library and ``starfile``, so a process that plans jobs can call it. The programs call
 :func:`check_inputs` on their resolved inputs; the pipeliner wrappers call :func:`check_options` in
@@ -318,15 +318,7 @@ def _check_series(
         problems.append(Problem(TILTSERIES_URI_COLUMN, f"tomogram {name}: several tilt-series locators", where))
     if job_type in PYTHON_IMPLEMENTED and all(c in row and not _blank(row[c]) for c in DEFORMATION_GRID):
         kind = row.get(DEFORMATION_TYPE)
-        if job_type == RECONSTRUCT:
-            problems.append(
-                Problem(
-                    DEFORMATION_TYPE,
-                    f"tomogram {name}: reconstruction with 2D deformations is not verified against RELION yet",
-                    str(tomograms),
-                )
-            )
-        elif _blank(kind) or str(kind) not in DEFORMATION_TYPES:
+        if _blank(kind) or str(kind) not in DEFORMATION_TYPES:
             problems.append(
                 Problem(
                     DEFORMATION_TYPE,
