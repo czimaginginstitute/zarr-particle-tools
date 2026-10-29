@@ -24,8 +24,8 @@ import zarr_particle_tools.generate.cdp_generate_starfiles as cdp_generate
 from zarr_particle_tools.core.constants import OPTICS_DF_COLUMNS
 from zarr_particle_tools.core.ctf import calculate_ctf
 from zarr_particle_tools.core.data import get_tiltseries_datareader
-from zarr_particle_tools.core.dose import calculate_dose_weight_image
 from zarr_particle_tools.core.deformation import build_deformations
+from zarr_particle_tools.core.dose import calculate_dose_weight_image
 from zarr_particle_tools.core.forwardprojection import (
     apply_offsets_to_coordinates,
     calculate_projection_matrix_from_starfile_df,
