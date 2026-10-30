@@ -122,6 +122,19 @@ def test_subtomogram_orientations_are_honored(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize(
+    "column, readers", [("rlnTomoSubtomogramRot", ("extract", "reconstruct")), ("rlnAngleRot", ("reconstruct",))]
+)
+def test_angles_left_blank_in_some_rows_are_refused_where_they_are_read(tmp_path, monkeypatch, column, readers):
+    """A merged STAR leaves NaN where a source had no such column; that is not a rotation, so it is not guessed."""
+    particles, tomograms = _project(tmp_path, monkeypatch, particles_extra={column: [10.0, float("nan")]})
+    for program in ("extract", "reconstruct", "relion"):
+        assert _columns(input_problems(program, particles, tomograms)) == ([column] if program in readers else [])
+    (tmp_path / "filled").mkdir()
+    particles, tomograms = _project(tmp_path / "filled", monkeypatch, particles_extra={column: [10.0, 0.0]})
+    assert input_problems("reconstruct", particles, tomograms) == []
+
+
+@pytest.mark.parametrize(
     "kwargs, extract, reconstruct",
     [
         ({"optics_extra": {"rlnEvenZernike": ["[0.0,0.3]"]}}, ["rlnEvenZernike"], ["rlnEvenZernike"]),

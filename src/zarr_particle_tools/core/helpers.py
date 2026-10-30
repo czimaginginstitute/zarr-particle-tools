@@ -11,6 +11,7 @@ from rich.logging import RichHandler
 
 from zarr_particle_tools.core.constants import NOISY_LOGGERS, OPTICS_DF_COLUMNS, TILTSERIES_URI_RELION_COLUMN
 from zarr_particle_tools.core.deformation import declaration_problems, parse_coefficients
+from zarr_particle_tools.core.orientation import PARTICLE_ANGLES, SUBTOMOGRAM_ANGLES
 
 logger = logging.getLogger(__name__)
 
@@ -458,6 +459,13 @@ def particle_problems(
 ) -> list[str]:
     """Particle and optics metadata the Python ``extract`` or ``reconstruct`` would not apply as RELION does."""
     problems = []
+    for column in SUBTOMOGRAM_ANGLES + (PARTICLE_ANGLES if program == "reconstruct" else ()):
+        blank = int(pd.to_numeric(particles_df[column], errors="coerce").isna().sum()) if column in particles_df else 0
+        if blank:
+            problems.append(
+                f"{column} in {source}: {blank} of {len(particles_df)} particles have no value; fill them in "
+                "(0 is no rotation) or drop the column"
+            )
     if program == "extract":
         if (
             apply_ctf
