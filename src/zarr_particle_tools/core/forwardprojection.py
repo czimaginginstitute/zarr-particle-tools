@@ -9,7 +9,7 @@ import pandas as pd
 from cryoet_alignment.io.aretomo3 import AreTomo3ALN
 
 from zarr_particle_tools.core.data import DataReader
-from zarr_particle_tools.core.orientation import has_subtomogram_orientation, subtomogram_matrices
+from zarr_particle_tools.core.orientation import subtomogram_matrices
 
 
 def in_plane_rotation_to_tilt_axis_rotation(rotation_matrix: list[list[float]]) -> float:
@@ -172,6 +172,15 @@ def calculate_projection_matrix_from_starfile_df(tiltseries_df: pd.DataFrame) ->
 TOMOGRAM_SIZE_COLUMNS = ("rlnTomoSizeX", "rlnTomoSizeY", "rlnTomoSizeZ")
 
 
+def relion_center(size: float) -> int:
+    """RELION's center of a tilt image or a tomogram along one dimension: ``int(size / 2)``.
+
+    Tomogram::setProjectionMatrix (tomogram.cpp:44, 53) builds the projection about it, for the specimen and for the
+    tilt image; along an odd dimension it is half a pixel short of ``size / 2.0``.
+    """
+    return int(size) // 2
+
+
 def specimen_center_offset(tiltseries_row_entry: pd.Series, tiltseries_pixel_size: float) -> np.ndarray:
     """Where RELION projects a particle from, relative to its centered coordinate, in Angstrom.
 
@@ -184,7 +193,7 @@ def specimen_center_offset(tiltseries_row_entry: pd.Series, tiltseries_pixel_siz
     sizes = [tiltseries_row_entry.get(column) for column in TOMOGRAM_SIZE_COLUMNS]
     if any(size is None or pd.isna(size) for size in sizes):
         return np.zeros(3)
-    return np.array([int(size) / 2.0 - int(size) // 2 for size in sizes]) * tiltseries_pixel_size
+    return np.array([int(size) / 2.0 - relion_center(size) for size in sizes]) * tiltseries_pixel_size
 
 
 # can likely be parallelized
@@ -207,6 +216,13 @@ def get_particles_to_tiltseries_coordinates(
     per-tilt 2D image deformations (``core.deformation.build_deformations``); each is applied to the projected 2D
     point exactly where ``Tomogram::projectPoint`` applies it, after the projection and the trajectory offset.
     """
+    # rlnOriginXAngst/YAngst/ZAngst are already included in the coordinates
+    coordinates = filtered_particles_df[
+        ["rlnCenteredCoordinateXAngst", "rlnCenteredCoordinateYAngst", "rlnCenteredCoordinateZAngst"]
+    ].to_numpy(dtype=float)
+    # where each particle is projected from before its trajectory; the specimen-center offset is the same in every tilt
+    projected_from = coordinates if projection_offset is None else coordinates + projection_offset
+
     particles_to_tiltseries_coordinates = {}
     for i, tilt in tiltseries_df.iterrows():
         section = int(tilt["rlnMicrographName"].split("@")[0])
@@ -215,14 +231,7 @@ def get_particles_to_tiltseries_coordinates(
 
         # match 1-indexing of RELION
         for default_particle_id, particle in enumerate(filtered_particles_df.itertuples(), start=1):
-            # rlnOriginXAngst/YAngst/ZAngst are already included in the coordinate
-            coordinate = np.array(
-                [
-                    particle.rlnCenteredCoordinateXAngst,
-                    particle.rlnCenteredCoordinateYAngst,
-                    particle.rlnCenteredCoordinateZAngst,
-                ]
-            )
+            coordinate = coordinates[default_particle_id - 1]
             particle_id = (
                 particle.rlnTomoParticleName
                 if "rlnTomoParticleName" in filtered_particles_df.columns and use_tomo_particle_name_for_id
@@ -230,14 +239,14 @@ def get_particles_to_tiltseries_coordinates(
             )
             # Trajectory shifts only the extraction/projection position; the static coordinate is
             # stored and used for the CTF depth offset (matches RELION: traj in extraction, static pos in getCtf).
-            projection_coordinate = coordinate
+            projection_coordinate = projected_from[default_particle_id - 1]
             if filtered_trajectories_dict is not None:
                 if particle.rlnTomoParticleName not in filtered_trajectories_dict:
                     raise ValueError(f"Particle {particle.rlnTomoParticleName} not found in trajectories.")
                 else:
                     trajectory = filtered_trajectories_dict[particle.rlnTomoParticleName]
                     tilt_trajectory = trajectory.iloc[i]
-                    projection_coordinate = coordinate + np.array(
+                    projection_coordinate = projection_coordinate + np.array(
                         [
                             tilt_trajectory["rlnOriginXAngst"],
                             tilt_trajectory["rlnOriginYAngst"],
@@ -245,8 +254,6 @@ def get_particles_to_tiltseries_coordinates(
                         ]
                     )
 
-            if projection_offset is not None:
-                projection_coordinate = projection_coordinate + projection_offset
             projected_point = project_3d_point_to_2d(projection_coordinate, projection_matrix)[:2]
             if deformation is not None:
                 projected_point = deformation(projected_point)
@@ -281,14 +288,9 @@ def get_particle_crop_and_visibility(
     for section, coords in sections.items():
         coordinate, projected_point = coords
         x, y = projected_point
-        # convert physical angstroms to floating-point pixel coordinates. RELION's tilt-image center is int(size / 2)
-        # (Tomogram::setProjectionMatrix, tomogram.cpp:53), half a pixel short of size / 2.0 along an odd dimension
-        x_px_float = (x + tiltseries_x * tiltseries_pixel_size / 2.0) / tiltseries_pixel_size - (
-            tiltseries_x / 2.0 - tiltseries_x // 2
-        )
-        y_px_float = (y + tiltseries_y * tiltseries_pixel_size / 2.0) / tiltseries_pixel_size - (
-            tiltseries_y / 2.0 - tiltseries_y // 2
-        )
+        # convert physical angstroms to floating-point pixel coordinates about RELION's tilt-image center
+        x_px_float = x / tiltseries_pixel_size + relion_center(tiltseries_x)
+        y_px_float = y / tiltseries_pixel_size + relion_center(tiltseries_y)
         x_start_px_float = x_px_float - pre_bin_box_size / 2.0
         y_start_px_float = y_px_float - pre_bin_box_size / 2.0
         x_start_px = int(round(x_start_px_float))
@@ -351,8 +353,7 @@ def apply_offsets_to_coordinates(particles_df: pd.DataFrame) -> pd.DataFrame:
     origin_columns = ["rlnOriginXAngst", "rlnOriginYAngst", "rlnOriginZAngst"]
     if all(column in particles_df.columns for column in origin_columns):
         offsets = particles_df[origin_columns].to_numpy(dtype=float)
-        if has_subtomogram_orientation(particles_df):
-            offsets = np.einsum("nij,nj->ni", subtomogram_matrices(particles_df), offsets)
+        offsets = np.einsum("nij,nj->ni", subtomogram_matrices(particles_df), offsets)
         particles_df["rlnCenteredCoordinateXAngst"] -= offsets[:, 0]
         particles_df["rlnCenteredCoordinateYAngst"] -= offsets[:, 1]
         particles_df["rlnCenteredCoordinateZAngst"] -= offsets[:, 2]

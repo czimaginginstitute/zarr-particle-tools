@@ -34,6 +34,8 @@ import logging
 import numpy as np
 import pandas as pd
 
+from zarr_particle_tools.core.forwardprojection import relion_center
+
 logger = logging.getLogger(__name__)
 
 GRID_X = "rlnTomoDeformationGridSizeX"
@@ -155,8 +157,8 @@ class ImageDeformation:
     def __init__(self, model, image_size: tuple[int, int], pixel_size: float):
         self.model = model
         self.pixel_size = float(pixel_size)
-        # RELION's tilt_image_center: integer division (tomogram.cpp setProjectionMatrix)
-        self.origin_px = np.array([int(image_size[0] // 2), int(image_size[1] // 2)], dtype=float)
+        # RELION's tilt_image_center (Tomogram::setProjectionMatrix), the center the crops are cut about
+        self.origin_px = np.array([relion_center(image_size[0]), relion_center(image_size[1])], dtype=float)
 
     def shift_px(self, points_px: np.ndarray) -> np.ndarray:
         return self.model.shift(points_px)

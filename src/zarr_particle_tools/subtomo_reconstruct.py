@@ -41,6 +41,7 @@ from zarr_particle_tools.core.forwardprojection import (
     apply_offsets_to_coordinates,
     calculate_projection_matrix_from_starfile_df,
     get_particles_to_tiltseries_coordinates,
+    specimen_center_offset,
 )
 from zarr_particle_tools.core.helpers import (
     STAR_NAME_COLUMNS,
@@ -231,12 +232,15 @@ def reconstruct_single_tiltseries(
         tiltseries_pixel_size * bin, pixel_size
     ), f"Mismatch between tiltseries pixel size and optics pixel size for {tiltseries_row_entry['rlnTomoName']}"
     tiltseries_projection_matrices = calculate_projection_matrix_from_starfile_df(individual_tiltseries_df)
+    # Only the 3D coordinate is read here, for the CTF; the crops and their visibility come from the internal
+    # extraction. The offset keeps the projected positions what that extraction cut, should they ever be read.
     particles_to_tiltseries_coordinates = get_particles_to_tiltseries_coordinates(
         filtered_particles_df,
         filtered_trajectories_dict,
         individual_tiltseries_df,
         tiltseries_projection_matrices,
         use_tomo_particle_name_for_id=False,
+        projection_offset=specimen_center_offset(tiltseries_row_entry, tiltseries_pixel_size),
     )
     sections = individual_tiltseries_df["rlnMicrographName"].str.split("@").str[0].astype(int).to_list()
     all_particle_projection_matrices = (
