@@ -674,6 +674,7 @@ def reconstruct_copick_local(
         tiltseries_relative_dir=tiltseries_relative_dir,
         tomograms_starfile=tomograms_starfile,
         overwrite=overwrite,
+        job_type=validation.RECONSTRUCT,
     )
 
     reconstruct(

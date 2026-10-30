@@ -670,6 +670,7 @@ def parse_extract_copick_local_subtomograms(
     overwrite: bool = False,
     dry_run: bool = False,
     debug: bool = False,
+    job_type: str = validation.EXTRACT,
 ) -> tuple[Path, Path, Path, Path, Path]:
     """
     Extracts subtomograms from local files using copick picks and the provided parameters.
@@ -687,6 +688,15 @@ def parse_extract_copick_local_subtomograms(
         tomograms_starfile=tomograms_starfile,
         dry_run=dry_run,
     )
+    # The particles come from the copick picks, with only rlnAngle* and the optics of tomograms.star, none of which
+    # the particle checks read; the tomograms star and its tilt series are checked before the project is opened.
+    if not dry_run:
+        validation.raise_if(
+            job_type,
+            validation.check_inputs(
+                job_type, tomograms=tomograms_starfile, tiltseries_relative_dir=tiltseries_relative_dir
+            ),
+        )
 
     if copick_run_names is None:
         picks = get_copick_picks(copick_config, copick_name, copick_session_id, copick_user_id, copick_run_names)

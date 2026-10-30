@@ -12,6 +12,7 @@ from click.testing import CliRunner
 import zarr_particle_tools.generate.copick_generate_starfiles as copick_generate
 from tests.helpers.compare import mrc_equal
 from tests.helpers.deformation import make_odd_sized, random_deformation, synthetic_names, write_deformed_project
+from zarr_particle_tools import validation
 from zarr_particle_tools.core.helpers import STAR_NAME_COLUMNS
 from zarr_particle_tools.subtomo_extract import (
     cli,
@@ -19,6 +20,7 @@ from zarr_particle_tools.subtomo_extract import (
     parse_extract_copick_local_subtomograms,
     subtomogram_path,
 )
+from zarr_particle_tools.subtomo_reconstruct import reconstruct_copick_local
 
 DATASET_CONFIGS = {
     "synthetic": {
@@ -624,3 +626,35 @@ def test_extract_with_deformations_matches_relion(tmp_path, deformation_type, od
         n_ignored_differ += relion.shape != ignored.shape or not np.allclose(relion, ignored, atol=tol)
     # the comparison is sensitive: without the deformation the same crops do not match RELION
     assert n_ignored_differ == len(names)
+
+
+@pytest.mark.parametrize("damage", ["unknown deformation type", "missing tilt-series stack"])
+def test_copick_extraction_and_reconstruction_refuse_bad_inputs_before_opening_the_project(tmp_path, damage):
+    data_root = DATASET_CONFIGS["synthetic"]["data_root"]
+    n_tilts = len(starfile.read(data_root / "tiltseries" / "TS_1.star"))
+    grid, rows = random_deformation("linear", n_tilts, (630, 630), np.random.default_rng(2))
+    write_deformed_project(tmp_path, data_root, "linear", grid, rows, synthetic_names(data_root))
+    if damage == "unknown deformation type":
+        tomograms = starfile.read(tmp_path / "tomograms.star", always_dict=True)
+        tomograms["global"]["rlnTomoDeformationType"] = "bspline"
+        starfile.write(tomograms, tmp_path / "tomograms.star")
+        subject = "rlnTomoDeformationType"
+    else:
+        (tmp_path / "tiltseries" / "TS_1.mrcs").unlink()
+        subject = "rlnMicrographName"
+    # the copick config does not exist: the refusal has to come before the project is opened
+    copick = {
+        "copick_config": tmp_path / "absent.json",
+        "copick_name": "ribosome",
+        "copick_session_id": "0",
+        "copick_user_id": "test",
+        "tiltseries_relative_dir": tmp_path,
+        "tomograms_starfile": tmp_path / "tomograms.star",
+    }
+    with pytest.raises(validation.UnsupportedError, match=subject):
+        parse_extract_copick_local_subtomograms(box_size=64, output_dir=tmp_path / "extract", **copick)
+    with pytest.raises(validation.UnsupportedError, match=subject):
+        reconstruct_copick_local(box_size=64, output_dir=tmp_path / "reconstruct", **copick)
+    # nothing was written, so a rerun needs no --overwrite
+    assert not (tmp_path / "extract" / "particles.star").exists()
+    assert not (tmp_path / "reconstruct" / "particles.star").exists()
