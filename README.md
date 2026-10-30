@@ -409,7 +409,8 @@ If you would like to see a feature added, on or off this list, please open an is
 Every job refuses, before it streams any tilt series, what it would not do as RELION does, naming the job option
 or the column and file. The pipeliner jobs report the same refusals from `validate_joboptions()`, the input ones
 once their inputs exist. For extraction and reconstruction this covers the options listed below and a non-empty
-`other_args`; for every job, tilt series it cannot read.
+`other_args`; for every job, tilt series it cannot read. Particle reconstruction writes the maps only, like
+RELION's; the internal extraction it runs is removed with its star files.
 
 ### Extraction and reconstruction
 

@@ -546,10 +546,14 @@ def reconstruct(
         taper=taper,
     )
 
-    # remove bulky intermediate subtomograms; keep the star files (optimisation_set.star is a pipeliner output)
+    # remove the internal extraction: its subtomograms, and the particles.star / optimisation_set.star that point at
+    # them (a consumer binding those would read deleted images with the CTF-premultiplied flag of a no-CTF
+    # extraction). Like RELION's own particle reconstruction, the job's products are the maps.
     subtomos_dir = Path(output_dir) / "Subtomograms"
     if subtomos_dir.exists() and subtomos_dir.is_dir():
         shutil.rmtree(subtomos_dir)
+    for internal in ("particles.star", "optimisation_set.star"):
+        (Path(output_dir) / internal).unlink(missing_ok=True)
 
     end_time = time.time()
     logger.info(f"Reconstructing particles took {end_time - start_time:.2f} seconds.")
