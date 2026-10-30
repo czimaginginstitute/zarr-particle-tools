@@ -601,6 +601,7 @@ def reconstruct_local(
         optimisation_set_starfile=optimisation_set_starfile,
         overwrite=overwrite,
         ignore_deformations=ignore_deformations,
+        program="reconstruct",
     )
 
     reconstruct(
@@ -669,6 +670,7 @@ def reconstruct_copick_local(
         tomograms_starfile=tomograms_starfile,
         overwrite=overwrite,
         ignore_deformations=ignore_deformations,
+        program="reconstruct",
     )
 
     reconstruct(

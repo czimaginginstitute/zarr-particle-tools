@@ -35,6 +35,7 @@ from zarr_particle_tools.core.forwardprojection import (
 from zarr_particle_tools.core.helpers import (
     STAR_NAME_COLUMNS,
     auto_worker_count,
+    check_inputs,
     get_tiltseries_data,
     optics_lookup,
     particles_and_optics,
@@ -578,9 +579,11 @@ def parse_extract_local_subtomograms(
     overwrite: bool = False,
     debug: bool = False,
     ignore_deformations: bool = False,
+    program: str = "extract",
 ) -> tuple[Path, Path, Path, Path, Path]:
     """
-    Extracts subtomograms from local files using the provided parameters.
+    Extracts subtomograms from local files using the provided parameters. ``program`` names the input checks
+    (``extract``, or ``reconstruct`` for its internal extraction).
 
     Returns:
         tuple: particles_starfile, trajectories_starfile, tiltseries_relative_dir, tomograms_starfile, optimisation_set_starfile
@@ -603,6 +606,16 @@ def parse_extract_local_subtomograms(
         tiltseries_relative_dir=tiltseries_relative_dir,
         tomograms_starfile=tomograms_starfile,
         optimisation_set_starfile=optimisation_set_starfile,
+    )
+    check_inputs(
+        program,
+        particles_starfile,
+        tomograms_starfile,
+        trajectories_starfile,
+        tiltseries_relative_dir,
+        apply_ctf=not no_ctf,
+        apply_offsets=not dont_apply_offsets,
+        ignore_deformations=ignore_deformations,
     )
 
     particles_count, total_skipped_count, individual_tiltseries_count = extract_subtomograms(
@@ -663,9 +676,11 @@ def parse_extract_copick_local_subtomograms(
     dry_run: bool = False,
     debug: bool = False,
     ignore_deformations: bool = False,
+    program: str = "extract",
 ) -> tuple[Path, Path, Path, Path, Path]:
     """
-    Extracts subtomograms from local files using copick picks and the provided parameters.
+    Extracts subtomograms from local files using copick picks and the provided parameters. The tomograms star and
+    its tilt series are checked for ``program`` before the copick project is opened.
 
     Returns:
         tuple: particles_starfile, trajectories_starfile, tiltseries_relative_dir, tomograms_starfile, optimisation_set_starfile
@@ -680,6 +695,15 @@ def parse_extract_copick_local_subtomograms(
         tomograms_starfile=tomograms_starfile,
         dry_run=dry_run,
     )
+    if not dry_run:
+        check_inputs(
+            program,
+            None,
+            tomograms_starfile,
+            tiltseries_relative_dir=tiltseries_relative_dir,
+            apply_ctf=not no_ctf,
+            ignore_deformations=ignore_deformations,
+        )
 
     if copick_run_names is None:
         picks = get_copick_picks(copick_config, copick_name, copick_session_id, copick_user_id, copick_run_names)

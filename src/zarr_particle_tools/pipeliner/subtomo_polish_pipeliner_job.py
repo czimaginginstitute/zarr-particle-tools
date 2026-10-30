@@ -14,6 +14,8 @@ from pipeliner.nodes import (
 from pipeliner.pipeliner_job import ExternalProgram, PipelinerCommand, PipelinerJob
 from pipeliner.results_display_objects import ResultsDisplayObject
 
+from zarr_particle_tools.pipeliner import _common
+
 
 class PythonRelionSubtomoPolishJob(PipelinerJob):
     PROCESS_NAME = "zarrparticletools.polish"
@@ -33,7 +35,11 @@ class PythonRelionSubtomoPolishJob(PipelinerJob):
         self.add_output_node("particles.star", NODE_PARTICLEGROUPMETADATA, ["relion", "tomo", "polish", "python"])
         self.add_output_node("optimisation_set.star", NODE_TOMOOPTIMISATIONSET, ["relion", "tomo", "polish", "python"])
 
+    def additional_joboption_validation(self):
+        return _common.validate(self, "polish")
+
     def get_commands(self):
+        _common.check_options(self, "polish")
         cmd = ["zarr-particle-polish", "local"]
 
         optimisation_starfile = self.joboptions["in_optimisation"].get_string()
@@ -69,12 +75,10 @@ class PythonRelionSubtomoPolishJob(PipelinerJob):
             str(int(float(self.joboptions["max_error"].get_string()))),
         ]  # RELION --r is float; our CLI is int
 
-        # RELION requires exactly one of shift-only / motion
-        do_shift = self.joboptions["do_shift_align"].get_boolean()
-        do_motion = self.joboptions["do_motion"].get_boolean()
-        if do_shift and not do_motion:
+        # exactly one of shift-only / motion (check_options)
+        if self.joboptions["do_shift_align"].get_boolean():
             cmd += ["--shift-only", "--no-motion"]
-        elif do_motion and not do_shift:
+        else:
             cmd += [
                 "--do-motion",
                 "--s-vel",
@@ -82,10 +86,11 @@ class PythonRelionSubtomoPolishJob(PipelinerJob):
                 "--s-div",
                 self.joboptions["sigma_div"].get_string(),
             ]
-        else:
-            raise AssertionError("Per-particle motion and shift-only corrections cannot be applied simultaneously")
 
         cmd += ["--threads", self.joboptions["nr_threads"].get_string()]
+        other_args = self.joboptions["other_args"].get_string().strip()
+        if other_args:
+            cmd += ["--relion-args", other_args]
 
         return [PipelinerCommand(cmd)]
 
