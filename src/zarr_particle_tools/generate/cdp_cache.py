@@ -46,6 +46,8 @@ run_id_to_alignment_ids_cache: dict[int, list[int]] = defaultdict(list)
 run_id_to_voxel_spacing_ids_cache: dict[int, list[int]] = defaultdict(list)
 # alignment id to tomogram id
 alignment_to_tomograms_cache: dict[int, list[int]] = defaultdict(list)
+# run id to tomogram id
+run_id_to_tomograms_cache: dict[int, list[int]] = defaultdict(list)
 # tomogram voxel spacing id to tomogram id
 tomogram_voxel_spacing_to_tomograms_cache: dict[int, list[int]] = defaultdict(list)
 
@@ -63,6 +65,7 @@ _ALL_DICT_CACHES = [
     run_id_to_alignment_ids_cache,
     run_id_to_voxel_spacing_ids_cache,
     alignment_to_tomograms_cache,
+    run_id_to_tomograms_cache,
     tomogram_voxel_spacing_to_tomograms_cache,
 ]
 # lru-wrapped getters, registered at import for clear_caches().
@@ -355,6 +358,21 @@ def get_tomograms_by_alignment_id(alignment_ids: list[int] | int) -> dict[int, l
 
 
 @hashable_lru_cache(maxsize=None)
+def get_tomograms_by_run_id(run_ids: list[int] | int) -> dict[int, list[Tomogram]]:
+    return get_items_by_ids(
+        ids=run_ids,
+        cache=run_id_to_tomograms_cache,
+        query_field=Tomogram.run_id,
+        model_cls=Tomogram,
+        key_extractor=lambda t: t.run_id,
+        multiple_results=True,
+        derived_cache_callable=get_tomograms,
+        derived_cache=tomograms_cache,
+        as_dict=True,
+    )
+
+
+@hashable_lru_cache(maxsize=None)
 def get_tomograms_by_voxel_spacing_id(voxel_spacing_ids: list[int] | int) -> dict[int, list[Tomogram]]:
     return get_items_by_ids(
         ids=voxel_spacing_ids,
@@ -433,11 +451,11 @@ def get_per_section_alignments_by_alignment_id(
 
 
 @hashable_lru_cache(maxsize=None)
-def get_per_section_parameters_by_tiltseries_id(
+def get_all_per_section_parameters_by_tiltseries_id(
     tiltseries_ids: list[int] | int,
 ) -> dict[int, list[PerSectionParameters]]:
-    """Fetches per-section parameters (CTF information) by tiltseries ID. tiltseries with invalid / incomplete CTF parameters will have a None value in the returned dictionary."""
-    tiltseries_id_to_psp: dict[int, list[PerSectionParameters]] = get_items_by_ids(
+    """Fetches per-section parameters (CTF information) by tiltseries ID, including incomplete records."""
+    return get_items_by_ids(
         ids=tiltseries_ids,
         cache=per_section_parameters_cache,
         query_field=PerSectionParameters.tiltseries_id,
@@ -446,6 +464,14 @@ def get_per_section_parameters_by_tiltseries_id(
         multiple_results=True,
         as_dict=True,
     )
+
+
+@hashable_lru_cache(maxsize=None)
+def get_per_section_parameters_by_tiltseries_id(
+    tiltseries_ids: list[int] | int,
+) -> dict[int, list[PerSectionParameters]]:
+    """Fetches per-section parameters (CTF information) by tiltseries ID. tiltseries with invalid / incomplete CTF parameters will have a None value in the returned dictionary."""
+    tiltseries_id_to_psp = get_all_per_section_parameters_by_tiltseries_id(tiltseries_ids)
     # filter out tiltseries that do not have valid CTF parameters
     tiltseries_id_to_psp = {
         id: psp if all(p.major_defocus is not None for p in psp) else None for id, psp in tiltseries_id_to_psp.items()

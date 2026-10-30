@@ -1,17 +1,16 @@
 """
-``zarrparticletools.importtomo``: CryoET Data Portal runs imported as a RELION 5 tomography set whose tilt series stay
-on S3 (``zarr-particle-importtomo``).
-
-Imports only pipeliner and the standard library (plus zpt's literal-only constants), so a process that plans jobs
-can load it without the extraction stack.
+``zarrparticletools.importtomo``: CryoET Data Portal runs imported as a RELION 5 tomogram set for zarr-particle-tools
+programs, with the tilt series read from S3 (``zarr-particle-importtomo``).
 """
 
 from collections.abc import Sequence
 
 from pipeliner.data_structure import NODE_PROCESSDATA, NODE_TOMOGRAMGROUPMETADATA, TOMO_IMPORT_DIR
 from pipeliner.job_options import (
+    BooleanJobOption,
     ExternalFileJobOption,
     FloatJobOption,
+    JobOptionValidationResult,
     MultipleChoiceJobOption,
     StringJobOption,
 )
@@ -21,6 +20,7 @@ from pipeliner.results_display_objects import ResultsDisplayObject
 from zarr_particle_tools.core.constants import DEFAULT_AMPLITUDE_CONTRAST, TOMO_HAND_DEFAULT_VALUE, TOMOGRAM_TYPES
 
 _KEYWORDS = ["relion", "tomo", "portal", "zarr"]
+_SELECTION_EXCLUDES = ("dataset_ids", "run_ids", "tomogram_ids", "tomogram_software", "reconstruction_method")
 
 
 class PythonPortalImportTomoJob(PipelinerJob):
@@ -34,6 +34,10 @@ class PythonPortalImportTomoJob(PipelinerJob):
         self.jobinfo.display_name = "Import CryoET Data Portal runs (S3, Python)."
         self.jobinfo.short_desc = (
             "RELION 5 tomograms.star and tilt-series stars from the CryoET Data Portal; tilt series stay on S3."
+        )
+        self.jobinfo.long_desc = (
+            "For zarr-particle-tools programs only: stock RELION programs that read pixels see the all-zero "
+            "placeholder stack. Use zarr-particle-export for a project with the tilt series on disk."
         )
         self.is_tomo = True
 
@@ -98,13 +102,40 @@ class PythonPortalImportTomoJob(PipelinerJob):
             default_value_index=0 if TOMO_HAND_DEFAULT_VALUE == -1 else 1,
             help_text="The portal does not record the defocus handedness.",
         )
+        self.joboptions["staging"] = BooleanJobOption(
+            label="Staging portal:",
+            default_value=False,
+            help_text="Query the staging CryoET Data Portal (GraphQL + authenticated S3) instead of prod.",
+        )
         self.get_runtab_options(addtl_args=True)
 
     def create_output_nodes(self):
         self.add_output_node("tomograms.star", NODE_TOMOGRAMGROUPMETADATA, _KEYWORDS)
         self.add_output_node("portal_selection.json", NODE_PROCESSDATA, ["portal", "selection"])
 
+    def _selection_conflicts(self) -> list:
+        """The ID and filter options set alongside a stored selection, which excludes them."""
+        if not str(self.joboptions["in_selection"].value or "").strip():
+            return []
+        conflicts = [self.joboptions[o] for o in _SELECTION_EXCLUDES if str(self.joboptions[o].value or "").strip()]
+        if self.joboptions["tomogram_type"].value != TOMOGRAM_TYPES[0]:
+            conflicts.append(self.joboptions["tomogram_type"])
+        if float(self.joboptions["voxel_spacing"].value or 0.0):
+            conflicts.append(self.joboptions["voxel_spacing"])
+        return conflicts
+
+    def additional_joboption_validation(self) -> list[JobOptionValidationResult]:
+        conflicts = self._selection_conflicts()
+        if not conflicts:
+            return []
+        message = "A stored portal selection excludes the ID and filter options."
+        return [JobOptionValidationResult("error", [self.joboptions["in_selection"], *conflicts], message)]
+
     def get_commands(self):
+        if conflicts := self._selection_conflicts():
+            raise ValueError(
+                f"A stored portal selection excludes the ID and filter options: {[c.label for c in conflicts]}"
+            )
         cmd = ["zarr-particle-importtomo", "data-portal", "--output-dir", self.output_dir]
         selection = self.joboptions["in_selection"].get_string().strip()
         if selection:
@@ -124,6 +155,8 @@ class PythonPortalImportTomoJob(PipelinerJob):
             cmd += ["--voxel-spacing", self.joboptions["voxel_spacing"].get_string()]
         cmd += ["--amplitude-contrast", self.joboptions["Q0"].get_string()]
         cmd += ["--hand", self.joboptions["hand"].get_string()]
+        if self.joboptions["staging"].get_boolean():
+            cmd += ["--staging"]
         cmd += self.parse_additional_args()
         return [PipelinerCommand(cmd)]
 
