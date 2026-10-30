@@ -57,6 +57,14 @@ def test_options_the_programs_do_not_implement():
     assert not v.check_options(v.POLISH, {"do_shift_align": "Yes", "do_motion": "No"})
 
 
+def test_other_args_are_refused_for_every_job():
+    """No wrapper passes other_args on, so a RELION flag in it (e.g. --apply_orientations) would be dropped."""
+    for job_type in v.JOB_TYPES:
+        given = {"other_args": "--apply_orientations", "do_shift_align": "Yes"}
+        assert [p.subject for p in v.check_options(job_type, given)] == ["other_args"]
+        assert v.check_options(job_type, {**given, "other_args": ""}) == []
+
+
 def test_direct_entries_conflict_only_when_both_forms_are_named():
     """pipeliner's particle reconstruction defaults do_use_direct_entries to Yes; a set alone is unambiguous."""
     alone = {"do_use_direct_entries": "Yes", "in_optimisation": "Extract/job001/optimisation_set.star"}
@@ -116,6 +124,20 @@ def test_coefficients_without_grid_sizes_are_not_deformations(tmp_path, monkeypa
 def test_deformations_extraction_could_not_build_are_refused(tmp_path, monkeypatch, global_extra, tilts_extra, subject):
     particles, tomograms = _project(tmp_path, monkeypatch, global_extra=global_extra, tilts_extra=tilts_extra)
     assert [p.subject for p in v.check_inputs(v.EXTRACT, particles, tomograms)] == [subject]
+
+
+@pytest.mark.parametrize(
+    "column, readers", [("rlnTomoSubtomogramRot", (v.EXTRACT, v.RECONSTRUCT)), ("rlnAngleRot", (v.RECONSTRUCT,))]
+)
+def test_angles_left_blank_in_some_rows_are_refused_where_they_are_read(tmp_path, monkeypatch, column, readers):
+    """A merged STAR leaves NaN where a source had no such column; that is not a rotation, so it is not guessed."""
+    particles, tomograms = _project(tmp_path, monkeypatch, particles_extra={column: [10.0, float("nan")]})
+    for job_type in v.JOB_TYPES:
+        expected = [column] if job_type in readers else []
+        assert [p.subject for p in v.check_inputs(job_type, particles, tomograms)] == expected
+    (tmp_path / "filled").mkdir()
+    particles, tomograms = _project(tmp_path / "filled", monkeypatch, particles_extra={column: [10.0, 0.0]})
+    assert v.check_inputs(v.RECONSTRUCT, particles, tomograms) == []
 
 
 def test_a_series_with_no_readable_pixels_is_refused(tmp_path, monkeypatch):

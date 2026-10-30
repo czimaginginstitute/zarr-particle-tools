@@ -16,6 +16,14 @@ from pipeliner.pipeliner_job import ExternalProgram, PipelinerCommand, Pipeliner
 from pipeliner.results_display_objects import ResultsDisplayObject
 
 
+def _check_options(job) -> None:
+    """Refuse options the program does not implement (see zarr_particle_tools.validation)."""
+    from zarr_particle_tools import validation  # lazily: this module loads wherever pipeliner lists job types
+
+    options = {name: option.get_string() for name, option in job.joboptions.items()}
+    validation.raise_if(job.PROCESS_NAME, validation.check_options(job.PROCESS_NAME, options))
+
+
 def _add_staging_options(job) -> None:
     """Where the tilt series are staged for stock RELION, and whether that must be RAM."""
     job.joboptions["staging_dir"] = StringJobOption(
@@ -61,6 +69,7 @@ class PythonRelionSubtomoPolishJob(PipelinerJob):
         self.add_output_node("optimisation_set.star", NODE_TOMOOPTIMISATIONSET, ["relion", "tomo", "polish", "python"])
 
     def get_commands(self):
+        _check_options(self)  # refuses both or neither of shift-only and motion, among others
         cmd = ["zarr-particle-polish", "local"]
 
         optimisation_starfile = self.joboptions["in_optimisation"].get_string()
@@ -109,11 +118,6 @@ class PythonRelionSubtomoPolishJob(PipelinerJob):
                 "--s-div",
                 self.joboptions["sigma_div"].get_string(),
             ]
-        else:  # both or neither: refused by validation.check_options
-            from zarr_particle_tools import validation
-
-            options = {name: option.get_string() for name, option in self.joboptions.items()}
-            validation.raise_if(self.PROCESS_NAME, validation.check_options(self.PROCESS_NAME, options))
 
         cmd += ["--threads", self.joboptions["nr_threads"].get_string()]
         cmd += _staging_args(self)

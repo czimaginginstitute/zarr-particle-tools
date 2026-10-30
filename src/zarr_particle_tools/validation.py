@@ -10,7 +10,9 @@ caller can refuse a job before it is submitted and a program can refuse it befor
 Subtomogram orientations (``rlnTomoSubtomogram{Rot,Tilt,Psi}``, e.g. a filament frame) are honored as RELION honors
 them: 2D-stack extraction carries them through and rotates the origin offsets by them, and reconstruction composes
 ``A_sub · A_part`` (:mod:`zarr_particle_tools.core.orientation`). 3D pseudo-subtomograms, the only extraction output
-whose pixels ``A_sub`` changes in RELION, are not implemented and stay refused (``do_output_2dstacks``).
+whose pixels ``A_sub`` changes in RELION, are not implemented and stay refused (``do_output_2dstacks``), and so is
+pipeliner's ``other_args``, which no wrapper passes on (RELION's ``--apply_orientations`` could only arrive there). A
+blank angle in some rows, as a merged STAR leaves for particles without a frame, is refused rather than guessed.
 
 RELION-5 2D deformations (``rlnTomoDeformation*``, written by polishing with deformations) are applied by extraction
 as ``Tomogram::projectPoint`` applies them (:mod:`zarr_particle_tools.core.deformation`); a declaration it could not
@@ -39,8 +41,14 @@ POLISH = "zarrparticletools.polish"
 
 #: Jobs whose pixels are produced by the Python reimplementation (not by stock RELION).
 PYTHON_IMPLEMENTED = (EXTRACT, RECONSTRUCT)
+#: Every job this package wraps. None passes pipeliner's ``other_args`` on to its program.
+JOB_TYPES = (EXTRACT, RECONSTRUCT, CTFREFINE, POLISH)
 
 TILTSERIES_URI_COLUMN = "tomoTiltSeriesURI"
+#: The angles the Python implementation reads (core.orientation): ``A_sub`` rotates the origin offsets in
+#: extraction, and reconstruction projects with ``A_sub · A_part``.
+SUBTOMOGRAM_ANGLES = ("rlnTomoSubtomogramRot", "rlnTomoSubtomogramTilt", "rlnTomoSubtomogramPsi")
+PARTICLE_ANGLES = ("rlnAngleRot", "rlnAngleTilt", "rlnAnglePsi")
 ZERNIKE = ("rlnEvenZernike", "rlnOddZernike")
 MAGNIFICATION = {"rlnMagMat00": 1.0, "rlnMagMat01": 0.0, "rlnMagMat10": 0.0, "rlnMagMat11": 1.0}
 #: RELION reads 2D deformations iff a tomogram row has both grid sizes (TomogramSet::loadTomogram); the type sits
@@ -91,6 +99,13 @@ def _number(value, default: float) -> float:
 
 def _blank(value) -> bool:
     return value is None or (isinstance(value, float) and math.isnan(value)) or not str(value).strip().strip('"')
+
+
+def _not_a_number(value) -> bool:
+    try:
+        return math.isnan(float(value))
+    except (TypeError, ValueError):
+        return True
 
 
 def resolve_path(value, base: Path | None = None) -> Path | None:
@@ -153,6 +168,14 @@ def check_options(job_type: str, options: Mapping[str, object]) -> list[Problem]
     """Job option values the program does not implement, by pipeliner option name."""
     get = options.get
     problems: list[Problem] = []
+    if job_type in JOB_TYPES and not _blank(get("other_args")):
+        problems.append(
+            Problem(
+                "other_args",
+                "is not passed to the program, so RELION flags in it (e.g. --apply_orientations) would be "
+                "dropped; leave it empty",
+            )
+        )
     if job_type in PYTHON_IMPLEMENTED:
         # RELION reads the direct entries when do_use_direct_entries is Yes (pipeliner's default for particle
         # reconstruction); the program reads an optimisation set whenever one is named. Only naming both
@@ -216,6 +239,18 @@ def check_inputs(
         parts = blocks.get("particles", next(iter(blocks.values())))
         optics = blocks.get("optics")
         if job_type in PYTHON_IMPLEMENTED:
+            # a merged STAR leaves blanks where its sources had no such column; a blank angle is not a rotation
+            for column in SUBTOMOGRAM_ANGLES + (PARTICLE_ANGLES if job_type == RECONSTRUCT else ()):
+                missing = int(parts[column].map(_not_a_number).sum()) if column in parts.columns else 0
+                if missing:
+                    problems.append(
+                        Problem(
+                            column,
+                            f"{missing} of {len(parts)} particles have no value; RELION reads one per particle "
+                            "(0 is no rotation), so fill them in or drop the column",
+                            str(particles),
+                        )
+                    )
             tables = [t for t in (optics, parts) if t is not None]
             for column in ZERNIKE:
                 if any(column in t.columns and t[column].map(_nontrivial_vector).any() for t in tables):

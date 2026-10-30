@@ -15,6 +15,14 @@ from pipeliner.pipeliner_job import ExternalProgram, PipelinerCommand, Pipeliner
 from pipeliner.results_display_objects import ResultsDisplayObject
 
 
+def _check_options(job) -> None:
+    """Refuse options the program does not implement (see zarr_particle_tools.validation)."""
+    from zarr_particle_tools import validation  # lazily: this module loads wherever pipeliner lists job types
+
+    options = {name: option.get_string() for name, option in job.joboptions.items()}
+    validation.raise_if(job.PROCESS_NAME, validation.check_options(job.PROCESS_NAME, options))
+
+
 def _add_staging_options(job) -> None:
     """Where the tilt series are staged for stock RELION, and whether that must be RAM."""
     job.joboptions["staging_dir"] = StringJobOption(
@@ -60,6 +68,7 @@ class PythonRelionSubtomoCtfRefineJob(PipelinerJob):
         )
 
     def get_commands(self):
+        _check_options(self)
         cmd = ["zarr-particle-ctfrefine", "local"]
 
         optimisation_starfile = self.joboptions["in_optimisation"].get_string()

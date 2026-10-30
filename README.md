@@ -397,10 +397,11 @@ If you would like to see a feature added, on or off this list, please open an is
 
 Every job checks its options and inputs before it starts (`zarr_particle_tools.validation.check`, also usable
 by a planner before submission) and refuses, naming the option or column and file, rather than ignoring what it
-cannot honour: the extraction options below, and in the input stars non-zero Zernike coefficients or a
-non-identity magnification matrix (for extraction and reconstruction), 2D deformations (for reconstruction), and
-tilt series with no readable pixels (for every job). Particle reconstruction writes the maps only, like RELION's;
-the internal extraction it runs is removed with its star files.
+cannot honour: the extraction options below and a non-empty `other_args` (for every job; none passes it on), in
+the input stars non-zero Zernike coefficients, a non-identity magnification matrix or angles left blank in some
+rows (for extraction and reconstruction), 2D deformations (for reconstruction), and tilt series with no readable
+pixels (for every job). Particle reconstruction writes the maps only, like RELION's; the internal extraction it
+runs is removed with its star files.
 
 Subtomogram orientations (`rlnTomoSubtomogramRot`, `rlnTomoSubtomogramTilt`, `rlnTomoSubtomogramPsi`, e.g.
 the filament frame of helical picks) are applied as RELION applies them. Extraction carries them, and every
@@ -411,7 +412,8 @@ other particle column (helical tube IDs, track lengths, priors, flip ratios), th
 ### Extraction and reconstruction
 
 - Extraction lacks RELION's `--apply_orientations` mode (writing `A_sub · A_part` into the subtomogram
-  angles and zeroing `rlnAngle*`); subtomogram orientations themselves are applied (see above)
+  angles and zeroing `rlnAngle*`), and refuses it in `other_args`; subtomogram orientations themselves are applied
+  (see above)
 - Does not apply higher-order optical-aberration corrections from RELION optics metadata
   (even-Zernike gamma offsets or odd-Zernike phase corrections)
 - Does not support whitening (power spectral flattening)

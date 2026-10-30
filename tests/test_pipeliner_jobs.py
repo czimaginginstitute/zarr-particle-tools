@@ -76,3 +76,31 @@ def test_entry_point_is_registered_when_installed():
 
     names = {ep.name for ep in entry_points(group="ccpem_pipeliner.jobs")}
     assert "zarrparticletools.reconstruct" in names
+
+
+@pytest.mark.parametrize(
+    "module, cls",
+    [
+        ("subtomo_extract_pipeliner_job", "PythonRelionPseudoSubtomoJob"),
+        ("subtomo_reconstruct_pipeliner_job", "PythonRelionSubtomoReconstructJob"),
+        ("subtomo_ctfrefine_pipeliner_job", "PythonRelionSubtomoCtfRefineJob"),
+        ("subtomo_polish_pipeliner_job", "PythonRelionSubtomoPolishJob"),
+    ],
+)
+def test_other_args_are_refused_because_no_wrapper_passes_them_on(module, cls):
+    from zarr_particle_tools import validation
+
+    job = getattr(importlib.import_module(f"zarr_particle_tools.pipeliner.{module}"), cls)()
+    job.output_dir = "Job/job001/"
+    required = {
+        "in_optimisation": "input/optimisation_set.star",
+        "in_halfmaps": "input/run_half1_class001_unfil.mrc",
+        "in_refmask": "input/mask.mrc",
+        "in_post": "input/postprocess.star",
+    }
+    for name, value in required.items():
+        if name in job.joboptions:
+            job.joboptions[name].value = value
+    job.joboptions["other_args"].value = "--apply_orientations"
+    with pytest.raises(validation.UnsupportedError, match="other_args"):
+        job.get_commands()
