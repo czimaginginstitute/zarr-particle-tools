@@ -35,6 +35,24 @@ def get_copick_picks(
     return picks
 
 
+def copick_run_optics_rows(optics_df: pd.DataFrame, run_name: str, data_portal_runs: bool = False) -> pd.DataFrame:
+    """
+    The optics rows of a copick run: those whose rlnOpticsGroupName or rlnTomoName equals the run name, else, for a
+    numeric run name (a Data Portal run ID), those whose rlnOpticsGroupName starts with ``run_<id>_``
+    (``get_optics_group_name``). With ``data_portal_runs``, only the latter.
+    """
+    group_names = optics_df["rlnOpticsGroupName"].astype(str)
+    matches = optics_df.iloc[0:0]
+    if not data_portal_runs:
+        exact = group_names == run_name
+        if "rlnTomoName" in optics_df.columns:
+            exact |= optics_df["rlnTomoName"].astype(str) == run_name
+        matches = optics_df[exact]
+    if matches.empty and run_name.isdigit():
+        matches = optics_df[group_names.str.startswith(f"run_{run_name}_")]
+    return matches
+
+
 # TODO: A smart way to handle the case where there is more than one optics group but there is not a 1:1 mapping with tomograms (one optics group to many tomograms)
 def copick_picks_to_starfile(
     copick_config: Path,
@@ -48,8 +66,7 @@ def copick_picks_to_starfile(
     """
     Converts copick picks to a STAR file format.
     If there is only one optics group in the optics_df, the optics group will automatically be assigned to all picks.
-        Otherwise, if data_portal_runs is True, the copick run names should be Data Portal run IDs.
-        Otherwise, the copick run names should correspond to the "rlnOpticsGroupName" field in the optics_df.
+        Otherwise each copick run is matched to its row by copick_run_optics_rows.
     The corresponding tiltseries *.star files (rlnTomoName) should either be the copick run name or there should be an column in the optics group "rlnTomoName".
         For copick projects for the data portal, this is handled for you.
 
@@ -76,10 +93,7 @@ def copick_picks_to_starfile(
         if len(optics_df) == 1:
             optics_entry = optics_df.iloc[0]
         else:
-            if data_portal_runs:
-                optics_df_matches = optics_df[optics_df["rlnOpticsGroupName"].str.contains(pick.run.name)]
-            else:
-                optics_df_matches = optics_df[optics_df["rlnOpticsGroupName"] == pick.run.name]
+            optics_df_matches = copick_run_optics_rows(optics_df, pick.run.name, data_portal_runs)
             if len(optics_df_matches) == 0:
                 raise ValueError(f"No matching optics group found for {pick.run.name}")
             elif len(optics_df_matches) > 1:
