@@ -7,7 +7,6 @@ from collections.abc import Sequence
 from pipeliner.data_structure import TOMO_CTFREFINE_DIR
 from pipeliner.jobs.tomography.relion_tomo.tomo_ctfrefine_job import TomoRelionCtfRefine
 from pipeliner.nodes import (
-    NODE_PARTICLEGROUPMETADATA,
     NODE_TOMOGRAMGROUPMETADATA,
     NODE_TOMOOPTIMISATIONSET,
 )
@@ -33,9 +32,6 @@ class PythonRelionSubtomoCtfRefineJob(PipelinerJob):
         _common.add_staging_options(self)
 
     def create_output_nodes(self):
-        self.add_output_node(
-            "particles_ctf_refine.star", NODE_PARTICLEGROUPMETADATA, ["relion", "tomo", "ctfrefine", "python"]
-        )
         self.add_output_node("tomograms.star", NODE_TOMOGRAMGROUPMETADATA, ["relion", "tomo", "ctfrefine", "python"])
         self.add_output_node(
             "optimisation_set.star", NODE_TOMOOPTIMISATIONSET, ["relion", "tomo", "ctfrefine", "python"]
@@ -100,11 +96,7 @@ class PythonRelionSubtomoCtfRefineJob(PipelinerJob):
         return [PipelinerCommand(cmd)]
 
     def create_results_display(self) -> Sequence[ResultsDisplayObject]:
-        return [
-            n.default_results_display(self.output_dir)
-            for n in self.output_nodes
-            if "particles_ctf_refine.star" in n.name
-        ]
+        return [n.default_results_display(self.output_dir) for n in self.output_nodes if "tomograms.star" in n.name]
 
 
 if __name__ == "__main__":

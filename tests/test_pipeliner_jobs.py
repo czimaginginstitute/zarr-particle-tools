@@ -8,6 +8,7 @@ heuristic instead -- no error, just a different reconstruction.
 """
 
 import importlib.util
+from pathlib import Path
 
 import pytest
 
@@ -213,6 +214,18 @@ def test_inputs_are_checked_once_they_exist(tmp_path, monkeypatch):
     job.joboptions["in_particles"].value = "Import/particles.star"
     job.joboptions["in_tomograms"].value = "Import/tomograms.star"
     assert [names for names, _ in _zpt_errors(job)] == [["in_tomograms"]]
+
+
+def test_output_nodes_are_the_files_the_jobs_keep(job):
+    job.create_output_nodes()
+    assert {Path(n.name).name for n in job.output_nodes} == {"merged.mrc", "half1.mrc", "half2.mrc"}
+    ctf = _relion_job(PythonRelionSubtomoCtfRefineJob)
+    ctf.create_output_nodes()
+    assert {Path(n.name).name for n in ctf.output_nodes} == {"tomograms.star", "optimisation_set.star"}
+    polish = _relion_job(PythonRelionSubtomoPolishJob)
+    polish.joboptions["do_shift_align"].value = "Yes"
+    polish.create_output_nodes()
+    assert {Path(n.name).name for n in polish.output_nodes} == {"tomograms.star", "optimisation_set.star"}
 
 
 def test_wrappers_and_their_checks_import_without_the_extraction_stack(tmp_path):

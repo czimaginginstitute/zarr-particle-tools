@@ -31,9 +31,11 @@ class PythonRelionSubtomoPolishJob(PipelinerJob):
         _common.add_staging_options(self)
 
     def create_output_nodes(self):
-        self.add_output_node("motion.star", NODE_TOMOTRAJECTORYDATA, ["relion", "tomo", "polish", "python"])
+        # shift-only alignment refines tilt shifts (tomograms.star) and writes no trajectories or particles
+        if self.joboptions["do_motion"].get_boolean():
+            self.add_output_node("motion.star", NODE_TOMOTRAJECTORYDATA, ["relion", "tomo", "polish", "python"])
+            self.add_output_node("particles.star", NODE_PARTICLEGROUPMETADATA, ["relion", "tomo", "polish", "python"])
         self.add_output_node("tomograms.star", NODE_TOMOGRAMGROUPMETADATA, ["relion", "tomo", "polish", "python"])
-        self.add_output_node("particles.star", NODE_PARTICLEGROUPMETADATA, ["relion", "tomo", "polish", "python"])
         self.add_output_node("optimisation_set.star", NODE_TOMOOPTIMISATIONSET, ["relion", "tomo", "polish", "python"])
 
     def additional_joboption_validation(self):
