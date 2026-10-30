@@ -467,20 +467,6 @@ def get_all_per_section_parameters_by_tiltseries_id(
 
 
 @hashable_lru_cache(maxsize=None)
-def get_per_section_parameters_by_tiltseries_id(
-    tiltseries_ids: list[int] | int,
-) -> dict[int, list[PerSectionParameters]]:
-    """Fetches per-section parameters (CTF information) by tiltseries ID. tiltseries with invalid / incomplete CTF parameters will have a None value in the returned dictionary."""
-    tiltseries_id_to_psp = get_all_per_section_parameters_by_tiltseries_id(tiltseries_ids)
-    # filter out tiltseries that do not have valid CTF parameters
-    tiltseries_id_to_psp = {
-        id: psp if all(p.major_defocus is not None for p in psp) else None for id, psp in tiltseries_id_to_psp.items()
-    }
-
-    return tiltseries_id_to_psp
-
-
-@hashable_lru_cache(maxsize=None)
 def get_frames_by_run_id(run_ids: list[int] | int) -> dict[int, list[Frame]]:
     return get_items_by_ids(
         ids=run_ids,
@@ -515,15 +501,3 @@ def validate_and_get_tomogram(alignment_id: int, voxel_spacing_id) -> tuple[int,
         return None
 
     return list(tomogram_data)[0]
-
-
-def validate_alignment_tiltseries(alignment_id: int, tiltseries_id: int) -> bool:
-    if not get_per_section_alignments_by_alignment_id(alignment_id):
-        logger.error(f"[Alignment {alignment_id}] Missing alignment information. Skipping file.")
-        return False
-
-    if not get_per_section_parameters_by_tiltseries_id(tiltseries_id):
-        logger.error(f"[TiltSeries {tiltseries_id}] Missing tiltseries CTF parameters. Skipping file.")
-        return False
-
-    return True
