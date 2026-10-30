@@ -19,4 +19,4 @@ jobs:
   conventional_commit_title:
     runs-on: ubuntu-latest
     steps:
-      - uses: chanzuckerberg/github-actions/.github/actions/conventional-commits@a6c9d4dd36d22bac721125d17d19f75e91d7480b
+      - uses: chanzuckerberg/github-actions/.github/actions/conventional-commits@8c62838f47f7bc5719004fa95525cfefdcbdb327
