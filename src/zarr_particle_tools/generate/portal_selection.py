@@ -363,7 +363,10 @@ def _settle(
             if not allow_local_alignment:
                 fail(f"alignment {alignment.id} is LOCAL; only its global per-tilt geometry could be written")
                 continue
-            logger.warning(f"[Run {run.id}] Alignment {alignment.id} is LOCAL; writing its global geometry only.")
+            logger.warning(
+                f"[Run {run.id}] Alignment {alignment.id} is LOCAL; only its global geometry is written, so "
+                "particles may project to the wrong place."
+            )
         if not _is_identity(alignment.affine_transformation_matrix):
             fail(f"alignment {alignment.id} has a non-identity affine_transformation_matrix, which is not applied")
             continue
