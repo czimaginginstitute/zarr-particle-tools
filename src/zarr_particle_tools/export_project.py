@@ -74,8 +74,9 @@ def materialize_project_to_disk(output_dir: Path) -> None:
     with ThreadPoolExecutor(max_workers=THREAD_POOL_WORKER_COUNT) as pool:
         list(pool.map(lambda name: _materialize_one(output_dir, name), tomo_names))
 
-    # the zarr placeholder stack is no longer referenced by any tilt star
-    (output_dir / TILTSERIES_MRCS_PLACEHOLDER).unlink(missing_ok=True)
+    # the zarr placeholder stacks are no longer referenced by any tilt star
+    for placeholder in (output_dir / "tiltseries").glob(Path(TILTSERIES_MRCS_PLACEHOLDER).stem + "*.mrcs"):
+        placeholder.unlink()
     logger.info("Exported on-disk project to %s", output_dir)
 
 
