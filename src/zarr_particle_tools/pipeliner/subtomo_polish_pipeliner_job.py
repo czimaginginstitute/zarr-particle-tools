@@ -28,6 +28,7 @@ class PythonRelionSubtomoPolishJob(PipelinerJob):
         self.jobinfo.display_name = "Bayesian polishing / frame alignment (Python)."
         self.jobinfo.short_desc = "Polish tilt series stored as OME-Zarr using zarr-particle-polish and stock RELION."
         self.joboptions = copy.deepcopy(TomoRelionBayesPolishJob().joboptions)
+        _common.add_staging_options(self)
 
     def create_output_nodes(self):
         self.add_output_node("motion.star", NODE_TOMOTRAJECTORYDATA, ["relion", "tomo", "polish", "python"])
@@ -88,6 +89,7 @@ class PythonRelionSubtomoPolishJob(PipelinerJob):
             ]
 
         cmd += ["--threads", self.joboptions["nr_threads"].get_string()]
+        cmd += _common.staging_args(self)
         other_args = self.joboptions["other_args"].get_string().strip()
         if other_args:
             cmd += ["--relion-args", other_args]

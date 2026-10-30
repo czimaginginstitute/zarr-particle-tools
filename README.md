@@ -273,8 +273,12 @@ it is visible there.
 ### CTF refinement and polishing
 
 - CTF refinement runs `relion_tomo_refine_ctf`; polishing runs `relion_tomo_align`.
-- Zarr tilt series are streamed into temporary MRC files for RELION to read. `/dev/shm` is used when
-  it is writable and has enough space; otherwise the system temp directory is used.
+- Zarr tilt series are streamed into temporary MRC files for RELION to read, in a job-owned directory under
+  `--shm-dir` (default `/dev/shm`) that is removed when the job ends, fails or receives SIGTERM (`--keep-shm`
+  keeps it). When `--shm-dir` is unusable the system temp directory is used, unless `--require-ram-staging` is
+  given: then the job fails before streaming unless `--shm-dir` is tmpfs with room for the staged stacks. This
+  also covers the temporary copies of S3-hosted MRC stacks. The pipeliner jobs require RAM staging by default
+  (`do_require_ram_staging`).
 - `--relion-args` passes additional arguments to every RELION call (the pipeliner jobs' `other_args`).
 - Both jobs require a refined `particles.star` and reference half-maps from a prior Refine3D job.
 - There is no `copick-local` variant because raw copick picks are not refined particles.

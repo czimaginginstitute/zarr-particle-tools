@@ -1,4 +1,4 @@
-"""Shared parts of the zarr-particle-tools pipeliner jobs: job option and input checks.
+"""Shared parts of the zarr-particle-tools pipeliner jobs: staging options and job option and input checks.
 
 Imports only pipeliner at module level; the input checks import zarr_particle_tools.core.helpers when they run.
 """
@@ -7,9 +7,32 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pipeliner.job_options import JobOptionValidationResult
+from pipeliner.job_options import BooleanJobOption, JobOptionValidationResult, StringJobOption
 
 INPUT_OPTIONS = {"particles": "in_particles", "tomograms": "in_tomograms", "trajectories": "in_trajectories"}
+
+
+def add_staging_options(job) -> None:
+    """Where the tilt series are staged for stock RELION, and whether that must be RAM."""
+    job.joboptions["staging_dir"] = StringJobOption(
+        label="Staging directory:",
+        default_value="/dev/shm",
+        help_text="Each tilt series is streamed here as a temporary MRC for RELION, in a job-owned subdirectory "
+        "removed when the job ends.",
+    )
+    job.joboptions["do_require_ram_staging"] = BooleanJobOption(
+        label="Require RAM-backed staging?",
+        default_value=True,
+        help_text="Fail before streaming unless the staging directory is tmpfs with room for the staged stacks, "
+        "instead of falling back to the system temp directory.",
+    )
+
+
+def staging_args(job) -> list[str]:
+    args = ["--shm-dir", job.joboptions["staging_dir"].get_string()]
+    if job.joboptions["do_require_ram_staging"].get_boolean():
+        args.append("--require-ram-staging")
+    return args
 
 
 def _number(job, name: str, default: float) -> float:

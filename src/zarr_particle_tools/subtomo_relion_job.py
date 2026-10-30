@@ -3,8 +3,8 @@ Shared harness for running RELION tomography jobs (CTF refinement, Bayesian poli
 series stored as OME-Zarr, without modifying RELION.
 
 Strategy: reuse the stock RELION binary and replace only the pixel source. Per tomogram we stream the
-zarr tilt series into a temporary MRC, preferring /dev/shm and falling back to the system temp
-directory, point rlnTomoTiltSeriesName at it, and let RELION read its own format. A two-phase mode
+zarr tilt series into a temporary MRC in a job-owned staging directory (core.data.make_staging_dir),
+point rlnTomoTiltSeriesName at it, and let RELION read its own format. A two-phase mode
 keeps at most n_workers tilt series staged at once: phase 1 processes each tomogram alone (parallel
 pool, writes RELION temp evidence); phase 2 runs RELION's own joint finalise via
 --only_do_unfinished + 1 KB header stubs, so results match all-at-once for every fit type.
@@ -14,16 +14,13 @@ ref2, mask, fsc, threads, opts) -> list[str]` callable plus the binary name; eve
 shared between the CTF-refine and polish jobs.
 """
 
-import atexit
 import hashlib
 import logging
 import multiprocessing as mp
 import os
 import re
 import shutil
-import signal
 import subprocess
-import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -36,9 +33,13 @@ import starfile
 
 from zarr_particle_tools.core.constants import TILTSERIES_URI_RELION_COLUMN
 from zarr_particle_tools.core.data import (
+    RAM_FILESYSTEMS,
     DataReader,
+    _fs_type,
     get_tiltseries_datareader,
+    make_staging_dir,
     read_s3_mrc_metadata,
+    release_staging_dir,
     resolve_staging_dir,
     write_tiltseries_to_mrc,
 )
@@ -61,13 +62,14 @@ def _indiv_table(row, tomograms_star):
     return read_tiltseries_table(row, tomograms_star)[0]
 
 
-def _indiv_reader(row, tomograms_star, tiltseries_relative_dir, staging_dir=None):
+def _indiv_reader(row, tomograms_star, tiltseries_relative_dir, staging_dir=None, require_ram=False):
     """Load a tomogram's individual tilt table and its pixel reader."""
     indiv = _indiv_table(row, tomograms_star)
     return indiv, get_tiltseries_datareader(
         indiv,
         tiltseries_relative_dir or Path("./"),
         staging_dir=staging_dir,
+        require_ram=require_ram,
     )
 
 
@@ -80,52 +82,6 @@ def _locator_shape_and_source_bytes(locator: str) -> tuple[tuple[int, ...], int]
         return tuple(int(v) for v in reader.data.shape), 0
     finally:
         reader.close()
-
-
-# Track materialized shm MRCs so a graceful exit/SIGTERM cleans them (SIGKILL is uncatchable).
-_ACTIVE_SHM: set = set()
-
-
-def _cleanup_shm(*_):
-    for p in list(_ACTIVE_SHM):
-        try:
-            Path(p).unlink(missing_ok=True)
-        except OSError:
-            pass
-        _ACTIVE_SHM.discard(p)
-
-
-atexit.register(_cleanup_shm)
-if threading.current_thread() is threading.main_thread():  # signal handlers only in the main thread
-    try:
-        _prev_sigterm = signal.getsignal(signal.SIGTERM)
-
-        def _on_sigterm(signum, frame):
-            _cleanup_shm()
-            signal.signal(signal.SIGTERM, signal.SIG_DFL)
-            os.kill(os.getpid(), signum)  # re-raise default termination
-
-        signal.signal(signal.SIGTERM, _on_sigterm)
-    except (ValueError, OSError):
-        pass
-
-
-def _fs_type(path: Path) -> str:
-    """Filesystem type of the mount containing `path` (longest matching /proc/mounts entry)."""
-    rp = os.path.realpath(str(path))
-    best_mp, best_fs = "", "?"
-    try:
-        with open("/proc/mounts") as f:
-            for line in f:
-                parts = line.split()
-                if len(parts) < 3:
-                    continue
-                mp_, fs = parts[1], parts[2]
-                if (rp == mp_ or rp.startswith(mp_.rstrip("/") + "/")) and len(mp_) >= len(best_mp):
-                    best_mp, best_fs = mp_, fs
-    except OSError:
-        pass
-    return best_fs
 
 
 def _peek_stack_storage(global_df, tomograms_star, tiltseries_relative_dir) -> tuple[list[int], list[int]]:
@@ -152,7 +108,7 @@ def _preflight_budget(
     50% of its free space. ``resolve_staging_dir`` has already verified writability and capacity.
     """
     fs = _fs_type(shm_dir)
-    if fs not in ("tmpfs", "ramfs"):
+    if fs not in RAM_FILESYSTEMS:
         logger.info("Using disk-backed staging directory %s (filesystem: %s).", shm_dir, fs)
     if not stack_bytes:
         return
@@ -213,7 +169,7 @@ def read_global_tomograms(tomograms_starfile: Path) -> tuple[pd.DataFrame, Path]
     return global_df.copy(), Path(tomograms_starfile)
 
 
-def _materialize_tiltseries(global_df, tomograms_star, stage_dir, shm_dir, tiltseries_relative_dir):
+def _materialize_tiltseries(global_df, tomograms_star, stage_dir, shm_dir, tiltseries_relative_dir, require_ram=False):
     """
     Write a tomograms.star into stage_dir with rlnTomoTiltSeriesName repointed at a temporary MRC
     streamed from each tomogram's zarr tilt series (RELION option-A stack load). stage_dir must be
@@ -234,7 +190,9 @@ def _materialize_tiltseries(global_df, tomograms_star, stage_dir, shm_dir, tilts
             reader = None
             shm_path = shm_dir / f"zpt_{run_tag}_{artifact_name}.mrc"
             try:
-                indiv_df, reader = _indiv_reader(row, tomograms_star, tiltseries_relative_dir, staging_dir=shm_dir)
+                indiv_df, reader = _indiv_reader(
+                    row, tomograms_star, tiltseries_relative_dir, staging_dir=shm_dir, require_ram=require_ram
+                )
                 indiv_out = ts_out_dir / f"{artifact_name}.star"
                 if len(reader.data.shape) != 3:
                     raise ValueError(
@@ -257,11 +215,9 @@ def _materialize_tiltseries(global_df, tomograms_star, stage_dir, shm_dir, tilts
                 ]
                 starfile.write({tomo_name: indiv_df}, str(indiv_out), overwrite=True)
                 voxel = float(row["rlnTomoTiltSeriesPixelSize"]) if "rlnTomoTiltSeriesPixelSize" in row else None
-                _ACTIVE_SHM.add(str(shm_path))
                 write_tiltseries_to_mrc(reader, shm_path, voxel_size=voxel, sections=sec0)
             except Exception:
                 shm_path.unlink(missing_ok=True)
-                _ACTIVE_SHM.discard(str(shm_path))
                 raise
             finally:
                 if reader is not None:
@@ -274,7 +230,6 @@ def _materialize_tiltseries(global_df, tomograms_star, stage_dir, shm_dir, tilts
     except Exception:
         for path in shm_paths:
             path.unlink(missing_ok=True)
-            _ACTIVE_SHM.discard(str(path))
         raise
 
     global_df["rlnTomoTiltSeriesName"] = names
@@ -331,6 +286,7 @@ def _run_relion_job(
     keep_shm,
     opts,
     extra_args=(),
+    require_ram=False,
 ) -> Path:
     """One RELION invocation over the given tomograms into output_dir (materialize + stage + run)."""
     output_dir = Path(output_dir)
@@ -338,7 +294,7 @@ def _run_relion_job(
     stage_dir = output_dir / "relion_input"
     stage_dir.mkdir(parents=True, exist_ok=True)
     patched, shm_paths = _materialize_tiltseries(
-        global_df, tomograms_star, stage_dir, Path(shm_dir), tiltseries_relative_dir
+        global_df, tomograms_star, stage_dir, Path(shm_dir), tiltseries_relative_dir, require_ram
     )
     opt_set = _write_optimisation_set(stage_dir, Path(particles_star), patched, trajectories)
     cmd = build_cmd(relion_bin, opt_set, output_dir, box_size, ref1, ref2, mask, fsc, threads, opts) + list(extra_args)
@@ -349,7 +305,6 @@ def _run_relion_job(
         if not keep_shm:
             for p in shm_paths:
                 p.unlink(missing_ok=True)
-                _ACTIVE_SHM.discard(str(p))
     return output_dir
 
 
@@ -534,11 +489,13 @@ def run_relion_tomo_job(
     keep_shm: bool = False,
     per_tomogram: bool = True,
     n_workers: int = 0,
+    require_ram_staging: bool = False,
     extra_args: tuple[str, ...] = (),
 ) -> Path:
     """Generic driver: resolve and check inputs, then run per-tomogram two-phase (default) or all-at-once.
 
-    ``extra_args`` go to every RELION call.
+    Tilt series are staged in a job-owned directory under ``shm_dir`` (``require_ram_staging``: no fallback from a
+    RAM-backed ``shm_dir``), removed when the job ends unless ``keep_shm``. ``extra_args`` go to every RELION call.
     """
     start = time.time()
     output_dir = Path(output_dir)
@@ -580,18 +537,24 @@ def run_relion_tomo_job(
         all_at_once=not two_phase,
         source_bytes=source_bytes,
     )
-    shm_dir = resolve_staging_dir(shm_dir, required_bytes=peak_stage_bytes)
+    staging_root = resolve_staging_dir(shm_dir, required_bytes=peak_stage_bytes, require_ram=require_ram_staging)
     _preflight_budget(
-        shm_dir,
+        staging_root,
         stack_bytes,
         n_workers or 1,
         all_at_once=not two_phase,
         source_bytes=source_bytes,
     )
-
+    stage_root = make_staging_dir(staging_root)
+    logger.info(
+        "Staging tilt series in %s (%s, estimated peak %.1f GB).",
+        stage_root,
+        _fs_type(stage_root),
+        peak_stage_bytes / 1e9,
+    )
     common = dict(
         tomograms_star=tomograms_star,
-        shm_dir=shm_dir,
+        shm_dir=stage_root,
         tiltseries_relative_dir=tiltseries_relative_dir,
         box_size=box_size,
         ref1=ref1,
@@ -602,44 +565,49 @@ def run_relion_tomo_job(
         keep_shm=keep_shm,
         opts=opts,
         extra_args=tuple(extra_args),
+        require_ram=require_ram_staging,
     )
-
-    if two_phase:
-        _two_phase(
-            build_cmd,
-            relion_bin,
-            global_df,
-            tomograms_star,
-            particles_starfile,
-            trajectories_starfile,
-            output_dir,
-            n_workers,
-            box_size,
-            ref1,
-            ref2,
-            mask,
-            fsc,
-            threads,
-            opts,
-            common,
-        )
-        logger.info(
-            "Two-phase %s (%d tomograms, %d worker(s)) -> %s",
-            Path(relion_bin).name,
-            len(global_df),
-            n_workers,
-            output_dir,
-        )
-    else:
-        _run_relion_job(
-            build_cmd,
-            relion_bin,
-            global_df,
-            particles_star=particles_starfile,
-            trajectories=trajectories_starfile,
-            output_dir=output_dir,
-            **common,
-        )
+    try:
+        if two_phase:
+            _two_phase(
+                build_cmd,
+                relion_bin,
+                global_df,
+                tomograms_star,
+                particles_starfile,
+                trajectories_starfile,
+                output_dir,
+                n_workers,
+                box_size,
+                ref1,
+                ref2,
+                mask,
+                fsc,
+                threads,
+                opts,
+                common,
+            )
+            logger.info(
+                "Two-phase %s (%d tomograms, %d worker(s)) -> %s",
+                Path(relion_bin).name,
+                len(global_df),
+                n_workers,
+                output_dir,
+            )
+        else:
+            _run_relion_job(
+                build_cmd,
+                relion_bin,
+                global_df,
+                particles_star=particles_starfile,
+                trajectories=trajectories_starfile,
+                output_dir=output_dir,
+                **common,
+            )
+    finally:
+        release_staging_dir(stage_root, keep=keep_shm)
+        if keep_shm:
+            logger.info("Kept staging directory %s.", stage_root)
 
     # make the output re-consumable by our tools (restore zarr locator, drop stale staging refs)
     _restore_zarr_source(output_dir, global_df, tomograms_star, tiltseries_relative_dir)
