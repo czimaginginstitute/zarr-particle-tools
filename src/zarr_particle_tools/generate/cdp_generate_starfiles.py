@@ -41,7 +41,13 @@ from zarr_particle_tools.core.constants import (
 )
 from zarr_particle_tools.core.data import get_data
 from zarr_particle_tools.core.forwardprojection import in_plane_rotation_to_tilt_axis_rotation
-from zarr_particle_tools.core.helpers import get_filter, get_optics_group_name, get_tomo_name, setup_logging
+from zarr_particle_tools.core.helpers import (
+    get_filter,
+    get_optics_group_name,
+    get_tomo_name,
+    get_unbinned_tomo_size,
+    setup_logging,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -290,19 +296,24 @@ def get_tomograms_df(optics_df: pd.DataFrame, output_dir: Path) -> tuple[pd.Data
         )  # relative to project root (output_dir.parent); RELION rewrites this path in polish/ctf and mangles absolute ones
     )
 
-    # add tomogram dimensions rlnTomoSizeX, rlnTomoSizeY, rlnTomoSizeZ
+    # add tomogram dimensions rlnTomoSizeX, rlnTomoSizeY, rlnTomoSizeZ (bin-1, in tilt-series pixels)
     # reliant on the fact that rlnTomoName is in the format of "run_WWWW_tiltseries_XXXX_alignment_YYYY_spacing_ZZZZ" (see get_tomo_name)
     tomograms_df["alignment_id"] = tomograms_df["rlnTomoName"].apply(lambda x: int(x.split("_")[-3]))
     tomograms_df["voxel_spacing_id"] = tomograms_df["rlnTomoName"].apply(lambda x: int(x.split("_")[-1]))
     for index, row in tomograms_df.iterrows():
-        tomo_x, tomo_y, tomo_z, _ = cdp_cache.validate_and_get_tomogram(row["alignment_id"], row["voxel_spacing_id"])
-        tomograms_df.at[index, "rlnTomoSizeX"] = tomo_x
-        tomograms_df.at[index, "rlnTomoSizeY"] = tomo_y
-        tomograms_df.at[index, "rlnTomoSizeZ"] = tomo_z
+        tomo_x, tomo_y, tomo_z, voxel_spacing = cdp_cache.validate_and_get_tomogram(
+            row["alignment_id"], row["voxel_spacing_id"]
+        )
+        binning = voxel_spacing / row["rlnTomoTiltSeriesPixelSize"]
+        tomograms_df.at[index, "rlnTomoSizeX"] = get_unbinned_tomo_size(tomo_x, binning)
+        tomograms_df.at[index, "rlnTomoSizeY"] = get_unbinned_tomo_size(tomo_y, binning)
+        tomograms_df.at[index, "rlnTomoSizeZ"] = get_unbinned_tomo_size(tomo_z, binning, is_z=True)
         # zarr locator in the global table (not just individual stars) so it propagates through all jobs
         tiltseries = cdp_cache.get_tiltseries(cdp_cache.get_alignments(row["alignment_id"])[0].tiltseries_id)[0]
         tomograms_df.at[index, TILTSERIES_URI_RELION_COLUMN] = tiltseries.s3_omezarr_dir
 
+    size_columns = ["rlnTomoSizeX", "rlnTomoSizeY", "rlnTomoSizeZ"]
+    tomograms_df[size_columns] = tomograms_df[size_columns].astype(int)  # RELION labels are EMDL_INT
     return tomograms_df, list(zip(tomograms_df.pop("alignment_id"), tomograms_df.pop("voxel_spacing_id"), strict=True))
 
 
