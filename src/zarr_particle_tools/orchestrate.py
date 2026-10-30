@@ -30,8 +30,14 @@ import zarr_particle_tools.core.data as core_data
 import zarr_particle_tools.generate.cdp_cache as cdp_cache
 import zarr_particle_tools.generate.cdp_generate_starfiles as cdp_generate
 import zarr_particle_tools.generate.copick_generate_starfiles as copick_generate
-from zarr_particle_tools.core.constants import OPTICS_DF_COLUMNS, THREAD_POOL_WORKER_COUNT
-from zarr_particle_tools.core.helpers import STAR_NAME_COLUMNS, check_unique_tomograms, setup_logging
+from zarr_particle_tools.core.constants import THREAD_POOL_WORKER_COUNT
+from zarr_particle_tools.core.helpers import (
+    STAR_NAME_COLUMNS,
+    check_unique_tomograms,
+    optics_lookup,
+    particles_and_optics,
+    setup_logging,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -398,18 +404,16 @@ def _require_under_output_dir(star: Path, flag: str, output_dir: Path) -> Path:
     )
 
 
-def _optics_from_tomograms_star(tomograms_star: Path):
-    """Pull the optics columns out of a tomograms.star, naming anything the file is missing."""
-    df = read_tomograms_df(tomograms_star)
-    missing = [c for c in OPTICS_DF_COLUMNS if c not in df.columns]
-    if missing:
-        raise click.ClickException(
-            f"{tomograms_star} is missing the optics column(s) {missing}. A RELION-native "
-            "tomograms.star keeps the integer rlnOpticsGroup in its particles' data_optics block "
-            "rather than data_global; use a tomograms.star written by zarr-particle-tomograms, or "
-            "add the missing column(s)."
-        )
-    return df[OPTICS_DF_COLUMNS].drop_duplicates().reset_index(drop=True)
+def _particles_from_copick_picks(tomograms_star: Path, *copick_args, copick_run_names: list[str]) -> tuple:
+    """(particles, optics) of copick picks on a tomograms.star, optics built as RELION builds them."""
+    tomograms_df = read_tomograms_df(tomograms_star)
+    lookup = optics_lookup(tomograms_df)
+    _check_copick_run_mapping(copick_run_names, lookup, str(tomograms_star))
+    particles_df = copick_generate.copick_picks_to_starfile(*copick_args, copick_run_names, lookup)
+    try:
+        return particles_and_optics(particles_df, tomograms_df)
+    except ValueError as exc:
+        raise click.ClickException(f"{tomograms_star}: {exc}") from exc
 
 
 def _check_copick_run_mapping(
@@ -478,15 +482,8 @@ def orchestrate_copick_local(
         )
         copick_run_names = [p.run.name for p in picks]
 
-    optics_df = _optics_from_tomograms_star(tomograms_star)
-    _check_copick_run_mapping(copick_run_names, optics_df, str(tomograms_star))
-    particles_df = copick_generate.copick_picks_to_starfile(
-        copick_config,
-        copick_name,
-        copick_session_id,
-        copick_user_id,
-        copick_run_names,
-        optics_df,
+    particles_df, optics_df = _particles_from_copick_picks(
+        tomograms_star, copick_config, copick_name, copick_session_id, copick_user_id, copick_run_names=copick_run_names
     )
     particles_star = input_dir / "particles.star"
     starfile.write({"optics": optics_df, "particles": particles_df}, particles_star)

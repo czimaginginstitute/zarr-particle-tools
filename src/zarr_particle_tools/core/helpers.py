@@ -8,7 +8,7 @@ import pandas as pd
 import starfile
 from rich.logging import RichHandler
 
-from zarr_particle_tools.core.constants import NOISY_LOGGERS
+from zarr_particle_tools.core.constants import NOISY_LOGGERS, OPTICS_DF_COLUMNS, TILTSERIES_URI_RELION_COLUMN
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +136,50 @@ def project_relative(path: str | Path, project_dir: str | Path | None = None) ->
 
 # ====================== file validation, reading, data extraction helpers ======================
 
+# names are opaque strings in RELION; starfile would otherwise parse e.g. "007" as 7
+STAR_NAME_COLUMNS = ["rlnTomoName", "rlnTomoParticleName", "rlnOpticsGroupName"]
+
+OPTIMISATION_SET_KEYS = ("rlnTomoParticlesFile", "rlnTomoTomogramsFile", "rlnTomoTrajectoriesFile")
+
+
+def _blank(value) -> bool:
+    return value is None or (isinstance(value, float) and math.isnan(value)) or not str(value).strip().strip('"')
+
+
+def resolve_path(value, base: str | Path | None = None) -> Path | None:
+    """A path from a STAR file: absolute, else relative to the working directory if it exists there, else to ``base``.
+
+    A blank value is ``None``.
+    """
+    if _blank(value):
+        return None
+    path = Path(str(value))
+    if path.is_absolute() or path.exists() or base is None:
+        return path
+    return Path(base) / path
+
+
+def read_optimisation_set(path: str | Path) -> tuple[Path, Path, Path | None]:
+    """(particles, tomograms, trajectories) named by an optimisation set, each found by :func:`resolve_path`.
+
+    Reads RELION's key-value block and a one-row table alike; an empty trajectories entry is ``None``.
+    """
+    data = starfile.read(path)
+    if isinstance(data, dict) and not any(isinstance(v, pd.DataFrame) for v in data.values()):
+        entries = data
+    else:
+        table = next(iter(data.values())) if isinstance(data, dict) else data
+        if len(table) != 1:
+            raise ValueError(f"{path}: an optimisation set has one row, found {len(table)}")
+        entries = table.iloc[0].to_dict()
+    paths = [resolve_path(entries.get(key), Path(path).parent) for key in OPTIMISATION_SET_KEYS]
+    for key, resolved in zip(OPTIMISATION_SET_KEYS, paths, strict=True):
+        if resolved is None and key != "rlnTomoTrajectoriesFile":
+            raise ValueError(f"{key} in {path}: missing")
+        if resolved is not None and not resolved.exists():
+            raise FileNotFoundError(f"{key} in {path}: {resolved} does not exist")
+    return tuple(paths)
+
 
 def validate_and_setup(
     box_size: int,
@@ -196,11 +240,7 @@ def validate_and_setup(
         raise ValueError("Either optimisation set star file or particles and tomograms star files must be provided.")
 
     if optimisation_set_starfile:
-        optimisation_dict = starfile.read(optimisation_set_starfile)
-        particles_starfile = Path(optimisation_dict["rlnTomoParticlesFile"])
-        tomograms_starfile = Path(optimisation_dict["rlnTomoTomogramsFile"])
-        trajectories_starfile = optimisation_dict.get("rlnTomoTrajectoriesFile")
-        trajectories_starfile = trajectories_starfile and Path(trajectories_starfile)
+        particles_starfile, tomograms_starfile, trajectories_starfile = read_optimisation_set(optimisation_set_starfile)
 
     if output_dir.exists() and any(output_dir.iterdir()) and not overwrite:
         raise FileExistsError(
@@ -223,10 +263,6 @@ def validate_and_setup(
     )
 
 
-# names are opaque strings in RELION; starfile would otherwise parse e.g. "007" as 7
-STAR_NAME_COLUMNS = ["rlnTomoName", "rlnTomoParticleName", "rlnOpticsGroupName"]
-
-
 def check_unique_tomograms(tomograms_df: pd.DataFrame, tomograms_starfile: Path) -> None:
     """Each tomograms.star row is processed on its own, so a repeated rlnTomoName would be processed twice."""
     duplicated = sorted(set(tomograms_df.loc[tomograms_df["rlnTomoName"].duplicated(), "rlnTomoName"]))
@@ -247,6 +283,71 @@ def read_tomograms_starfile(tomograms_starfile: Path) -> tuple[dict | pd.DataFra
     return tomograms_data, tomograms_df
 
 
+def read_single_table(path: str | Path) -> pd.DataFrame:
+    """Read a star file that holds a single (optionally named) data block as a DataFrame."""
+    data = starfile.read(str(path), parse_as_string=STAR_NAME_COLUMNS)
+    if isinstance(data, dict):
+        if len(data) != 1:
+            raise ValueError(f"Expected a single data block in {path}, found {list(data)}.")
+        return next(iter(data.values()))
+    return data
+
+
+def read_tiltseries_table(
+    tiltseries_row_entry: pd.Series,
+    tomograms_starfile: Path,
+    tomograms_data: dict | pd.DataFrame | None = None,
+    tiltseries_relative_dir: Path | None = None,
+) -> tuple[pd.DataFrame, Path]:
+    """A tomogram's tilt-series table and the file it was read from.
+
+    The table is the tomogram's block of a multi-block ``tomograms_data``, else the file named by
+    ``rlnTomoTiltSeriesStarFile``: absolute, under ``tiltseries_relative_dir`` when given, else found by
+    :func:`resolve_path` from the tomograms star's directory. A tomoTiltSeriesURI in the tomogram row is copied into
+    a table without one.
+    """
+    name = str(tiltseries_row_entry["rlnTomoName"])
+    if isinstance(tomograms_data, dict):
+        if name not in tomograms_data:
+            raise ValueError(f"rlnTomoName in {tomograms_starfile}: no tilt-series block for tomogram {name}")
+        table, source = tomograms_data[name], Path(tomograms_starfile)
+    else:
+        star = tiltseries_row_entry.get("rlnTomoTiltSeriesStarFile")
+        if tiltseries_relative_dir is not None and not _blank(star) and not Path(str(star)).is_absolute():
+            source = Path(tiltseries_relative_dir) / str(star)
+        else:
+            source = resolve_path(star, Path(tomograms_starfile).parent)
+        if source is None or not source.exists():
+            raise FileNotFoundError(
+                f"rlnTomoTiltSeriesStarFile in {tomograms_starfile}: tomogram {name}: {source} does not exist"
+            )
+        table = read_single_table(source)
+    if table.empty:
+        raise ValueError(f"{source}: tomogram {name} has no tilts")
+    uri = tiltseries_row_entry.get(TILTSERIES_URI_RELION_COLUMN)
+    if TILTSERIES_URI_RELION_COLUMN not in table.columns and not _blank(uri):
+        table = table.assign(**{TILTSERIES_URI_RELION_COLUMN: str(uri)})
+    return table, source
+
+
+def get_tiltseries_data_locator(individual_tiltseries_df: pd.DataFrame, tiltseries_relative_dir: Path) -> str:
+    """Return the single tilt-series locator referenced by an individual tilt-series table."""
+    if TILTSERIES_URI_RELION_COLUMN in individual_tiltseries_df.columns:
+        tiltseries_data_locators = individual_tiltseries_df[TILTSERIES_URI_RELION_COLUMN].to_list()
+    else:
+        tiltseries_data_locators = (
+            individual_tiltseries_df["rlnMicrographName"].apply(lambda x: x.split("@", 1)[1]).to_list()
+        )
+    if len(set(tiltseries_data_locators)) != 1:
+        raise ValueError(
+            f"Multiple tiltseries data locators found: {set(tiltseries_data_locators)}. This is not supported."
+        )
+    tiltseries_data_locator = tiltseries_data_locators[0]
+    if not tiltseries_data_locator.startswith("s3://") and not tiltseries_data_locator.startswith("/"):
+        tiltseries_data_locator = tiltseries_relative_dir / tiltseries_data_locator
+    return str(tiltseries_data_locator)
+
+
 def get_tiltseries_data(
     particles_df: pd.DataFrame,
     optics_df: pd.DataFrame,
@@ -257,26 +358,9 @@ def get_tiltseries_data(
     tomograms_data: pd.DataFrame,
 ) -> dict[str, any] | None:
     """Builds the arguments for processing a single tiltseries and its particles."""
-    individual_tiltseries_df = None
-    individual_tiltseries_path = None
-    if isinstance(tomograms_data, dict):
-        if tiltseries_row_entry["rlnTomoName"] not in tomograms_data:
-            raise ValueError(
-                f"Tiltseries {tiltseries_row_entry['rlnTomoName']} not found in tomograms star file. Please check the file."
-            )
-        individual_tiltseries_df = tomograms_data[tiltseries_row_entry["rlnTomoName"]]
-    else:
-        individual_tiltseries_path = Path(tiltseries_row_entry["rlnTomoTiltSeriesStarFile"])
-        if not individual_tiltseries_path.is_absolute():
-            individual_tiltseries_path = tiltseries_relative_dir / tiltseries_row_entry["rlnTomoTiltSeriesStarFile"]
-        if not individual_tiltseries_path.exists():
-            raise FileNotFoundError(
-                f"Tiltseries file {individual_tiltseries_path} does not exist. Please check the path and try again."
-            )
-        individual_tiltseries_df = starfile.read(individual_tiltseries_path)
-
-    if individual_tiltseries_df.empty:
-        raise ValueError(f"Tiltseries data for {tiltseries_row_entry['rlnTomoName']} is empty.")
+    individual_tiltseries_df, _ = read_tiltseries_table(
+        tiltseries_row_entry, tomograms_starfile, tomograms_data, tiltseries_relative_dir
+    )
 
     filtered_particles_df = particles_df[particles_df["rlnTomoName"] == tiltseries_row_entry["rlnTomoName"]]
     if filtered_particles_df.empty:
@@ -289,7 +373,8 @@ def get_tiltseries_data(
     if trajectories_dict:
         particle_names = filtered_particles_df["rlnTomoParticleName"].tolist()
         filtered_trajectories_dict = {k: v for k, v in trajectories_dict.items() if k in particle_names}
-    optics_row = optics_df[optics_df["rlnOpticsGroupName"] == tiltseries_row_entry["rlnOpticsGroupName"]]
+    group_name = tiltseries_row_entry.get("rlnOpticsGroupName", tiltseries_row_entry["rlnTomoName"])
+    optics_row = optics_df[optics_df["rlnOpticsGroupName"] == group_name]
     return {
         "filtered_particles_df": filtered_particles_df,
         "filtered_trajectories_dict": filtered_trajectories_dict,
@@ -297,3 +382,52 @@ def get_tiltseries_data(
         "individual_tiltseries_df": individual_tiltseries_df,
         "optics_row": optics_row,
     }
+
+
+def optics_lookup(tomograms_df: pd.DataFrame) -> pd.DataFrame:
+    """Each tomogram's optics group: ``rlnOpticsGroupName``, else the tomogram's name, numbered in tomogram order."""
+    names = tomograms_df["rlnOpticsGroupName"] if "rlnOpticsGroupName" in tomograms_df else tomograms_df["rlnTomoName"]
+    return pd.DataFrame(
+        {
+            "rlnOpticsGroup": range(1, len(tomograms_df) + 1),
+            "rlnOpticsGroupName": names.astype(str).to_list(),
+            "rlnTomoName": tomograms_df["rlnTomoName"].astype(str).to_list(),
+        }
+    )
+
+
+def particles_and_optics(particles_data, tomograms_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """(particles, optics). Without an optics block, build it from tomograms.star as RELION's ParticleSet does
+    (particle_set.cpp:41-121)."""
+    if isinstance(particles_data, dict):
+        if "particles" not in particles_data:
+            raise ValueError(f"no particles block in the particle STAR (blocks: {sorted(particles_data)})")
+        if "optics" in particles_data:
+            return particles_data["particles"], particles_data["optics"]
+        particles_df = particles_data["particles"]
+    else:
+        particles_df = particles_data
+    values = [c for c in OPTICS_DF_COLUMNS if c not in ("rlnOpticsGroup", "rlnOpticsGroupName", "rlnTomoName")]
+    missing = [c for c in values if c not in tomograms_df.columns]
+    if missing:
+        raise ValueError(f"the particle STAR has no optics block and tomograms.star lacks {missing} to build one")
+    lookup = optics_lookup(tomograms_df)
+    group_of = dict(zip(lookup["rlnTomoName"], lookup["rlnOpticsGroupName"], strict=True))
+    tomo_names = particles_df["rlnTomoName"].astype(str)
+    groups = tomo_names.map(group_of)
+    first_tomogram = {}
+    for tomo_name, group in zip(tomo_names, groups, strict=True):
+        if isinstance(group, str):
+            first_tomogram.setdefault(group, tomo_name)
+    number = {group: i for i, group in enumerate(first_tomogram, 1)}
+    particles_df = particles_df.copy()
+    particles_df["rlnOpticsGroup"] = groups.map(number).fillna(0).astype(int)
+    rows = tomograms_df.set_index(tomograms_df["rlnTomoName"].astype(str))
+    optics_df = pd.DataFrame(
+        {
+            "rlnOpticsGroup": list(number.values()),
+            "rlnOpticsGroupName": list(number),
+            **{c: [rows.at[first_tomogram[group], c] for group in number] for c in values},
+        }
+    )
+    return particles_df, optics_df

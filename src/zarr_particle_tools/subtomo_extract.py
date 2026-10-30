@@ -21,7 +21,6 @@ from scipy.ndimage import fourier_shift
 
 import zarr_particle_tools.cli.options as cli_options
 import zarr_particle_tools.generate.cdp_generate_starfiles as cdp_generate
-from zarr_particle_tools.core.constants import OPTICS_DF_COLUMNS
 from zarr_particle_tools.core.ctf import calculate_ctf
 from zarr_particle_tools.core.data import get_tiltseries_datareader
 from zarr_particle_tools.core.deformation import build_deformations
@@ -37,6 +36,8 @@ from zarr_particle_tools.core.helpers import (
     STAR_NAME_COLUMNS,
     auto_worker_count,
     get_tiltseries_data,
+    optics_lookup,
+    particles_and_optics,
     read_tomograms_starfile,
     setup_logging,
     validate_and_setup,
@@ -438,12 +439,12 @@ def extract_subtomograms(
 
     logger.debug(f"Starting subtomogram extraction, reading file {particles_starfile} and {tomograms_starfile}")
     particles_data = starfile.read(particles_starfile, parse_as_string=STAR_NAME_COLUMNS)
-    particles_df = particles_data["particles"]
+    tomograms_data, tomograms_df = read_tomograms_starfile(tomograms_starfile)
+    particles_df, optics_df = particles_and_optics(particles_data, tomograms_df)
     if "rlnTomoParticleName" not in particles_df.columns:
         # RELION names unnamed particles <rlnTomoName>/<1-based index within the tomogram>
         index_in_tomo = particles_df.groupby("rlnTomoName", sort=False).cumcount() + 1
         particles_df["rlnTomoParticleName"] = particles_df["rlnTomoName"] + "/" + index_in_tomo.astype(str)
-    tomograms_data, tomograms_df = read_tomograms_starfile(tomograms_starfile)
     # like RELION's ParticleSet::splitByTomogram, particles of tomograms missing from tomograms.star are not extracted
     in_tomograms = particles_df["rlnTomoName"].isin(tomograms_df["rlnTomoName"])
     if not in_tomograms.all():
@@ -469,7 +470,6 @@ def extract_subtomograms(
         )
     if not dont_apply_offsets:
         particles_df = apply_offsets_to_coordinates(particles_df)
-    optics_df = particles_data["optics"]
     trajectories_dict = starfile.read(trajectories_starfile) if trajectories_starfile else None
     if not tiltseries_relative_dir:
         tiltseries_relative_dir = Path("./")
@@ -539,7 +539,7 @@ def extract_subtomograms(
     # update all the relevant star files
     write_starfiles(
         merged_particles_df,
-        particles_data["optics"],
+        optics_df,
         tomograms_starfile,
         box_size,
         crop_size,
@@ -682,18 +682,16 @@ def parse_extract_copick_local_subtomograms(
         copick_run_names = [p.run.name for p in picks]
 
     _, tomograms_df = read_tomograms_starfile(tomograms_starfile)
-    optics_df = tomograms_df[OPTICS_DF_COLUMNS].drop_duplicates().reset_index(drop=True)
-
-    # add copick particles to particles.star file
     particles_df = copick_picks_to_starfile(
         copick_config,
         copick_name,
         copick_session_id,
         copick_user_id,
         copick_run_names,
-        optics_df,
+        optics_lookup(tomograms_df),
         data_portal_runs=False,
     )
+    particles_df, optics_df = particles_and_optics(particles_df, tomograms_df)
     particles_path = output_dir / "particles.star"
     starfile.write({"optics": optics_df, "particles": particles_df}, particles_path)
     logger.info(f"Generated particles star file at {particles_path} with {len(particles_df)} particles.")

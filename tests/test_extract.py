@@ -16,6 +16,7 @@ from zarr_particle_tools.subtomo_extract import (
     cli,
     extract_subtomograms,
     parse_extract_copick_local_subtomograms,
+    parse_extract_local_subtomograms,
     subtomogram_path,
 )
 
@@ -517,6 +518,25 @@ def test_extract_with_trajectories_matches_relion(tmp_path):
         assert mrc_equal(
             tmp_path / "relion" / stack, tmp_path / "ours" / stack, tol=DATASET_CONFIGS["synthetic"]["tol"]
         )
+
+
+def test_extract_particles_without_optics_as_relion_does(tmp_path, validate_particles_starfile, compare_mrcs_dirs):
+    """relion_tomo_import_coordinates writes no optics block, and RELION's tomograms.star has no rlnOpticsGroup."""
+    data_root = DATASET_CONFIGS["synthetic"]["data_root"]
+    particles = starfile.read(data_root / "particles.star")["particles"]
+    starfile.write({"particles": particles.drop(columns="rlnOpticsGroup")}, tmp_path / "particles.star")
+    parse_extract_local_subtomograms(
+        box_size=64,
+        output_dir=tmp_path / "out",
+        particles_starfile=tmp_path / "particles.star",
+        tiltseries_relative_dir=data_root,
+        tomograms_starfile=data_root / "tomograms.star",
+    )
+    relion = data_root / "Extract" / "relion_output_baseline"
+    validate_particles_starfile(tmp_path / "out" / "particles.star", relion / "particles.star")
+    compare_mrcs_dirs(
+        relion / "Subtomograms", tmp_path / "out" / "Subtomograms", tol=DATASET_CONFIGS["synthetic"]["tol"]
+    )
 
 
 # ----------------------------------------------------------------------------- RELION-5 2D deformations
