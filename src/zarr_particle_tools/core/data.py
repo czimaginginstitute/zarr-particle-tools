@@ -13,7 +13,7 @@ import pandas as pd
 import s3fs
 from dask.core import flatten
 
-from zarr_particle_tools.core.constants import TILTSERIES_URI_RELION_COLUMN
+from zarr_particle_tools.core.helpers import get_tiltseries_data_locator
 
 logger = logging.getLogger(__name__)
 
@@ -356,24 +356,6 @@ def write_tiltseries_to_mrc(
             mrc.voxel_size = float(voxel_size)
     logger.debug(f"Wrote tilt series {reader.locator} -> {out_path} ({nz}x{ny}x{nx} float32).")
     return out_path
-
-
-def get_tiltseries_data_locator(individual_tiltseries_df: pd.DataFrame, tiltseries_relative_dir: Path) -> str:
-    """Return the single tilt-series locator referenced by an individual tilt-series table."""
-    if TILTSERIES_URI_RELION_COLUMN in individual_tiltseries_df.columns:
-        tiltseries_data_locators = individual_tiltseries_df[TILTSERIES_URI_RELION_COLUMN].to_list()
-    else:
-        tiltseries_data_locators = (
-            individual_tiltseries_df["rlnMicrographName"].apply(lambda x: x.split("@", 1)[1]).to_list()
-        )
-    if len(set(tiltseries_data_locators)) != 1:
-        raise ValueError(
-            f"Multiple tiltseries data locators found: {set(tiltseries_data_locators)}. This is not supported."
-        )
-    tiltseries_data_locator = tiltseries_data_locators[0]
-    if not tiltseries_data_locator.startswith("s3://") and not tiltseries_data_locator.startswith("/"):
-        tiltseries_data_locator = tiltseries_relative_dir / tiltseries_data_locator
-    return str(tiltseries_data_locator)
 
 
 def read_s3_mrc_metadata(resource_locator: str) -> tuple[tuple[int, int, int], int]:
