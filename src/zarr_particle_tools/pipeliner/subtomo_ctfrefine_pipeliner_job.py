@@ -14,6 +14,8 @@ from pipeliner.nodes import (
 from pipeliner.pipeliner_job import ExternalProgram, PipelinerCommand, PipelinerJob
 from pipeliner.results_display_objects import ResultsDisplayObject
 
+from zarr_particle_tools.pipeliner import _common
+
 
 class PythonRelionSubtomoCtfRefineJob(PipelinerJob):
     PROCESS_NAME = "zarrparticletools.ctfrefine"
@@ -38,7 +40,11 @@ class PythonRelionSubtomoCtfRefineJob(PipelinerJob):
             "optimisation_set.star", NODE_TOMOOPTIMISATIONSET, ["relion", "tomo", "ctfrefine", "python"]
         )
 
+    def additional_joboption_validation(self):
+        return _common.validate(self, "ctfrefine")
+
     def get_commands(self):
+        _common.check_options(self, "ctfrefine")
         cmd = ["zarr-particle-ctfrefine", "local"]
 
         optimisation_starfile = self.joboptions["in_optimisation"].get_string()
@@ -85,6 +91,9 @@ class PythonRelionSubtomoCtfRefineJob(PipelinerJob):
                 cmd += ["--per-tomogram-scale"]
 
         cmd += ["--threads", self.joboptions["nr_threads"].get_string()]
+        other_args = self.joboptions["other_args"].get_string().strip()
+        if other_args:
+            cmd += ["--relion-args", other_args]
 
         return [PipelinerCommand(cmd)]
 

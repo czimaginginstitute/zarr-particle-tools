@@ -14,6 +14,7 @@ from zarr_particle_tools.core.deformation import (
     LinearDeformation,
     SplineDeformation,
     build_deformations,
+    declaration_problems,
     parse_coefficients,
 )
 
@@ -125,8 +126,8 @@ def test_build_deformations_follows_relion_rules():
     row_none = pd.Series({"rlnTomoName": "t"})
     assert build_deformations(row_none, ts, IMAGE, 1.0) is None
     row = pd.Series({"rlnTomoName": "t", GRID_X: 3, GRID_Y: 3, TYPE: "spline"})
-    with pytest.raises(ValueError, match=COEFFICIENTS):
-        build_deformations(row, ts, IMAGE, 1.0)
+    # tomogram_set.cpp:452: without a coefficients column RELION applies none
+    assert build_deformations(row, ts, IMAGE, 1.0) is None
     coeffs = "[" + ",".join(["0"] * 72) + "]"
     ts[COEFFICIENTS] = [coeffs, coeffs]
     defs = build_deformations(row, ts, IMAGE, 1.0)
@@ -137,3 +138,16 @@ def test_build_deformations_follows_relion_rules():
     # NaN grid size = column absent for this row (pandas fills missing cells with NaN)
     nan_row = pd.Series({"rlnTomoName": "t", GRID_X: np.nan, GRID_Y: np.nan, TYPE: "spline"})
     assert build_deformations(nan_row, ts, IMAGE, 1.0) is None
+
+
+def test_declaration_problems_are_what_build_deformations_refuses():
+    ts = pd.DataFrame({"rlnMicrographName": ["1@a.mrcs", "2@a.mrcs"]})
+    row = pd.Series({"rlnTomoName": "t", GRID_X: 3, GRID_Y: 3, TYPE: "spline"})
+    assert declaration_problems(row, ts) == []
+    assert declaration_problems(pd.Series({"rlnTomoName": "t"}), ts) == []
+    bad_type = pd.Series({"rlnTomoName": "t", GRID_X: 3, GRID_Y: 3})
+    assert [column for column, _ in declaration_problems(bad_type, ts)] == [TYPE]
+    ts[COEFFICIENTS] = ["[" + ",".join(["0"] * 72) + "]", "[0,0]"]
+    assert [column for column, _ in declaration_problems(row, ts)] == [COEFFICIENTS]
+    with pytest.raises(ValueError, match="72 coefficients"):
+        build_deformations(row, ts, IMAGE, 1.0)

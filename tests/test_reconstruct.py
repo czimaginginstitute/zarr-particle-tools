@@ -1,4 +1,5 @@
 import shutil
+import subprocess
 from pathlib import Path
 
 import mrcfile
@@ -8,6 +9,7 @@ import starfile
 from click.testing import CliRunner
 
 from tests.helpers.compare import mrc_close_unmasked, mrc_headers_match
+from tests.helpers.deformation import random_deformation, synthetic_names, write_deformed_project
 from zarr_particle_tools.subtomo_reconstruct import cli, reconstruct_local
 
 # All cases pass at the float32 storage floor via the magnitude-aware unmasked comparator; measured
@@ -243,3 +245,48 @@ def test_reconstruct_keeps_zero_padded_names(tmp_path):
 
     relion_dir = data_root / "Reconstruct/relion_output_baseline"
     assert mrc_close_unmasked(relion_dir / "merged.mrc", output_dir / "merged.mrc", ulp_factor=DEFAULT_ULP_FACTOR)
+
+
+# ----------------------------------------------------------------------------- RELION-5 2D deformations
+def _deformed_project(tmp_path, deformation_type):
+    """The synthetic project with random per-tilt deformations of ``deformation_type``."""
+    data_root = DATASET_CONFIGS["synthetic"]["data_root"]
+    n_tilts = len(starfile.read(data_root / "tiltseries" / "TS_1.star"))
+    rng = np.random.default_rng({"spline": 1, "linear": 2, "Fourier": 3}[deformation_type])
+    grid, rows = random_deformation(deformation_type, n_tilts, (630, 630), rng)
+    write_deformed_project(tmp_path, data_root, deformation_type, grid, rows, synthetic_names(data_root))
+
+
+def test_reconstruct_applies_deformations(tmp_path):
+    # the internal extraction cuts the particles where the field puts them, so the map leaves the undeformed one
+    _deformed_project(tmp_path / "project", "spline")
+    reconstruct_local(
+        box_size=64,
+        output_dir=tmp_path / "ours",
+        particles_starfile=tmp_path / "project" / "particles.star",
+        tiltseries_relative_dir=tmp_path / "project",
+        tomograms_starfile=tmp_path / "project" / "tomograms.star",
+    )
+    undeformed = DATASET_CONFIGS["synthetic"]["data_root"] / "Reconstruct" / "relion_output_baseline" / "merged.mrc"
+    assert not mrc_close_unmasked(undeformed, tmp_path / "ours" / "merged.mrc", ulp_factor=DEFAULT_ULP_FACTOR)
+
+
+@pytest.mark.skipif(
+    shutil.which("relion_tomo_reconstruct_particle") is None, reason="relion_tomo_reconstruct_particle not on PATH"
+)
+@pytest.mark.parametrize("deformation_type", ["spline", "linear", "Fourier"])
+def test_reconstruct_with_deformations_matches_relion(tmp_path, deformation_type):
+    # per-tilt 2D deformations, reconstructed by RELION (as the baseline reference was) and by us from the same inputs
+    _deformed_project(tmp_path, deformation_type)
+    relion_args = ["--p", "particles.star", "--t", "tomograms.star", "--o", "relion/", "--b", "64", "--sym", "C1"]
+    subprocess.run(["relion_tomo_reconstruct_particle", *relion_args, "--j", "4"], cwd=tmp_path, check=True)
+    reconstruct_local(
+        box_size=64,
+        output_dir=tmp_path / "ours",
+        particles_starfile=tmp_path / "particles.star",
+        tiltseries_relative_dir=tmp_path,
+        tomograms_starfile=tmp_path / "tomograms.star",
+    )
+    relion, ours = tmp_path / "relion" / "merged.mrc", tmp_path / "ours" / "merged.mrc"
+    assert mrc_close_unmasked(relion, ours, ulp_factor=DEFAULT_ULP_FACTOR)
+    assert mrc_headers_match(relion, ours)

@@ -9,6 +9,7 @@ import starfile
 from rich.logging import RichHandler
 
 from zarr_particle_tools.core.constants import NOISY_LOGGERS, OPTICS_DF_COLUMNS, TILTSERIES_URI_RELION_COLUMN
+from zarr_particle_tools.core.deformation import declaration_problems, parse_coefficients
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +141,9 @@ def project_relative(path: str | Path, project_dir: str | Path | None = None) ->
 STAR_NAME_COLUMNS = ["rlnTomoName", "rlnTomoParticleName", "rlnOpticsGroupName"]
 
 OPTIMISATION_SET_KEYS = ("rlnTomoParticlesFile", "rlnTomoTomogramsFile", "rlnTomoTrajectoriesFile")
+SUBTOMOGRAM_ANGLES = ("rlnTomoSubtomogramRot", "rlnTomoSubtomogramTilt", "rlnTomoSubtomogramPsi")
+ORIGIN_OFFSETS = ("rlnOriginXAngst", "rlnOriginYAngst", "rlnOriginZAngst")
+ZERNIKE = ("rlnEvenZernike", "rlnOddZernike")
 
 
 def _blank(value) -> bool:
@@ -431,3 +435,133 @@ def particles_and_optics(particles_data, tomograms_df: pd.DataFrame) -> tuple[pd
         }
     )
     return particles_df, optics_df
+
+
+# ====================== input checks ======================
+
+
+def _nonzero(table: pd.DataFrame, columns) -> pd.Series:
+    """Per row: any of ``columns`` present and non-zero."""
+    flags = pd.Series(False, index=table.index)
+    for column in columns:
+        if column in table.columns:
+            flags |= pd.to_numeric(table[column], errors="coerce").fillna(0) != 0
+    return flags
+
+
+def _nonzero_vector(value) -> bool:
+    return not _blank(value) and bool((parse_coefficients(value) != 0).any())
+
+
+def particle_problems(
+    program: str,
+    particles_df: pd.DataFrame,
+    optics_df: pd.DataFrame,
+    source: Path,
+    apply_ctf: bool = True,
+    apply_offsets: bool = True,
+) -> list[str]:
+    """Particle and optics metadata the Python ``extract`` or ``reconstruct`` would not apply as RELION does."""
+    problems = []
+    angled = _nonzero(particles_df, SUBTOMOGRAM_ANGLES)
+    angle = next((c for c in SUBTOMOGRAM_ANGLES if _nonzero(particles_df, [c]).any()), SUBTOMOGRAM_ANGLES[0])
+    if program == "extract":
+        if apply_offsets and all(c in particles_df.columns for c in ORIGIN_OFFSETS):
+            if (angled & _nonzero(particles_df, ORIGIN_OFFSETS)).any():
+                problems.append(
+                    f"{angle} in {source}: non-zero subtomogram orientations with non-zero rlnOrigin*Angst offsets; "
+                    "extraction does not rotate the offsets"
+                )
+        if (
+            apply_ctf
+            and "rlnEvenZernike" in optics_df.columns
+            and optics_df["rlnEvenZernike"].map(_nonzero_vector).any()
+        ):
+            problems.append(f"rlnEvenZernike in {source} (optics): even higher-order aberrations are not applied")
+    elif program == "reconstruct":
+        if angled.any():
+            problems.append(f"{angle} in {source}: subtomogram orientations are not applied")
+        for block, table in (("optics", optics_df), ("particles", particles_df)):
+            for column in ZERNIKE:
+                if column in table.columns and table[column].map(_nonzero_vector).any():
+                    problems.append(f"{column} in {source} ({block}): higher-order aberrations are not applied")
+        if "rlnTomoTiltSeriesPixelSize" in optics_df.columns:
+            sizes = sorted(set(optics_df["rlnTomoTiltSeriesPixelSize"].astype(float)))
+            if len(sizes) > 1:
+                problems.append(
+                    f"rlnTomoTiltSeriesPixelSize in {source} (optics): reconstruction needs one tilt-series pixel "
+                    f"size, found {sizes}"
+                )
+    return problems
+
+
+def input_problems(
+    program: str,
+    particles: Path | None,
+    tomograms: Path,
+    trajectories: Path | None = None,
+    tiltseries_relative_dir: Path | None = None,
+    apply_ctf: bool = True,
+    apply_offsets: bool = True,
+    ignore_deformations: bool = False,
+) -> list[tuple[str, str]]:
+    """``(input, message)`` for what ``program`` cannot honor in its inputs; ``input`` is ``particles``,
+    ``tomograms`` or ``trajectories``.
+
+    ``program`` is ``extract`` or ``reconstruct`` (tilt series of tomograms with particles, tilt stars under
+    ``tiltseries_relative_dir``), or ``relion`` (CTF refinement and polishing: every tomogram's tilt series is staged,
+    tilt stars found by :func:`resolve_path`). ``particles`` is ``None`` for copick picks.
+    """
+    try:
+        tomograms_data, tomograms_df = read_tomograms_starfile(tomograms)
+    except (OSError, ValueError, KeyError) as exc:
+        return [("tomograms", f"{tomograms}: {exc}")]
+    problems = []
+    with_particles = None
+    if particles is not None and program != "relion":
+        try:
+            particles_data = starfile.read(particles, parse_as_string=STAR_NAME_COLUMNS)
+            particles_df, optics_df = particles_and_optics(particles_data, tomograms_df)
+        except (OSError, ValueError, KeyError) as exc:
+            problems.append(("particles", f"{particles}: {exc}"))
+        else:
+            with_particles = set(particles_df["rlnTomoName"].astype(str))
+            messages = particle_problems(program, particles_df, optics_df, particles, apply_ctf, apply_offsets)
+            problems += [("particles", message) for message in messages]
+
+    relative_dir = Path(tiltseries_relative_dir or "./")
+    for _, row in tomograms_df.iterrows():
+        name = str(row["rlnTomoName"])
+        if with_particles is not None and name not in with_particles:
+            continue
+        try:
+            if program == "relion":
+                tilts, source = read_tiltseries_table(row, tomograms)
+            else:
+                tilts, source = read_tiltseries_table(row, tomograms, tomograms_data, relative_dir)
+        except (OSError, ValueError, KeyError) as exc:
+            problems.append(("tomograms", str(exc)))
+            continue
+        column = TILTSERIES_URI_RELION_COLUMN if TILTSERIES_URI_RELION_COLUMN in tilts else "rlnMicrographName"
+        try:
+            locator = get_tiltseries_data_locator(tilts, relative_dir)
+        except (ValueError, IndexError) as exc:
+            problems.append(("tomograms", f"{column} in {source}: tomogram {name}: {exc}"))
+            continue
+        if not locator.startswith("s3://") and not Path(locator).exists():
+            problems.append(("tomograms", f"{column} in {source}: tomogram {name}: {locator} does not exist"))
+        if program != "relion" and not ignore_deformations:
+            for column, message in declaration_problems(row, tilts):
+                where = source if column == "rlnTomoDeformationCoefficients" else tomograms
+                problems.append(("tomograms", f"{column} in {where}: {message}"))
+
+    if trajectories is not None and not Path(trajectories).exists():
+        problems.append(("trajectories", f"{trajectories} does not exist"))
+    return problems
+
+
+def check_inputs(*args, **kwargs) -> None:
+    """Raise :func:`input_problems` as one ``ValueError``."""
+    problems = input_problems(*args, **kwargs)
+    if problems:
+        raise ValueError("Inputs cannot be honored:\n" + "\n".join(f"  - {message}" for _, message in problems))

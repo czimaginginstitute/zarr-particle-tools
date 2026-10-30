@@ -45,6 +45,7 @@ from zarr_particle_tools.core.data import (
 from zarr_particle_tools.core.helpers import (
     STAR_NAME_COLUMNS,
     auto_worker_count,
+    check_inputs,
     get_tiltseries_data_locator,
     read_optimisation_set,
     read_single_table,
@@ -474,9 +475,8 @@ def _two_phase(
     starfile.write({"global": pd.DataFrame(rows)}, str(stage / "tomograms.star"), overwrite=True)
     opt_set = _write_optimisation_set(stage, particles_star, stage / "tomograms.star", trajectories)
 
-    cmd = build_cmd(relion_bin, opt_set, output_dir, box_size, ref1, ref2, mask, fsc, threads, opts) + [
-        "--only_do_unfinished"
-    ]
+    cmd = build_cmd(relion_bin, opt_set, output_dir, box_size, ref1, ref2, mask, fsc, threads, opts)
+    cmd += list(common.get("extra_args", ())) + ["--only_do_unfinished"]
     logger.info("Phase 2 (collect): %s", " ".join(cmd))
     subprocess.run(cmd, check=True, cwd=str(stage))
     return output_dir
@@ -534,8 +534,12 @@ def run_relion_tomo_job(
     keep_shm: bool = False,
     per_tomogram: bool = True,
     n_workers: int = 0,
+    extra_args: tuple[str, ...] = (),
 ) -> Path:
-    """Generic driver: resolve inputs, then run per-tomogram two-phase (default) or all-at-once."""
+    """Generic driver: resolve and check inputs, then run per-tomogram two-phase (default) or all-at-once.
+
+    ``extra_args`` go to every RELION call.
+    """
     start = time.time()
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -547,6 +551,7 @@ def run_relion_tomo_job(
     if particles_starfile is None or tomograms_starfile is None:
         raise ValueError("Provide either an optimisation set or both particles and tomograms star files.")
 
+    check_inputs("relion", particles_starfile, tomograms_starfile, trajectories_starfile, tiltseries_relative_dir)
     global_df, tomograms_star = read_global_tomograms(Path(tomograms_starfile))
 
     # Hard-error if the particles reference no tomogram in this set (e.g. a generated tomograms.star
@@ -596,6 +601,7 @@ def run_relion_tomo_job(
         threads=threads,
         keep_shm=keep_shm,
         opts=opts,
+        extra_args=tuple(extra_args),
     )
 
     if two_phase:
