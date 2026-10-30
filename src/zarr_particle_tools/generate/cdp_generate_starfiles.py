@@ -12,7 +12,6 @@ Generates:
 
 import json
 import logging
-import math
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -42,7 +41,13 @@ from zarr_particle_tools.core.constants import (
 )
 from zarr_particle_tools.core.data import get_data
 from zarr_particle_tools.core.forwardprojection import in_plane_rotation_to_tilt_axis_rotation
-from zarr_particle_tools.core.helpers import get_filter, get_optics_group_name, get_tomo_name, setup_logging
+from zarr_particle_tools.core.helpers import (
+    get_filter,
+    get_optics_group_name,
+    get_tomo_name,
+    get_unbinned_tomo_size,
+    setup_logging,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -271,19 +276,6 @@ def get_particles_df_optics_df(
     )
 
     return optics_df, particles_df
-
-
-def get_unbinned_tomo_size(binned_size: int, binning: float, is_z: bool = False) -> int:
-    """
-    Bin-1 tomogram size in tilt-series pixels (rlnTomoSize*) for a tomogram dimension at the given binning.
-    Returns the even size that RELION's reconstruct bins back to binned_size (X/Y round, Z truncates), so
-    RELION's int(size / 2) projection centre equals the size / 2.0 used for centred coordinates.
-    The round trip is exact for binning >= 2.
-    """
-    unbinned_size = binned_size * binning
-    if is_z:
-        return 2 * math.ceil(unbinned_size / 2 - 1e-6)
-    return 2 * round(unbinned_size / 2)
 
 
 def get_tomograms_df(optics_df: pd.DataFrame, output_dir: Path) -> tuple[pd.DataFrame, list[tuple[int, int]]]:

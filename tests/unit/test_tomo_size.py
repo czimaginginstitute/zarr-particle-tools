@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 import zarr_particle_tools.generate.cdp_generate_starfiles as cdp_generate
-from zarr_particle_tools.generate.cdp_generate_starfiles import get_unbinned_tomo_size
+from zarr_particle_tools.core.helpers import get_unbinned_tomo_size
 
 
 @pytest.mark.parametrize(
