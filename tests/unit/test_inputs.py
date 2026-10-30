@@ -106,23 +106,19 @@ def test_clean_inputs_pass(tmp_path, monkeypatch):
         assert input_problems(program, particles, tomograms) == []
 
 
-def test_subtomogram_orientations_are_refused_for_extraction_only_with_offsets(tmp_path, monkeypatch):
-    angles = {"rlnTomoSubtomogramRot": [0.0, 12.0]}
-    offsets = {"rlnOriginXAngst": [0.0, 3.0], "rlnOriginYAngst": [0.0, 0.0], "rlnOriginZAngst": [0.0, 0.0]}
-    particles, tomograms = _project(tmp_path, monkeypatch, particles_extra=angles)
-    assert input_problems("extract", particles, tomograms) == []  # fresh picks: RELION extracts the same
-    assert _columns(input_problems("reconstruct", particles, tomograms)) == ["rlnTomoSubtomogramRot"]
-    particles.unlink()
+def test_subtomogram_orientations_are_honored(tmp_path, monkeypatch):
+    particles, tomograms = _project(tmp_path, monkeypatch)
     starfile.write(
         {
             "optics": pd.DataFrame({"rlnOpticsGroup": [1], "rlnOpticsGroupName": ["run_16848"]}),
-            "particles": pd.DataFrame({"rlnTomoName": ["16848"] * 2, **angles, **offsets}),
+            "particles": pd.DataFrame(
+                {"rlnTomoName": ["16848"] * 2, "rlnTomoSubtomogramRot": [0.0, 12.0], "rlnOriginXAngst": [0.0, 3.0]}
+            ),
         },
         particles,
     )
-    assert _columns(input_problems("extract", particles, tomograms)) == ["rlnTomoSubtomogramRot"]
-    assert input_problems("extract", particles, tomograms, apply_offsets=False) == []
-    assert input_problems("relion", particles, tomograms) == []
+    for program in ("extract", "reconstruct", "relion"):
+        assert input_problems(program, particles, tomograms) == []
 
 
 @pytest.mark.parametrize(

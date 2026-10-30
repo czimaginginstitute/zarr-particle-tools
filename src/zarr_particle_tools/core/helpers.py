@@ -142,8 +142,6 @@ def project_relative(path: str | Path, project_dir: str | Path | None = None) ->
 STAR_NAME_COLUMNS = ["rlnTomoName", "rlnTomoParticleName", "rlnOpticsGroupName"]
 
 OPTIMISATION_SET_KEYS = ("rlnTomoParticlesFile", "rlnTomoTomogramsFile", "rlnTomoTrajectoriesFile")
-SUBTOMOGRAM_ANGLES = ("rlnTomoSubtomogramRot", "rlnTomoSubtomogramTilt", "rlnTomoSubtomogramPsi")
-ORIGIN_OFFSETS = ("rlnOriginXAngst", "rlnOriginYAngst", "rlnOriginZAngst")
 ZERNIKE = ("rlnEvenZernike", "rlnOddZernike")
 
 
@@ -447,15 +445,6 @@ def particles_and_optics(particles_data, tomograms_df: pd.DataFrame) -> tuple[pd
 # ====================== input checks ======================
 
 
-def _nonzero(table: pd.DataFrame, columns) -> pd.Series:
-    """Per row: any of ``columns`` present and non-zero."""
-    flags = pd.Series(False, index=table.index)
-    for column in columns:
-        if column in table.columns:
-            flags |= pd.to_numeric(table[column], errors="coerce").fillna(0) != 0
-    return flags
-
-
 def _nonzero_vector(value) -> bool:
     return not _blank(value) and bool((parse_coefficients(value) != 0).any())
 
@@ -466,19 +455,10 @@ def particle_problems(
     optics_df: pd.DataFrame,
     source: Path,
     apply_ctf: bool = True,
-    apply_offsets: bool = True,
 ) -> list[str]:
     """Particle and optics metadata the Python ``extract`` or ``reconstruct`` would not apply as RELION does."""
     problems = []
-    angled = _nonzero(particles_df, SUBTOMOGRAM_ANGLES)
-    angle = next((c for c in SUBTOMOGRAM_ANGLES if _nonzero(particles_df, [c]).any()), SUBTOMOGRAM_ANGLES[0])
     if program == "extract":
-        if apply_offsets and all(c in particles_df.columns for c in ORIGIN_OFFSETS):
-            if (angled & _nonzero(particles_df, ORIGIN_OFFSETS)).any():
-                problems.append(
-                    f"{angle} in {source}: non-zero subtomogram orientations with non-zero rlnOrigin*Angst offsets; "
-                    "extraction does not rotate the offsets"
-                )
         if (
             apply_ctf
             and "rlnEvenZernike" in optics_df.columns
@@ -486,8 +466,6 @@ def particle_problems(
         ):
             problems.append(f"rlnEvenZernike in {source} (optics): even higher-order aberrations are not applied")
     elif program == "reconstruct":
-        if angled.any():
-            problems.append(f"{angle} in {source}: subtomogram orientations are not applied")
         for block, table in (("optics", optics_df), ("particles", particles_df)):
             for column in ZERNIKE:
                 if column in table.columns and table[column].map(_nonzero_vector).any():
@@ -509,7 +487,6 @@ def input_problems(
     trajectories: Path | None = None,
     tiltseries_relative_dir: Path | None = None,
     apply_ctf: bool = True,
-    apply_offsets: bool = True,
     ignore_deformations: bool = False,
     tomo_names: Collection[str] | None = None,
 ) -> list[tuple[str, str]]:
@@ -535,7 +512,7 @@ def input_problems(
             problems.append(("particles", f"{particles}: {exc}"))
         else:
             with_particles = set(particles_df["rlnTomoName"].astype(str))
-            messages = particle_problems(program, particles_df, optics_df, particles, apply_ctf, apply_offsets)
+            messages = particle_problems(program, particles_df, optics_df, particles, apply_ctf)
             problems += [("particles", message) for message in messages]
 
     relative_dir = Path(tiltseries_relative_dir or "./")
