@@ -171,6 +171,7 @@ def test_other_args_reach_stock_relion(cls):
     job.joboptions["other_args"].value = "--some_relion_flag 2"
     cmd = _command(job)
     assert cmd[cmd.index("--relion-args") + 1] == "--some_relion_flag 2"
+    assert "--require-ram-staging" in cmd  # the pipeliner jobs require RAM staging by default
 
 
 def test_set_and_direct_entries_together_are_refused(job):

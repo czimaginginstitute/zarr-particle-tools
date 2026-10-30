@@ -339,6 +339,13 @@ def split_copick_args(kwargs: dict) -> tuple[dict, dict]:
     return copick, kwargs
 
 
+require_ram_staging_option = click.option(
+    "--require-ram-staging",
+    is_flag=True,
+    help="Stage only on RAM-backed storage (tmpfs) at --shm-dir: fail before streaming instead of falling back to "
+    "the system temp dir.",
+)
+
 relion_args_option = click.option(
     "--relion-args",
     type=str,
@@ -412,6 +419,7 @@ def ctfrefine_options():
             show_default=True,
             help="Preferred staging dir for tilt-series MRCs; falls back to the system temp dir.",
         ),
+        require_ram_staging_option,
         click.option(
             "--per-tomogram/--all-at-once",
             default=True,
@@ -508,6 +516,7 @@ def polish_options():
             show_default=True,
             help="Preferred staging dir for tilt-series MRCs; falls back to the system temp dir.",
         ),
+        require_ram_staging_option,
         click.option(
             "--per-tomogram/--all-at-once",
             default=True,

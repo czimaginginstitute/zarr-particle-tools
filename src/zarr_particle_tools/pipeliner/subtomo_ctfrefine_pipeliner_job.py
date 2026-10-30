@@ -30,6 +30,7 @@ class PythonRelionSubtomoCtfRefineJob(PipelinerJob):
             "CTF-refine tilt series stored as OME-Zarr using zarr-particle-ctfrefine and stock RELION."
         )
         self.joboptions = copy.deepcopy(TomoRelionCtfRefine().joboptions)
+        _common.add_staging_options(self)
 
     def create_output_nodes(self):
         self.add_output_node(
@@ -91,6 +92,7 @@ class PythonRelionSubtomoCtfRefineJob(PipelinerJob):
                 cmd += ["--per-tomogram-scale"]
 
         cmd += ["--threads", self.joboptions["nr_threads"].get_string()]
+        cmd += _common.staging_args(self)
         other_args = self.joboptions["other_args"].get_string().strip()
         if other_args:
             cmd += ["--relion-args", other_args]

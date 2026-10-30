@@ -20,6 +20,7 @@ import starfile
 import zarr
 
 from zarr_particle_tools.core.data import DataReader, write_tiltseries_to_mrc
+from zarr_particle_tools.core.data import _remove_staging_dirs as remove_staging_dirs
 from zarr_particle_tools.subtomo_ctfrefine import run_ctf_refine
 
 DATA = Path(__file__).parent / "data" / "relion_project_synthetic"
@@ -332,3 +333,37 @@ def test_ctfrefine_two_phase_joint_scale_matches_all_at_once(tmp_path):
         pt = _refined_defocus(tmp_path / "pt" / "tiltseries" / f"{name}.star")
         aa = _refined_defocus(tmp_path / "aa" / "tiltseries" / f"{name}.star")
         assert np.array_equal(pt.to_numpy(), aa.to_numpy()), f"two-phase joint != all-at-once for {name}"
+
+
+@pytest.mark.skipif(shutil.which(RELION_BIN) is None, reason="relion_tomo_refine_ctf not on PATH")
+def test_ctfrefine_from_another_directory_with_kept_staging(tmp_path, monkeypatch):
+    """An absolute optimisation set named from elsewhere, as zarr-particle-extract writes it; --keep-shm keeps
+    the job's staging directory and the output set holds absolute paths."""
+    ref = DATA / "Reconstruct" / "relion_output_baseline" / "merged.mrc"
+    parts, tomos = _build_multi_tomo_zarr_case(tmp_path / "proj", n=1)
+    optimisation_set = tmp_path / "proj" / "optimisation_set.star"
+    starfile.write(
+        {"rlnTomoParticlesFile": str(parts.resolve()), "rlnTomoTomogramsFile": str(tomos.resolve())}, optimisation_set
+    )
+    (tmp_path / "home").mkdir()
+    monkeypatch.chdir(tmp_path / "home")
+    for keep in (True, False):
+        shm = tmp_path / f"shm_{keep}"
+        run_ctf_refine(
+            output_dir=tmp_path / f"out_{keep}",
+            box_size=64,
+            ref1=ref,
+            ref2=ref,
+            optimisation_set_starfile=optimisation_set,
+            do_defocus=True,
+            threads=4,
+            shm_dir=shm,
+            keep_shm=keep,
+        )
+        remove_staging_dirs()  # what atexit and SIGTERM run
+        kept = list(shm.glob("zpt-*"))
+        assert len(kept) == (1 if keep else 0)
+        if keep:
+            assert list(kept[0].glob("zpt_*.mrc"))
+        written = starfile.read(tmp_path / f"out_{keep}" / "optimisation_set.star")
+        assert all(Path(str(v)).is_absolute() for v in written.values() if str(v).strip())
