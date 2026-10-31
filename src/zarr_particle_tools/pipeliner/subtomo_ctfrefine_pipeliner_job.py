@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import copy
 import re
+import shlex
 from collections.abc import Sequence
 
 from pipeliner.data_structure import TOMO_CTFREFINE_DIR
 from pipeliner.jobs.tomography.relion_tomo.tomo_ctfrefine_job import TomoRelionCtfRefine
 from pipeliner.nodes import (
+    NODE_PARTICLEGROUPMETADATA,
     NODE_TOMOGRAMGROUPMETADATA,
     NODE_TOMOOPTIMISATIONSET,
 )
@@ -32,6 +34,12 @@ class PythonRelionSubtomoCtfRefineJob(PipelinerJob):
         _common.add_staging_options(self)
 
     def create_output_nodes(self):
+        # aberration refinement (only reachable through other_args) makes RELION write particles.star too
+        aberrations = {"--do_even_aberrations", "--do_odd_aberrations"}
+        if aberrations & set(shlex.split(self.joboptions["other_args"].get_string())):
+            self.add_output_node(
+                "particles.star", NODE_PARTICLEGROUPMETADATA, ["relion", "tomo", "ctfrefine", "python"]
+            )
         self.add_output_node("tomograms.star", NODE_TOMOGRAMGROUPMETADATA, ["relion", "tomo", "ctfrefine", "python"])
         self.add_output_node(
             "optimisation_set.star", NODE_TOMOOPTIMISATIONSET, ["relion", "tomo", "ctfrefine", "python"]
