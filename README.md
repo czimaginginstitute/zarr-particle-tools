@@ -333,7 +333,8 @@ For each run the import resolves **one tomogram**, which fixes the alignment and
   `rlnTomoTomogramBinning`. STAR paths are relative to the working directory (the project).
 - A section that cannot be written (excluded by the alignment, e.g. an AreTomo dark frame, or with an incomplete
   CTF, alignment or dose record) keeps its source index in `N@placeholder` and is listed with its reason in
-  `portal_selection.json`. Runs with a LOCAL alignment or an affine transformation are refused.
+  `portal_selection.json`. Runs with an affine transformation are refused. A LOCAL alignment is written as its
+  global per-tilt geometry with a warning, and `portal_selection.json` records each run's `alignment_type`.
 - `--selection portal_selection.json` imports a stored selection, and fails if the portal changed since it was
   resolved (including per-tilt values) or if it was resolved on the other portal (`--staging`).
   `zarr_particle_tools.generate.portal_selection.resolve()` produces one without the extraction stack.

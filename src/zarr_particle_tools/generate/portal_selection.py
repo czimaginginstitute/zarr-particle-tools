@@ -22,6 +22,7 @@ import cryoet_data_portal as cdp
 
 import zarr_particle_tools.generate.cdp_cache as cdp_cache
 from zarr_particle_tools.core.constants import TOMOGRAM_TYPES
+from zarr_particle_tools.core.helpers import get_tomo_name, get_unbinned_tomo_size
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,7 @@ class RunSelection:
     tomo_name: str = ""  # rlnTomoName, core.helpers.get_tomo_name
     fractional_dose: float | None = None  # e/A^2 per tilt (rlnTomoImportFractionalDose)
     sections_digest: str | None = None  # sha256 of the written sections' CTF, dose and alignment values
+    alignment_type: str | None = None  # the portal's Alignment.alignment_type; of a LOCAL one, only the global part
 
     @property
     def written_z_indices(self) -> list[int]:
@@ -166,7 +168,7 @@ class Selection:
             r["tomogram_size"] = tuple(r["tomogram_size"])
             r["rln_tomo_size"] = tuple(r["rln_tomo_size"])
             r["sections"] = [Section(**s) for s in r["sections"]]
-            r["tomo_name"] = r.get("tomo_name") or _tomo_name(
+            r["tomo_name"] = r.get("tomo_name") or get_tomo_name(
                 r["run_id"], r["tiltseries_id"], r["alignment_id"], r["voxel_spacing_id"]
             )
             runs.append(RunSelection(**r))
@@ -190,12 +192,6 @@ class Selection:
 
 
 # ====================== resolution ======================
-
-
-def _tomo_name(run_id: int, tiltseries_id: int, alignment_id: int, voxel_spacing_id: int) -> str:
-    from zarr_particle_tools.core.helpers import get_tomo_name  # core.helpers imports pandas
-
-    return get_tomo_name(run_id, tiltseries_id, alignment_id, voxel_spacing_id)
 
 
 def _ids(values) -> list[int]:
@@ -325,12 +321,13 @@ def _nonzero_offsets(alignment: cdp.Alignment, tomogram: cdp.Tomogram) -> str:
     return f"{'; '.join(bad)} is not supported (particles are placed relative to the volume center)" if bad else ""
 
 
-def _settle(
-    chosen: list[tuple[cdp.Run, cdp.Tomogram]], allow_local_alignment: bool
-) -> tuple[list[RunSelection], list[RunProblem]]:
-    """Check each chosen tomogram's alignment, tilt series and sections; describe the ones that can be built."""
-    from zarr_particle_tools.core.helpers import get_unbinned_tomo_size  # core.helpers imports pandas
+def _missing(record, numbers: tuple[str, ...], required: tuple[str, ...]) -> list[str]:
+    """The ``numbers`` that are None and the ``required`` fields that are empty or zero."""
+    return [f for f in numbers if getattr(record, f) is None] + [f for f in required if not getattr(record, f)]
 
+
+def _settle(chosen: list[tuple[cdp.Run, cdp.Tomogram]]) -> tuple[list[RunSelection], list[RunProblem]]:
+    """Check each chosen tomogram's alignment, tilt series and sections; describe the ones that can be built."""
     problems: list[RunProblem] = []
     if not chosen:
         return [], problems
@@ -348,25 +345,14 @@ def _settle(
         def fail(reason: str, run=run, tomogram=tomogram) -> None:
             problems.append(RunProblem(run.dataset_id, run.id, run.name, "ineligible", reason, [_candidate(tomogram)]))
 
+        if missing := _missing(tomogram, ("size_x", "size_y", "size_z"), ("voxel_spacing", "s3_omezarr_dir")):
+            fail(f"tomogram {tomogram.id} lacks {', '.join(missing)}")
+            continue
         tomogram_size = (tomogram.size_x, tomogram.size_y, tomogram.size_z)
-        if not tomogram.voxel_spacing or None in tomogram_size:
-            fail(f"tomogram {tomogram.id} has no voxel spacing or size")
-            continue
-        if not tomogram.s3_omezarr_dir:
-            fail(f"tomogram {tomogram.id} has no OME-Zarr copy")
-            continue
         alignment = alignments.get(tomogram.alignment_id)
         if alignment is None:
             fail(f"tomogram {tomogram.id} has no alignment")
             continue
-        if alignment.alignment_type == "LOCAL":
-            if not allow_local_alignment:
-                fail(f"alignment {alignment.id} is LOCAL; only its global per-tilt geometry could be written")
-                continue
-            logger.warning(
-                f"[Run {run.id}] Alignment {alignment.id} is LOCAL; only its global geometry is written, so "
-                "particles may project to the wrong place."
-            )
         if not _is_identity(alignment.affine_transformation_matrix):
             fail(f"alignment {alignment.id} has a non-identity affine_transformation_matrix, which is not applied")
             continue
@@ -374,11 +360,8 @@ def _settle(
         if ts is None:
             fail(f"alignment {alignment.id} has no tilt series")
             continue
-        if not ts.s3_omezarr_dir:
-            fail(f"tilt series {ts.id} has no OME-Zarr copy to stream from")
-            continue
-        ts_fields = ("acceleration_voltage", "spherical_aberration_constant", "pixel_spacing", "size_x", "size_y")
-        if missing := [f for f in (*ts_fields, "size_z") if getattr(ts, f) is None]:
+        ts_numbers = ("acceleration_voltage", "spherical_aberration_constant", "size_x", "size_y", "size_z")
+        if missing := _missing(ts, ts_numbers, ("pixel_spacing", "s3_omezarr_dir")):
             fail(f"tilt series {ts.id} lacks {', '.join(missing)}")
             continue
         ctf_records, aln_records = ctf_by_ts.get(ts.id) or [], aln_by_alignment.get(alignment.id) or []
@@ -407,6 +390,11 @@ def _settle(
         if not doses:
             fail(f"no frame of tilt series {ts.id} records an exposure dose (rlnTomoImportFractionalDose)")
             continue
+        if alignment.alignment_type == "LOCAL":
+            logger.warning(
+                f"[Run {run.id}] Alignment {alignment.id} is LOCAL; only its global per-tilt geometry is written, so "
+                "particles may project to the wrong place."
+            )
         binning = tomogram.voxel_spacing / ts.pixel_spacing
         selected.append(
             RunSelection(
@@ -428,9 +416,10 @@ def _settle(
                 tiltseries_uri=ts.s3_omezarr_dir,
                 tomogram_uri=tomogram.s3_omezarr_dir,
                 sections=sections,
-                tomo_name=_tomo_name(run.id, ts.id, alignment.id, tomogram.tomogram_voxel_spacing_id),
+                tomo_name=get_tomo_name(run.id, ts.id, alignment.id, tomogram.tomogram_voxel_spacing_id),
                 fractional_dose=sum(doses) / len(doses),
                 sections_digest=_sections_digest(written, ctf_by_z, aln_by_z, frame_by_id),
+                alignment_type=alignment.alignment_type,
             )
         )
     return selected, problems
@@ -446,7 +435,6 @@ def resolve(
     voxel_spacing: float = 0.0,
     *,
     smallest_spacing: bool = False,
-    allow_local_alignment: bool = False,
 ) -> Selection:
     """
     Resolve the runs to process and, for each, the one tomogram (and so alignment, tilt series, voxel spacing).
@@ -463,7 +451,6 @@ def resolve(
         voxel_spacing: an exact deposited voxel spacing in A; 0 accepts any.
         smallest_spacing: choose each unpinned run's tomogram at its only alignment's smallest voxel spacing instead
             of by the filters, which must then be left at their defaults.
-        allow_local_alignment: accept LOCAL alignments and write their global geometry; otherwise they are refused.
     """
     cdp_cache.clear_caches()
     if tomogram_type not in TOMOGRAM_TYPES:
@@ -482,7 +469,6 @@ def resolve(
         "reconstruction_method": reconstruction_method,
         "voxel_spacing": voxel_spacing,
         "smallest_spacing": smallest_spacing,
-        "allow_local_alignment": allow_local_alignment,
     }
     problems: list[RunProblem] = []
 
@@ -557,19 +543,14 @@ def resolve(
         listed = matches if matches else all_tomograms
         problems.append(RunProblem(run.dataset_id, run.id, run.name, status, reason, [_candidate(t) for t in listed]))
 
-    selected, settle_problems = _settle(chosen, allow_local_alignment)
+    selected, settle_problems = _settle(chosen)
     return _finish(criteria, selected, problems + settle_problems)
 
 
-def resolve_alignments(
-    alignment_and_voxel_spacing_ids: list[tuple[int, int]], allow_local_alignment: bool = False
-) -> Selection:
+def resolve_alignments(alignment_and_voxel_spacing_ids: list[tuple[int, int]]) -> Selection:
     """One tomogram per (alignment id, voxel spacing id), as portal annotation files name them."""
     pairs = sorted(set(alignment_and_voxel_spacing_ids))
-    criteria = {
-        "alignment_and_voxel_spacing_ids": [list(p) for p in pairs],
-        "allow_local_alignment": allow_local_alignment,
-    }
+    criteria = {"alignment_and_voxel_spacing_ids": [list(p) for p in pairs]}
     problems: list[RunProblem] = []
     alignments = {a.id: a for a in cdp_cache.get_alignments([a for a, _ in pairs])} if pairs else {}
     run_ids = sorted({a.run_id for a in alignments.values()})
@@ -590,7 +571,7 @@ def resolve_alignments(
             problems.append(RunProblem(run.dataset_id, run.id, run.name, "ineligible", reason))
             continue
         chosen.append((run, tomogram))
-    selected, settle_problems = _settle(chosen, allow_local_alignment)
+    selected, settle_problems = _settle(chosen)
     selected.sort(key=lambda r: (r.run_id, r.tiltseries_id, r.alignment_id, r.voxel_spacing_id))
     return _finish(criteria, selected, problems + settle_problems)
 

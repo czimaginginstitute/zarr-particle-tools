@@ -111,7 +111,7 @@ def resolve_annotation_tomograms(
     can be imported. The others are logged and dropped.
     """
     pairs = sorted({(f.alignment_id, f.tomogram_voxel_spacing_id) for f in annotation_files if f.alignment_id})
-    selection = portal_selection.resolve_alignments(pairs, allow_local_alignment=True)
+    selection = portal_selection.resolve_alignments(pairs)
     for problem in selection.problems:
         logger.warning(f"[Run {problem.run_id}] Skipped: {problem.reason}")
     resolved = {(r.alignment_id, r.voxel_spacing_id) for r in selection.runs}
@@ -219,21 +219,12 @@ def resolve_runs(run_ids: list[int] = None, dataset_ids: list[int] = None) -> li
     """
     if not run_ids and not dataset_ids:
         raise ValueError("At least one of run_ids or dataset_ids must be provided.")
-    selection = portal_selection.resolve(
-        dataset_ids=dataset_ids, run_ids=run_ids, smallest_spacing=True, allow_local_alignment=True
-    )
+    selection = portal_selection.resolve(dataset_ids=dataset_ids, run_ids=run_ids, smallest_spacing=True)
     for problem in selection.problems:
         logger.warning(f"[Run {problem.run_id}] Skipped: {problem.reason}")
     if not selection.runs:
         raise ValueError(f"No valid runs found. runs: {run_ids}, dataset IDs: {dataset_ids}")
     return selection.runs
-
-
-def get_optics_df_from_runs(run_ids: list[int]) -> pd.DataFrame:
-    """
-    Generate a DataFrame containing optics group information from the specified run IDs.
-    """
-    return cdp_import.get_optics_df(resolve_runs(run_ids))
 
 
 def generate_tomograms_from_runs(
