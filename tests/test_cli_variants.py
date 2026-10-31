@@ -35,6 +35,7 @@ EXPECTED_SUBCOMMANDS = {
     "zarr-particle-tomograms": {"data-portal", "copick-data-portal"},
     "zarr-particle-pipeline": {"preflight", "local", "copick-local", "data-portal", "copick-data-portal"},
     "zarr-particle-export": {"data-portal", "copick-data-portal"},
+    "zarr-particle-importtomo": {"data-portal"},
 }
 
 
@@ -541,14 +542,19 @@ def _optics(group_names):
     )
 
 
-def test_portal_naming_detected_by_anchored_prefix():
-    assert orch._uses_portal_run_naming(
-        ["33379", "44444"], _optics(["run_33379_tiltseries_1", "run_44444_tiltseries_2"])
-    )
+def test_portal_run_ids_map_by_anchored_prefix():
+    orch._check_copick_run_mapping(["33379", "44444"], _optics(["run_33379_tiltseries_1", "run_44444_tiltseries_2"]))
 
 
-def test_exact_naming_detected():
-    assert not orch._uses_portal_run_naming(["tomo1", "tomo2"], _optics(["tomo1", "tomo2"]))
+def test_exact_names_map():
+    orch._check_copick_run_mapping(["tomo1", "tomo2"], _optics(["tomo1", "tomo2"]))
+
+
+def test_two_runs_mapping_to_one_row_are_rejected():
+    with pytest.raises(Exception, match="Cannot map copick run name"):
+        orch._check_copick_run_mapping(
+            ["tomo1", "run_1"], _optics(["tomo1", "tomo2"]).assign(rlnTomoName=["run_1", "x"])
+        )
 
 
 def test_run_id_colliding_with_another_tiltseries_id_is_rejected():
@@ -558,12 +564,12 @@ def test_run_id_colliding_with_another_tiltseries_id_is_rejected():
     """
     optics = _optics(["run_33379_tiltseries_16106", "run_44444_tiltseries_5"])
     with pytest.raises(Exception, match="Cannot map copick run name"):
-        orch._uses_portal_run_naming(["33379", "16106"], optics)
+        orch._check_copick_run_mapping(["33379", "16106"], optics)
 
 
 def test_ambiguous_substring_runs_are_rejected():
     with pytest.raises(Exception, match="Cannot map copick run name"):
-        orch._uses_portal_run_naming(["1"], _optics(["run_10_tiltseries_1", "run_11_tiltseries_2"]))
+        orch._check_copick_run_mapping(["1"], _optics(["run_10_tiltseries_1", "run_11_tiltseries_2"]))
 
 
 def test_missing_optics_columns_is_actionable(tmp_path):

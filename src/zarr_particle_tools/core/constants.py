@@ -14,8 +14,11 @@ NOISY_LOGGERS = [
 THREAD_POOL_WORKER_COUNT = 8  # tested to work best
 TILTSERIES_MRCS_PLACEHOLDER = "tiltseries/tiltseries_placeholder.mrcs"
 TILTSERIES_URI_RELION_COLUMN = "tomoTiltSeriesURI"
+TOMOGRAM_URI_COLUMN = "tomoTomogramURI"
 DEFAULT_AMPLITUDE_CONTRAST = 0.07
 TOMO_HAND_DEFAULT_VALUE = -1
+# portal selection: "default" is each run's visualization default, the others match Tomogram.processing
+TOMOGRAM_TYPES = ("default", "raw", "filtered", "denoised")
 # TODO: actually validate against all these columns variables
 PARTICLES_DF_COLUMNS = [
     "rlnTomoName",
@@ -34,7 +37,7 @@ PARTICLES_DF_COLUMNS = [
 PARTICLES_DF_CDP_COLUMNS = [
     "cdpAnnotationShapeId",
 ]
-# NOTE: tomograms.star columns are based on OPTICS_DF_COLUMNS, but with additional columns for tomogram metadata (see get_tomograms_df)
+# NOTE: tomograms.star columns are based on OPTICS_DF_COLUMNS, but with additional columns for tomogram metadata (see cdp_import_starfiles.TOMOGRAMS_STAR_COLUMNS)
 OPTICS_DF_COLUMNS = [
     "rlnOpticsGroup",
     "rlnOpticsGroupName",

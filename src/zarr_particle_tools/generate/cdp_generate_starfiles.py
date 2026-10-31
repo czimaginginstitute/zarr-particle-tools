@@ -18,7 +18,6 @@ from pathlib import Path
 
 import click
 import cryoet_data_portal as cdp
-import mrcfile
 import numpy as np
 import pandas as pd
 import starfile
@@ -26,95 +25,31 @@ from rich.progress import track
 
 import zarr_particle_tools.cli.options as cli_options
 import zarr_particle_tools.generate.cdp_cache as cdp_cache
+import zarr_particle_tools.generate.cdp_import_starfiles as cdp_import
+import zarr_particle_tools.generate.portal_selection as portal_selection
 from zarr_particle_tools.core.constants import (
-    DEFAULT_AMPLITUDE_CONTRAST,
-    INDIVIDUAL_TOMOGRAM_ALN_COLUMNS,
-    INDIVIDUAL_TOMOGRAM_COLUMNS,
-    INDIVIDUAL_TOMOGRAM_CTF_COLUMNS,
     OPTICS_DF_COLUMNS,
     PARTICLES_DF_CDP_COLUMNS,
     PARTICLES_DF_COLUMNS,
     THREAD_POOL_WORKER_COUNT,
-    TILTSERIES_MRCS_PLACEHOLDER,
-    TILTSERIES_URI_RELION_COLUMN,
-    TOMO_HAND_DEFAULT_VALUE,
 )
 from zarr_particle_tools.core.data import get_data
-from zarr_particle_tools.core.forwardprojection import in_plane_rotation_to_tilt_axis_rotation
-from zarr_particle_tools.core.helpers import get_filter, get_optics_group_name, get_tomo_name, setup_logging
+from zarr_particle_tools.core.helpers import get_filter, get_optics_group_name, setup_logging
+from zarr_particle_tools.generate.portal_selection import RunSelection
 
 logger = logging.getLogger(__name__)
 
 
-def get_optics_df(alignment_ids_voxel_spacing_ids: list[tuple[int, int]]) -> pd.DataFrame:
+def get_particles_df_from_file(
+    annotation_file: cdp.AnnotationFile, run: RunSelection, no_orientations: bool = False
+) -> pd.DataFrame:
     """
-    Create a DataFrame containing optics information for the given optics data portal IDs.
-    Also validates the provided fields to ensure starfiles can be generated for the given IDs.
-    IDs required (in expected tuple order): alignment_id, voxel_spacing_id
+    Create a DataFrame containing particle information from the specified annotation file, placed in the tomogram
+    ``run`` describes.
     """
-    optics_dfs = []
-
-    for alignment_id, voxel_spacing_id in alignment_ids_voxel_spacing_ids:
-        tiltseries_id = cdp_cache.get_alignments(alignment_id)[0].tiltseries_id
-        tiltseries = cdp_cache.get_tiltseries(tiltseries_id)[0]
-        optics_df = pd.DataFrame(columns=OPTICS_DF_COLUMNS)
-
-        if not cdp_cache.validate_alignment_tiltseries(
-            alignment_id, tiltseries_id
-        ) or not cdp_cache.validate_and_get_tomogram(alignment_id, voxel_spacing_id):
-            continue
-
-        optics_group_name = get_optics_group_name(tiltseries.run_id, tiltseries_id)
-        tomo_name = get_tomo_name(tiltseries.run_id, tiltseries_id, alignment_id, voxel_spacing_id)
-
-        optics_df.loc[0] = {
-            "rlnOpticsGroup": 1,
-            "rlnOpticsGroupName": optics_group_name,
-            "rlnSphericalAberration": tiltseries.spherical_aberration_constant,
-            "rlnVoltage": tiltseries.acceleration_voltage / 1000,  # convert to kV
-            "rlnAmplitudeContrast": DEFAULT_AMPLITUDE_CONTRAST,
-            "rlnTomoTiltSeriesPixelSize": tiltseries.pixel_spacing,
-            "rlnTomoName": tomo_name,  # not usually in optics_df, but included so that tomograms.star generation from the optics_df is possible
-        }
-
-        optics_dfs.append(optics_df)
-
-    if not optics_dfs:
-        raise ValueError("No valid optics data found. Please check your input.")
-
-    optics_df = pd.concat(optics_dfs, ignore_index=True).drop_duplicates()
-    # convert "run_XXXXX_tiltseries_YYYYY" format to integers for sorting (see get_optics_group_name)
-    optics_df["rlnOpticsGroupNameInt"] = optics_df["rlnOpticsGroupName"].apply(
-        lambda x: (int(x.split("_")[1]), int(x.split("_")[3]))
-    )
-    optics_df.sort_values(by="rlnOpticsGroupNameInt", inplace=True)
-    optics_df.drop(columns=["rlnOpticsGroupNameInt"], inplace=True)
-    optics_df["rlnOpticsGroup"] = np.arange(1, len(optics_df) + 1)
-    return optics_df
-
-
-def get_particles_df_from_file(annotation_file: cdp.AnnotationFile, no_orientations: bool = False) -> pd.DataFrame:
-    """
-    Create a DataFrame containing particle information from the specified annotation file.
-    """
-    tiltseries_id = cdp_cache.get_alignments(annotation_file.alignment_id)[0].tiltseries_id
-    run_id = cdp_cache.get_tiltseries(tiltseries_id)[0].run_id
-
-    if not cdp_cache.validate_alignment_tiltseries(annotation_file.alignment_id, tiltseries_id):
-        return pd.DataFrame()
-
-    tomogram_data = cdp_cache.validate_and_get_tomogram(
-        annotation_file.alignment_id, annotation_file.tomogram_voxel_spacing_id
-    )
-
-    if not tomogram_data:
-        return pd.DataFrame()
-
     particles_df = pd.DataFrame(columns=PARTICLES_DF_COLUMNS + PARTICLES_DF_CDP_COLUMNS)
-    optics_group_name = get_optics_group_name(run_id, tiltseries_id)
-    tomo_name = get_tomo_name(
-        run_id, tiltseries_id, annotation_file.alignment_id, annotation_file.tomogram_voxel_spacing_id
-    )
+    optics_group_name = get_optics_group_name(run.run_id, run.tiltseries_id)
+    size_x, size_y, size_z = run.tomogram_size
 
     json_data = get_data(annotation_file.s3_path)
     json_point_data = [json.loads(line) for line in json_data.splitlines() if line.strip()]
@@ -122,9 +57,9 @@ def get_particles_df_from_file(annotation_file: cdp.AnnotationFile, no_orientati
     pixel_coordinates = [(d["location"]["x"], d["location"]["y"], d["location"]["z"]) for d in json_point_data]
     centered_coordinates = [
         (
-            (p[0] - tomogram_data[0] / 2) * tomogram_data[3],
-            (p[1] - tomogram_data[1] / 2) * tomogram_data[3],
-            (p[2] - tomogram_data[2] / 2) * tomogram_data[3],
+            (p[0] - size_x / 2) * run.voxel_spacing,
+            (p[1] - size_y / 2) * run.voxel_spacing,
+            (p[2] - size_z / 2) * run.voxel_spacing,
         )
         for p in pixel_coordinates
     ]
@@ -143,7 +78,7 @@ def get_particles_df_from_file(annotation_file: cdp.AnnotationFile, no_orientati
 
     particles_list = [
         {
-            "rlnTomoName": tomo_name,
+            "rlnTomoName": run.tomo_name,
             "rlnCoordinateX": p[0],
             "rlnCoordinateY": p[1],
             "rlnCoordinateZ": p[2],
@@ -162,82 +97,65 @@ def get_particles_df_from_file(annotation_file: cdp.AnnotationFile, no_orientati
     particles_df = pd.DataFrame(particles_list, columns=particles_df.columns)
 
     logger.debug(
-        f"[Run {run_id}, Annotation File {annotation_file.id}] Processed {len(particles_df)} particles with optics group '{optics_group_name}'."
+        f"[Run {run.run_id}, Annotation File {annotation_file.id}] Processed {len(particles_df)} particles with optics group '{optics_group_name}'."
     )
 
     return particles_df
 
 
+def resolve_annotation_tomograms(
+    annotation_files: list[cdp.AnnotationFile],
+) -> tuple[list[RunSelection], list[cdp.AnnotationFile]]:
+    """
+    The tomogram each annotation file's (alignment, voxel spacing) names, and the annotation files whose tomogram
+    can be imported. The others are logged and dropped.
+    """
+    pairs = sorted({(f.alignment_id, f.tomogram_voxel_spacing_id) for f in annotation_files if f.alignment_id})
+    selection = portal_selection.resolve_alignments(pairs)
+    for problem in selection.problems:
+        logger.warning(f"[Run {problem.run_id}] Skipped: {problem.reason}")
+    resolved = {(r.alignment_id, r.voxel_spacing_id) for r in selection.runs}
+    kept = [f for f in annotation_files if (f.alignment_id, f.tomogram_voxel_spacing_id) in resolved]
+    kept_ids = {f.id for f in kept}
+    removed = [f.id for f in annotation_files if f.id not in kept_ids]
+    if removed:
+        logger.error(
+            f"Removed {len(removed)}/{len(annotation_files)} annotation files whose tomogram cannot be imported: {removed}"
+        )
+    if not kept:
+        raise ValueError(
+            "No valid annotation files found. Ensure the annotations contain valid Point or OrientedPoint shapes, and their datasets have tiltseries and alignment information."
+        )
+    return selection.runs, kept
+
+
 def get_particles_df_optics_df(
-    annotation_files: list[cdp.AnnotationFile], no_orientations: bool = False
-) -> tuple[pd.DataFrame, pd.DataFrame | None]:
+    annotation_files: list[cdp.AnnotationFile], runs: list[RunSelection], no_orientations: bool = False
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Creates particles and optics dataframes necessary for a particles.star file from CryoET Data Portal annotations.
     Args:
-        annotation_files (list[AnnotationFile]): List of annotation files to process.
+        annotation_files (list[AnnotationFile]): Annotation files whose tomogram is in ``runs``.
+        runs (list[RunSelection]): The tomograms, from :func:`resolve_annotation_tomograms`.
     Returns:
         tuple: A tuple containing the optics dataframe and particles dataframe (combined from all Point and OrientedPoint annotations).
     """
     logger.info("Pulling annotation files from the CryoET Data Portal ...")
-
-    alignments = cdp_cache.get_alignments([file.alignment_id for file in annotation_files if file.alignment_id])
-    # filter out alignments that do not have a valid tiltseries
-    removed_alignments = [a.id for a in alignments if not a.tiltseries_id]
-    if removed_alignments:
-        logger.error(
-            f"Removed {len(removed_alignments)}/{len(alignments)} alignments due to missing tiltseries: {removed_alignments}"
-        )
-    alignments = [a for a in alignments if a and a.tiltseries_id]
-
-    tiltseries = cdp_cache.get_tiltseries([alignment.tiltseries_id for alignment in alignments])
-    per_section_parameters = cdp_cache.get_per_section_parameters_by_tiltseries_id([t.id for t in tiltseries])
-    # filter out tiltseries that do not have valid CTF parameters
-    removed_tiltseries = [t.id for t in tiltseries if not per_section_parameters.get(t.id)]
-    if removed_tiltseries:
-        logger.error(
-            f"Removed {len(removed_tiltseries)}/{len(tiltseries)} tiltseries due to missing CTF parameters: {removed_tiltseries}"
-        )
-    tiltseries = [t for t in tiltseries if per_section_parameters.get(t.id)]
-    tiltseries_ids = [t.id for t in tiltseries]
-
-    # filter out the alignments that do not have valid tiltseries
-    removed_alignments = [a.id for a in alignments if a.tiltseries_id not in tiltseries_ids]
-    if removed_alignments:
-        logger.error(
-            f"Removed {len(removed_alignments)}/{len(alignments)} alignments due to missing tiltseries' CTF parameters: {removed_alignments}"
-        )
-    alignments = [a for a in alignments if a and a.tiltseries_id in tiltseries_ids]
-    alignment_ids = [a.id for a in alignments]
-
-    # filter out files that do not have a valid alignment / tiltseries / CTF parameters
-    removed_annotation_files = [file.id for file in annotation_files if file.alignment_id not in alignment_ids]
-    if removed_annotation_files:
-        logger.error(
-            f"Removed {len(removed_annotation_files)}/{len(annotation_files)} annotation files due to missing alignments / tiltseries / CTF parameters: {removed_annotation_files}"
-        )
-    annotation_files = [file for file in annotation_files if file.alignment_id in alignment_ids]
-    if not annotation_files:
-        raise ValueError(
-            "No valid annotation files found. Ensure the annotations contain valid Point or OrientedPoint shapes, and their datasets have tiltseries and alignment information."
-        )
-
-    logger.debug(
-        f"Processing {len(annotation_files)} annotation files with {len(alignments)} alignments and {len(tiltseries)} tiltseries ..."
-    )
-
-    alignment_ids_voxel_spacing_ids = [
-        (
-            file.alignment_id,
-            file.tomogram_voxel_spacing_id,
-        )
-        for file in annotation_files
-    ]
-    optics_df = get_optics_df(alignment_ids_voxel_spacing_ids)
+    run_of = {(r.alignment_id, r.voxel_spacing_id): r for r in runs}
+    optics_df = cdp_import.get_optics_df(runs)
 
     all_particles_dfs: list[pd.DataFrame] = []
     # thread pool because we're downloading data
     with ThreadPoolExecutor(max_workers=THREAD_POOL_WORKER_COUNT) as thread_pool:
-        futures = [thread_pool.submit(get_particles_df_from_file, file, no_orientations) for file in annotation_files]
+        futures = [
+            thread_pool.submit(
+                get_particles_df_from_file,
+                file,
+                run_of[(file.alignment_id, file.tomogram_voxel_spacing_id)],
+                no_orientations,
+            )
+            for file in annotation_files
+        ]
 
         for fut in track(as_completed(futures), description="Downloading particle data", total=len(futures)):
             particles_df = fut.result()
@@ -245,19 +163,12 @@ def get_particles_df_optics_df(
                 continue
             all_particles_dfs.append(particles_df)
 
-    # filter out empty dataframes
-    all_particles_dfs = [df for df in all_particles_dfs if not df.empty]
     if not all_particles_dfs:
         raise ValueError(
             "No valid particle data found. Ensure the annotations contain valid Point or OrientedPoint shapes, and their datasets have tiltseries and alignment information."
         )
 
     particles_df = pd.concat(all_particles_dfs, ignore_index=True).drop_duplicates()
-    if set(particles_df["rlnOpticsGroupName"]) != set(optics_df["rlnOpticsGroupName"]):
-        raise ValueError(
-            f"Mismatch between group names in particles_df {set(particles_df['rlnOpticsGroupName'])} and optics_df {set(optics_df['rlnOpticsGroupName'])}"
-        )
-
     # convert "run_XXXXX_tiltseries_YYYYY" format to integers for sorting (see get_optics_group_name)
     particles_df["rlnOpticsGroupNameInt"] = particles_df["rlnOpticsGroupName"].apply(
         lambda x: (int(x.split("_")[1]), int(x.split("_")[3]))
@@ -266,193 +177,10 @@ def get_particles_df_optics_df(
     particles_df.drop(columns=["rlnOpticsGroupNameInt"], inplace=True)
 
     particles_df["rlnOpticsGroup"] = particles_df["rlnOpticsGroupName"].map(
-        optics_df.set_index("rlnOpticsGroupName")["rlnOpticsGroup"]
+        optics_df.drop_duplicates("rlnOpticsGroupName").set_index("rlnOpticsGroupName")["rlnOpticsGroup"]
     )
 
     return optics_df, particles_df
-
-
-def get_tomograms_df(optics_df: pd.DataFrame, output_dir: Path) -> tuple[pd.DataFrame, list[tuple[int, int]]]:
-    """
-    Returns a dataframe for the tomograms.star file from the optics dataframe.
-    Args:
-        optics_df (pd.DataFrame): The optics dataframe containing the optics group information.
-        output_dir (Path): The directory where the tomograms star file will be saved.
-    Returns:
-        tuple: A tuple containing the tomograms dataframe and a list of alignment and voxel spacing IDs.
-    """
-    tomograms_df = optics_df.drop_duplicates()
-    tomograms_df["rlnMicrographOriginalPixelSize"] = tomograms_df["rlnTomoTiltSeriesPixelSize"]
-    tomograms_df["rlnTomoHand"] = TOMO_HAND_DEFAULT_VALUE
-    tomograms_df["rlnTomoTiltSeriesStarFile"] = tomograms_df["rlnTomoName"].apply(
-        lambda x: str(
-            Path(output_dir.name) / "tiltseries" / f"{x}.star"
-        )  # relative to project root (output_dir.parent); RELION rewrites this path in polish/ctf and mangles absolute ones
-    )
-
-    # add tomogram dimensions rlnTomoSizeX, rlnTomoSizeY, rlnTomoSizeZ
-    # reliant on the fact that rlnTomoName is in the format of "run_WWWW_tiltseries_XXXX_alignment_YYYY_spacing_ZZZZ" (see get_tomo_name)
-    tomograms_df["alignment_id"] = tomograms_df["rlnTomoName"].apply(lambda x: int(x.split("_")[-3]))
-    tomograms_df["voxel_spacing_id"] = tomograms_df["rlnTomoName"].apply(lambda x: int(x.split("_")[-1]))
-    for index, row in tomograms_df.iterrows():
-        tomo_x, tomo_y, tomo_z, _ = cdp_cache.validate_and_get_tomogram(row["alignment_id"], row["voxel_spacing_id"])
-        tomograms_df.at[index, "rlnTomoSizeX"] = tomo_x
-        tomograms_df.at[index, "rlnTomoSizeY"] = tomo_y
-        tomograms_df.at[index, "rlnTomoSizeZ"] = tomo_z
-        # zarr locator in the global table (not just individual stars) so it propagates through all jobs
-        tiltseries = cdp_cache.get_tiltseries(cdp_cache.get_alignments(row["alignment_id"])[0].tiltseries_id)[0]
-        tomograms_df.at[index, TILTSERIES_URI_RELION_COLUMN] = tiltseries.s3_omezarr_dir
-
-    return tomograms_df, list(zip(tomograms_df.pop("alignment_id"), tomograms_df.pop("voxel_spacing_id"), strict=True))
-
-
-def generate_individual_tomogram_starfile(
-    alignment_id: int, voxel_spacing_id: int, output_dir: Path
-) -> tuple[pd.DataFrame, str]:
-    """
-    Generates an individual tomogram star file for the given alignment and voxel spacing.
-    Args:
-        alignment (int): The alignment id containing the tiltseries and per-section parameters.
-        voxel_spacing (int): The voxel spacing id for the tomogram.
-        output_dir (Path): The directory where the individual tomogram star file will be saved.
-    Returns:
-        tuple: A tuple containing the individual tomogram dataframe and the tomogram name.
-    """
-    alignment = cdp_cache.get_alignments(alignment_id)[0]
-    voxel_spacing = cdp_cache.get_voxel_spacings(voxel_spacing_id)[0]
-    tiltseries = cdp_cache.get_tiltseries(alignment.tiltseries_id)[0]
-    per_section_parameters = cdp_cache.get_per_section_parameters_by_tiltseries_id(tiltseries.id)[tiltseries.id]
-    per_section_alignment_parameters = cdp_cache.get_per_section_alignments_by_alignment_id(alignment.id)[alignment.id]
-    if not per_section_parameters or not per_section_alignment_parameters:
-        raise ValueError(
-            f"[Run {alignment.run_id}, TiltSeries {tiltseries.id}, Alignment {alignment.id}] Missing per-section parameters or alignment parameters."
-        )
-    if len(per_section_parameters) < len(per_section_alignment_parameters):
-        raise ValueError(
-            f"[Run {alignment.run_id}, TiltSeries {tiltseries.id}, Alignment {alignment.id}] Should not have more alignment parameters ({len(per_section_alignment_parameters)}) than CTF parameters ({len(per_section_parameters)})."
-        )
-    frames = cdp_cache.get_frames_by_run_id(alignment.run_id)[alignment.run_id]
-
-    per_section_parameters_df = pd.DataFrame(columns=INDIVIDUAL_TOMOGRAM_CTF_COLUMNS)
-    for param in per_section_parameters:
-        frame = next((f for f in frames if f.id == param.frame_id), None)
-        per_section_parameters_df.loc[len(per_section_parameters_df)] = {
-            "z_index": param.z_index + 1,  # match RELION's 1-based indexing
-            "rlnDefocusU": param.major_defocus,
-            "rlnDefocusV": param.minor_defocus,
-            "rlnDefocusAngle": param.astigmatic_angle,
-            "rlnPhaseShift": param.phase_shift * 180.0 / np.pi,  # match RELION deg convention
-            "rlnCtfMaxResolution": param.max_resolution,
-            "rlnMicrographPreExposure": frame.accumulated_dose,
-        }
-
-    per_section_alignment_parameters_df = pd.DataFrame(
-        columns=INDIVIDUAL_TOMOGRAM_ALN_COLUMNS,
-        data=[
-            {
-                "z_index": param.z_index + 1,  # match RELION's 1-based indexing
-                "rlnTomoXTilt": param.volume_x_rotation,  # param.x_rotation offset (AreTomo3 beta) is not applied, as per AreTomo3 convention
-                "rlnTomoYTilt": param.tilt_angle,  # already accounts for any tilt offset (AreTomo3 alpha)
-                "rlnTomoZRot": in_plane_rotation_to_tilt_axis_rotation(np.array(param.in_plane_rotation)),
-                "rlnTomoXShiftAngst": param.x_offset * tiltseries.pixel_spacing,
-                "rlnTomoYShiftAngst": param.y_offset * tiltseries.pixel_spacing,
-            }
-            for param in per_section_alignment_parameters
-        ],
-    )
-
-    individual_tomogram_df = pd.merge(
-        per_section_parameters_df, per_section_alignment_parameters_df, on="z_index", how="inner"
-    )
-    unmatched_alignments = per_section_alignment_parameters_df[
-        ~per_section_alignment_parameters_df["z_index"].isin(per_section_parameters_df["z_index"])
-    ]
-    if not unmatched_alignments.empty:
-        raise ValueError(
-            f"[Run {alignment.run_id}, TiltSeries {tiltseries.id}, Alignment {alignment.id}] Found {len(unmatched_alignments)} alignment parameters that do not match CTF parameters."
-        )
-    if len(individual_tomogram_df) != len(per_section_alignment_parameters_df):
-        raise ValueError(
-            f"[Run {alignment.run_id}, TiltSeries {tiltseries.id}, Alignment {alignment.id}] Mismatch between CTF and alignment parameters after merge {len(individual_tomogram_df)} merged != {len(per_section_parameters_df)} CTF != {len(per_section_alignment_parameters_df)} alignment parameters."
-        )
-
-    # reorder rows and columns to match RELION format
-    individual_tomogram_df.sort_values(by="z_index", inplace=True)
-    individual_tomogram_df["rlnMicrographName"] = individual_tomogram_df["z_index"].apply(
-        lambda x: f"{str(int(x))}@{Path(output_dir.name) / TILTSERIES_MRCS_PLACEHOLDER}"  # relative to project root; RELION mangles absolute paths on rewrite
-    )
-    individual_tomogram_df[TILTSERIES_URI_RELION_COLUMN] = tiltseries.s3_omezarr_dir
-    individual_tomogram_df = individual_tomogram_df.drop(columns=["z_index"])
-    individual_tomogram_df = individual_tomogram_df[INDIVIDUAL_TOMOGRAM_COLUMNS]
-
-    if individual_tomogram_df.isna().any().any():
-        raise ValueError(
-            f"[Run {alignment.run_id}, TiltSeries {tiltseries.id}, Alignment {alignment.id}] Data contains NA values. This can cause issues with RELION subtomogram extraction. Please check the star file."
-        )
-
-    tomo_name = get_tomo_name(alignment.run_id, tiltseries.id, alignment.id, voxel_spacing.id)
-    output_path = output_dir / "tiltseries" / f"{tomo_name}.star"
-    starfile.write({tomo_name: individual_tomogram_df}, output_path, overwrite=True)
-    logger.debug(
-        f"[Run {alignment.run_id}, TiltSeries {tiltseries.id}, Alignment {alignment.id}] Wrote individual tomogram star file to {output_path} ({voxel_spacing.voxel_spacing} Å)"
-    )
-
-    return individual_tomogram_df, tomo_name
-
-
-def write_tiltseries_placeholder(output_dir: Path, tiltseries) -> None:
-    """Write the shared placeholder tiltseries mrc that rlnTomoTiltSeriesName points to (to satisfy RELION's
-    schema + the pipeliner node-existence check). Pixels stream from the tomoTiltSeriesURI, so the single
-    tomogram's dims are harmless. Written ONCE before the tomogram pool (not per-tomogram): the single-writer
-    guarantee is what makes new_mmap safe here — the earlier per-tomogram new_mmap raced on this shared path
-    (concurrent truncate/mmap -> "mmap length > file size"). Sparse: ~8 KB on disk vs a full ~GB volume."""
-    (output_dir / "tiltseries").mkdir(parents=True, exist_ok=True)
-    with mrcfile.new_mmap(
-        output_dir / TILTSERIES_MRCS_PLACEHOLDER,
-        shape=(tiltseries.size_z, tiltseries.size_y, tiltseries.size_x),
-        mrc_mode=2,
-        overwrite=True,
-    ) as mrc:
-        mrc.voxel_size = (tiltseries.pixel_spacing, tiltseries.pixel_spacing, 1.0)
-
-
-def generate_individual_tomogram_starfiles(
-    alignment_and_voxel_spacing_ids: list[tuple[int, int]], output_dir: Path
-) -> list[pd.DataFrame]:
-    """
-    Generates individual tomogram star files for each tuple of alignment ID and voxel spacing ID.
-    Args:
-        alignment_and_voxel_spacing_ids (list[tuple[int, int]]): List of tuples containing alignment IDs and their corresponding voxel spacing IDs that specify the tomograms to generate.
-        output_dir (Path): Directory where the individual tomogram star files will be saved.
-    Returns:
-        list[pd.DataFrame]: List of DataFrames containing the individual tomogram data.
-    """
-    logger.info(f"Generating individual tomogram star files in {output_dir} ...")
-
-    individual_tomograms_dfs = []
-    tomo_names = []
-
-    # create the single shared placeholder once, before the pool, to avoid a concurrent-write race on it
-    if alignment_and_voxel_spacing_ids:
-        first_alignment_id = alignment_and_voxel_spacing_ids[0][0]
-        first_tiltseries = cdp_cache.get_tiltseries(cdp_cache.get_alignments(first_alignment_id)[0].tiltseries_id)[0]
-        write_tiltseries_placeholder(output_dir, first_tiltseries)
-
-    with ThreadPoolExecutor(max_workers=THREAD_POOL_WORKER_COUNT) as thread_pool:
-        futures = [
-            thread_pool.submit(generate_individual_tomogram_starfile, alignment_id, voxel_spacing_id, output_dir)
-            for (alignment_id, voxel_spacing_id) in alignment_and_voxel_spacing_ids
-        ]
-
-        for fut in track(
-            as_completed(futures), description="Generating individual tomogram star files", total=len(futures)
-        ):
-            individual_tomogram_df, tomo_name = fut.result()
-            if individual_tomogram_df is not None:
-                individual_tomograms_dfs.append(individual_tomogram_df)
-                tomo_names.append(tomo_name)
-
-    return individual_tomograms_dfs, tomo_names
 
 
 def generate_starfiles_from_annotation_files(
@@ -460,6 +188,7 @@ def generate_starfiles_from_annotation_files(
 ) -> tuple[Path, Path, Path]:
     """
     Generates optics.star / particles.star, tomograms.star, and individual tomogram star files from the given annotation files.
+    Star-file paths are relative to ``output_dir.parent``.
     Args:
         annotation_files (list[cdp.AnnotationFile]): List of annotation files to generate star files from.
         output_dir (Path): Directory where the star files will be saved.
@@ -467,72 +196,35 @@ def generate_starfiles_from_annotation_files(
         tuple: A tuple containing the paths to the generated optics.star / particles.star, tomograms.star, and the tiltseries folder.
     """
     start_time = time.time()
-    optics_df, particles_df = get_particles_df_optics_df(annotation_files, no_orientations)
-    tomograms_df, alignment_and_voxel_spacing_ids = get_tomograms_df(optics_df, output_dir)
-    _, tomo_names = generate_individual_tomogram_starfiles(alignment_and_voxel_spacing_ids, output_dir)
-    # filter out invalid tomograms from optics, particles, and tomograms dataframes
-    tomograms_df = tomograms_df[tomograms_df["rlnTomoName"].isin(tomo_names)]
-    tomograms_df_optics_groups = tomograms_df["rlnOpticsGroupName"].unique()
+    output_dir = Path(output_dir)
+    runs, annotation_files = resolve_annotation_tomograms(annotation_files)
+    optics_df, particles_df = get_particles_df_optics_df(annotation_files, runs, no_orientations)
+    tomograms_path = cdp_import.write(cdp_import.build(runs, output_dir, project_dir=output_dir.parent), output_dir)
 
-    particles_df = particles_df[particles_df["rlnTomoName"].isin(tomo_names)]
-    particles_df_optics_groups = particles_df["rlnOpticsGroupName"].unique()
-    if set(particles_df_optics_groups) != set(tomograms_df_optics_groups):
-        raise ValueError(
-            f"Optics groups in particles ({particles_df_optics_groups}) and tomograms ({tomograms_df_optics_groups}) do not match. This may cause issues with RELION subtomogram extraction."
-        )
-
-    # write files
     particles_path = output_dir / "particles.star"
-    tomograms_path = output_dir / "tomograms.star"
-    tiltseries_folder_path = output_dir / "tiltseries"
     starfile.write({"optics": optics_df, "particles": particles_df}, particles_path, overwrite=True)
     logger.info(f"Wrote {len(optics_df)} optics group(s) and {len(particles_df)} particle(s) to {particles_path}")
-    starfile.write({"global": tomograms_df}, tomograms_path, overwrite=True)
-    logger.info(f"Wrote {len(tomograms_df)} tomogram(s) to {tomograms_path}")
+    logger.info(f"Wrote {len(runs)} tomogram(s) to {tomograms_path}")
 
     end_time = time.time()
     logger.info(f"Finished generating star files in {end_time - start_time:.2f} seconds.")
 
-    return particles_path, tomograms_path, tiltseries_folder_path
+    return particles_path, tomograms_path, output_dir / "tiltseries"
 
 
-def get_optics_df_from_runs(run_ids: list[int]) -> pd.DataFrame:
+def resolve_runs(run_ids: list[int] = None, dataset_ids: list[int] = None) -> list[RunSelection]:
     """
-    Generate a DataFrame containing optics group information from the specified run IDs.
+    The tomogram of each run: its single alignment at the smallest voxel spacing. Runs that cannot be imported are
+    logged and dropped.
     """
-    alignment_ids_voxel_spacing_ids = []
-    runs = cdp_cache.get_runs(run_ids)
-    if not runs:
-        raise ValueError("No valid runs found. Please check your run IDs.")
-
-    alignments = cdp_cache.get_alignments_by_run_id(run_ids)
-    for run in runs:
-        run_alignments = alignments[run.id]
-
-        if len(run_alignments) == 0:
-            raise ValueError(f"[Run {run.id}] does not have any alignments. Cannot generate starfiles.")
-        elif len(run_alignments) > 1:
-            raise ValueError(f"[Run {run.id}] has multiple alignments. Cannot generate starfiles.")
-
-        alignment = run_alignments[0]
-        if not alignment.tiltseries_id:
-            raise ValueError(
-                f"[Run {run.id}, Alignment {alignment.id}] does not have a tilt series. Cannot generate starfiles."
-            )
-
-        # only get voxel spacings that belong to this alignment
-        tomograms = cdp_cache.get_tomograms_by_alignment_id([alignment.id])[alignment.id]
-        voxel_spacings = cdp_cache.get_voxel_spacings([tomogram.tomogram_voxel_spacing_id for tomogram in tomograms])
-
-        if not voxel_spacings:
-            raise ValueError(
-                f"[Run {run.id}, Alignment {alignment.id}] does not have any voxel spacings. Cannot generate starfiles."
-            )
-        smallest_voxel_spacing = min(voxel_spacings, key=lambda x: x.voxel_spacing)
-        alignment_ids_voxel_spacing_ids.append((alignment.id, smallest_voxel_spacing.id))
-
-    alignment_ids_voxel_spacing_ids = list(set(alignment_ids_voxel_spacing_ids))
-    return get_optics_df(alignment_ids_voxel_spacing_ids)
+    if not run_ids and not dataset_ids:
+        raise ValueError("At least one of run_ids or dataset_ids must be provided.")
+    selection = portal_selection.resolve(dataset_ids=dataset_ids, run_ids=run_ids, smallest_spacing=True)
+    for problem in selection.problems:
+        logger.warning(f"[Run {problem.run_id}] Skipped: {problem.reason}")
+    if not selection.runs:
+        raise ValueError(f"No valid runs found. runs: {run_ids}, dataset IDs: {dataset_ids}")
+    return selection.runs
 
 
 def generate_tomograms_from_runs(
@@ -541,47 +233,26 @@ def generate_tomograms_from_runs(
     """
     Generates optics data, tomograms.star and individual tomogram star files from the given run IDs.
     For when everything except actual particle data wants to be generated (i.e also using copick projects).
-    This only works on runs with a single alignment and will select the smallest voxel spacing
-    (will fail if there are multiple voxel spacings of the smallest size and they have different tomogram dimensions).
+    Each run needs a single alignment; its tomogram is the one at the smallest voxel spacing. Star-file paths are
+    relative to ``output_dir.parent``.
 
     Returns:
         tuple: A tuple containing the (filtered) data portal run ids, optics dataframe, path to the tomograms.star file, and path to the tiltseries folder.
     """
     start_time = time.time()
-    (output_dir / "tiltseries").mkdir(parents=True, exist_ok=True)
-
-    if not run_ids and not dataset_ids:
-        raise ValueError("At least one of run_ids or dataset_ids must be provided.")
-
-    if dataset_ids:
-        dataset_runs = cdp_cache.get_runs_by_dataset_id(dataset_ids)
-        dataset_run_ids = [run.id for runs in dataset_runs.values() for run in runs]
-        if run_ids:
-            filtered_run_ids = list(set(run_ids) & set(dataset_run_ids))
-            if not filtered_run_ids:
-                raise ValueError(
-                    f"No valid runs found after filtering by dataset IDs. runs: {run_ids}, dataset IDs: {dataset_ids}"
-                )
-            run_ids = filtered_run_ids
-        else:
-            run_ids = dataset_run_ids
-
-    optics_df = get_optics_df_from_runs(run_ids)
-
-    tomograms_df, alignment_and_voxel_spacing_ids = get_tomograms_df(optics_df, output_dir)
-    _, _ = generate_individual_tomogram_starfiles(alignment_and_voxel_spacing_ids, output_dir)
-
-    tomograms_path = output_dir / "tomograms.star"
-    tiltseries_folder_path = output_dir / "tiltseries"
-    starfile.write({"global": tomograms_df}, tomograms_path, overwrite=True)
-    logger.info(f"Wrote {len(tomograms_df)} tomogram(s) to {tomograms_path}")
+    output_dir = Path(output_dir)
+    runs = resolve_runs(run_ids, dataset_ids)
+    tomogram_set = cdp_import.build(runs, output_dir, project_dir=output_dir.parent)
+    tomograms_path = cdp_import.write(tomogram_set, output_dir)
+    logger.info(f"Wrote {len(runs)} tomogram(s) to {tomograms_path}")
 
     end_time = time.time()
     logger.info(
         f"Finished generating optics, tomograms, and tiltseries star files in {end_time - start_time:.2f} seconds."
     )
 
-    return run_ids, optics_df, tomograms_path, tiltseries_folder_path
+    optics_df = tomogram_set.tomograms[OPTICS_DF_COLUMNS].reset_index(drop=True)
+    return [r.run_id for r in runs], optics_df, tomograms_path, output_dir / "tiltseries"
 
 
 def resolve_annotation_files(
@@ -640,9 +311,9 @@ def resolve_annotation_files(
     tiltseries_query_filters = [f for f in tiltseries_query_filters if f is not None]
     if tiltseries_query_filters:
         tiltseries_list: list[cdp.TiltSeries] = cdp.TiltSeries.find(client, tiltseries_query_filters)
-        cdp_cache.tiltseries_cache = {**cdp_cache.tiltseries_cache, **{ts.id: ts for ts in tiltseries_list}}
+        cdp_cache.tiltseries_cache.update({ts.id: ts for ts in tiltseries_list})
         alignment_ids_to_aln = {al.id: al for ts in tiltseries_list for al in ts.alignments}
-        cdp_cache.alignment_cache = {**cdp_cache.alignment_cache, **alignment_ids_to_aln}
+        cdp_cache.alignment_cache.update(alignment_ids_to_aln)
         temp_alignment_ids = list(alignment_ids_to_aln.keys())
         if not temp_alignment_ids:
             raise ValueError("No tiltseries / corresponding alignments found. Please check your filters.")
@@ -656,7 +327,7 @@ def resolve_annotation_files(
     tomogram_query_filters = [f for f in tomogram_query_filters if f is not None]
     if tomogram_query_filters:
         tomogram_list: list[cdp.Tomogram] = cdp.Tomogram.find(client, tomogram_query_filters)
-        cdp_cache.tomograms_cache = {**cdp_cache.tomograms_cache, **{t.id: t for t in tomogram_list}}
+        cdp_cache.tomograms_cache.update({t.id: t for t in tomogram_list})
         temp_alignment_ids = {t.alignment_id for t in tomogram_list}
         voxel_spacing_ids = [t.tomogram_voxel_spacing_id for t in tomogram_list]
         if not temp_alignment_ids:

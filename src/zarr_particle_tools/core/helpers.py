@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 import shutil
 from pathlib import Path
@@ -111,6 +112,26 @@ def get_optics_group_name(run_id: int, tiltseries_id: int) -> str:
 
 def get_tomo_name(run_id: int, tiltseries_id: int, alignment_id: int, voxel_spacing_id: int) -> str:
     return f"run_{run_id}_tiltseries_{tiltseries_id}_alignment_{alignment_id}_spacing_{voxel_spacing_id}"
+
+
+def get_unbinned_tomo_size(binned_size: int, binning: float, is_z: bool = False) -> int:
+    """
+    Bin-1 tomogram size in tilt-series pixels (rlnTomoSize*) for a tomogram dimension at the given binning: the even
+    size that RELION's reconstruct bins back to ``binned_size`` (X/Y round, Z truncates).
+    """
+    unbinned_size = binned_size * binning
+    if is_z:
+        return 2 * math.ceil(unbinned_size / 2 - 1e-6)
+    return 2 * round(unbinned_size / 2)
+
+
+def project_relative(path: str | Path, project_dir: str | Path | None = None) -> str:
+    """``path`` relative to ``project_dir`` (default: the working directory) when it is inside it, else absolute."""
+    path = Path(path).absolute()
+    try:
+        return str(path.relative_to(Path(project_dir or Path.cwd()).absolute()))
+    except ValueError:
+        return str(path)
 
 
 # ====================== file validation, reading, data extraction helpers ======================

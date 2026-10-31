@@ -158,7 +158,16 @@ def test_cli_baseline(validate_starfile):
     # validate rlnTomoTiltSeriesStarFile separately; it is relative to the RELION project root
     tomograms_starfile_data = starfile.read(tomograms_starfile)
     assert (output_dir.parent / tomograms_starfile_data["rlnTomoTiltSeriesStarFile"].iloc[0]).exists()
-    validate_starfile(tomograms_starfile, tomograms_reference_starfile)
+    # rlnTomoSize* is bin-1 tilt-series pixels: 630 x 630 x 184 voxels at 10.012 A, tilt pixel 1.54 A
+    tomo_size_columns = ["rlnTomoSizeX", "rlnTomoSizeY", "rlnTomoSizeZ"]
+    assert tomograms_starfile_data[tomo_size_columns].iloc[0].tolist() == [4096, 4096, 1198]
+    # columns the reference predates
+    row = tomograms_starfile_data.iloc[0]
+    assert np.isclose(row["rlnTomoTomogramBinning"], 10.012 / 1.54)
+    assert np.isclose(row["rlnTomoImportFractionalDose"], 3.87075)
+    assert row["tomoTomogramURI"].endswith("TS_5_4/Reconstructions/VoxelSpacing10.012/Tomograms/100/TS_5_4.zarr")
+    new_columns = ["rlnTomoTomogramBinning", "rlnTomoImportFractionalDose", "tomoTomogramURI"]
+    validate_starfile(tomograms_starfile, tomograms_reference_starfile, ignore_columns=tomo_size_columns + new_columns)
     validate_starfile(particles_starfile, particles_reference_starfile)
     # validate rlnMicrographName separately; its path is relative to the RELION project root
     tiltseries_starfile_data = starfile.read(tiltseries_starfile)

@@ -241,34 +241,38 @@ def data_portal_options():
             help="Zero particle orientations (rlnAngleRot/Tilt/Psi) so poses are determined de novo.",
         )
     )
-    options.append(
-        click.option(
-            "--staging",
-            is_flag=True,
-            help="Query the staging CryoET Data Portal (GraphQL + authenticated S3) instead of prod. "
-            "Omit for prod. Fails hard with a 403 message if staging S3 access is denied.",
-        )
-    )
-
-    for arg, py_type in DATA_PORTAL_ARGS:
-        field_name = arg.removeprefix("--").split("-")[0]
-        field_type = arg.removeprefix("--").split("-")[1].rstrip("s")
-        help_msg = help_text(field_name, field_type, py_type)
-
-        plural_flag, singular_flag = arg_flags(arg)
-        param_type = PARAM_TYPE_FOR_TYPE[py_type]
-
-        options.append(
-            click.option(
-                plural_flag,
-                singular_flag,
-                type=param_type,
-                multiple=True,
-                help=help_msg,
-            )
-        )
+    options.append(staging_option())
+    options.extend(_portal_arg_option(arg, py_type) for arg, py_type in DATA_PORTAL_ARGS)
 
     return compose_options(options)
+
+
+def _portal_arg_option(arg: str, py_type: type):
+    field_name = arg.removeprefix("--").split("-")[0]
+    field_type = arg.removeprefix("--").split("-")[1].rstrip("s")
+    plural_flag, singular_flag = arg_flags(arg)
+    return click.option(
+        plural_flag,
+        singular_flag,
+        type=PARAM_TYPE_FOR_TYPE[py_type],
+        multiple=True,
+        help=help_text(field_name, field_type, py_type),
+    )
+
+
+def portal_id_options(*args: str):
+    """The DATA_PORTAL_ARGS options named by ``args`` (e.g. ``"--run-ids"``), with their singular aliases."""
+    types = dict(DATA_PORTAL_ARGS)
+    return compose_options([_portal_arg_option(arg, types[arg]) for arg in args])
+
+
+def staging_option():
+    return click.option(
+        "--staging",
+        is_flag=True,
+        help="Query the staging CryoET Data Portal (GraphQL + authenticated S3) instead of prod. "
+        "Omit for prod. Fails hard with a 403 message if staging S3 access is denied.",
+    )
 
 
 def configure_portal_endpoint(staging: bool) -> None:
