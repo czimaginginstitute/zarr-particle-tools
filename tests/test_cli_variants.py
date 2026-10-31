@@ -22,7 +22,7 @@ import zarr_particle_tools.orchestrate as orch
 import zarr_particle_tools.subtomo_ctfrefine as ctfrefine
 import zarr_particle_tools.subtomo_extract as extract
 import zarr_particle_tools.subtomo_polish as polish
-from zarr_particle_tools.core.constants import OPTICS_DF_COLUMNS, PARTICLES_DF_COLUMNS
+from zarr_particle_tools.core.constants import PARTICLES_DF_COLUMNS
 from zarr_particle_tools.core.helpers import STAR_NAME_COLUMNS
 
 # The intended source matrix. ctf-refine / polish have no copick-local (they need a *refined*
@@ -241,7 +241,7 @@ def test_orchestrate_copick_local_generates_particles(tmp_path, monkeypatch, stu
         copick_run_names=["tomo1"],
     )
 
-    assert captured["optics_columns"] == OPTICS_DF_COLUMNS
+    assert captured["optics_columns"] == ["rlnOpticsGroup", "rlnOpticsGroupName", "rlnTomoName"]
     assert captured["data_portal_runs"] is False
     written = out / "input" / "particles.star"
     assert written.exists()
@@ -490,7 +490,7 @@ def test_parse_extract_copick_local_builds_particles_from_optics(tmp_path, monke
         dry_run=True,  # stop before any actual extraction
     )
 
-    assert captured["optics_columns"] == OPTICS_DF_COLUMNS
+    assert captured["optics_columns"] == ["rlnOpticsGroup", "rlnOpticsGroupName", "rlnTomoName"]
     assert captured["data_portal_runs"] is False
     assert (out / "particles.star").exists()
 
@@ -572,9 +572,11 @@ def test_ambiguous_substring_runs_are_rejected():
         orch._check_copick_run_mapping(["1"], _optics(["run_10_tiltseries_1", "run_11_tiltseries_2"]))
 
 
-def test_missing_optics_columns_is_actionable(tmp_path):
-    """A RELION-native tomograms.star keeps the integer rlnOpticsGroup out of data_global."""
+def test_missing_optics_columns_is_actionable(tmp_path, monkeypatch):
+    """A tomograms.star without rlnOpticsGroup is RELION's own and fine; one without rlnVoltage names it."""
     star = tmp_path / "tomograms.star"
     starfile.write(pd.DataFrame({"rlnTomoName": ["t"], "rlnTomoTiltSeriesPixelSize": [1.0]}), star)
-    with pytest.raises(Exception, match="rlnOpticsGroup"):
-        orch._optics_from_tomograms_star(star)
+    picks = pd.DataFrame({"rlnTomoName": ["t"]})
+    monkeypatch.setattr(orch.copick_generate, "copick_picks_to_starfile", lambda *a, **k: picks)
+    with pytest.raises(Exception, match="rlnVoltage"):
+        orch._particles_from_copick_picks(star, "cfg", "ribosome", "1", "u", copick_run_names=["t"])

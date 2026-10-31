@@ -11,13 +11,16 @@ from click.testing import CliRunner
 
 import zarr_particle_tools.generate.copick_generate_starfiles as copick_generate
 from tests.helpers.compare import mrc_equal
-from zarr_particle_tools.core.helpers import STAR_NAME_COLUMNS
+from tests.helpers.deformation import deformed_project, synthetic_names, write_deformed_project
+from zarr_particle_tools.core.helpers import STAR_NAME_COLUMNS, read_optimisation_set
 from zarr_particle_tools.subtomo_extract import (
     cli,
     extract_subtomograms,
     parse_extract_copick_local_subtomograms,
+    parse_extract_local_subtomograms,
     subtomogram_path,
 )
+from zarr_particle_tools.subtomo_reconstruct import reconstruct_copick_local
 
 DATASET_CONFIGS = {
     "synthetic": {
@@ -519,69 +522,39 @@ def test_extract_with_trajectories_matches_relion(tmp_path):
         )
 
 
+def test_extract_particles_without_optics_as_relion_does(tmp_path, validate_particles_starfile, compare_mrcs_dirs):
+    """relion_tomo_import_coordinates writes no optics block, and RELION's tomograms.star has no rlnOpticsGroup."""
+    data_root = DATASET_CONFIGS["synthetic"]["data_root"]
+    particles = starfile.read(data_root / "particles.star")["particles"]
+    starfile.write({"particles": particles.drop(columns="rlnOpticsGroup")}, tmp_path / "particles.star")
+    parse_extract_local_subtomograms(
+        box_size=64,
+        output_dir=tmp_path / "out",
+        particles_starfile=tmp_path / "particles.star",
+        tiltseries_relative_dir=data_root,
+        tomograms_starfile=data_root / "tomograms.star",
+    )
+    relion = data_root / "Extract" / "relion_output_baseline"
+    validate_particles_starfile(tmp_path / "out" / "particles.star", relion / "particles.star")
+    compare_mrcs_dirs(
+        relion / "Subtomograms", tmp_path / "out" / "Subtomograms", tol=DATASET_CONFIGS["synthetic"]["tol"]
+    )
+
+
 # ----------------------------------------------------------------------------- RELION-5 2D deformations
-def _write_deformed_project(tmp_path, data_root, deformation_type, grid, coefficient_rows, names):
-    """The synthetic project with rlnTomoDeformation* columns added (tilt images symlinked, stars rewritten)."""
-    (tmp_path / "tiltseries").mkdir(parents=True)
-    (tmp_path / "tiltseries" / "TS_1.mrcs").symlink_to((data_root / "tiltseries" / "TS_1.mrcs").resolve())
-    tomograms = starfile.read(data_root / "tomograms.star", always_dict=True)
-    global_df = tomograms["global"].copy()
-    global_df["rlnTomoDeformationGridSizeX"] = grid[0]
-    global_df["rlnTomoDeformationGridSizeY"] = grid[1]
-    global_df["rlnTomoDeformationType"] = deformation_type
-    starfile.write({"global": global_df}, tmp_path / "tomograms.star")
-    tiltseries = starfile.read(data_root / "tiltseries" / "TS_1.star", always_dict=True)
-    block_name, tilt_df = next(iter(tiltseries.items()))
-    tilt_df = tilt_df.copy()
-    tilt_df["rlnTomoDeformationCoefficients"] = [
-        "[" + ",".join(f"{v:.12g}" for v in row) + "]" for row in coefficient_rows
-    ]
-    starfile.write({block_name: tilt_df}, tmp_path / "tiltseries" / "TS_1.star")
-    particles_data = starfile.read(data_root / "particles.star")
-    particles_data["particles"]["rlnTomoParticleName"] = names
-    starfile.write(particles_data, tmp_path / "particles.star")
-
-
-def _synthetic_names(data_root):
-    n = len(starfile.read(data_root / "particles.star")["particles"])
-    return [f"session1_TS_1/{i}" for i in range(1, n + 1)]
-
-
-def _random_deformation(deformation_type, n_tilts, image, rng):
-    """(grid, per-tilt coefficient rows) with shifts of a few pixels, different in every tilt."""
-    if deformation_type == "spline":
-        grid = (3, 3)
-        rows = []
-        for _ in range(n_tilts):
-            nodes = np.zeros((2, grid[1], grid[0], 4))
-            nodes[..., 0] = rng.uniform(-5, 5, nodes.shape[:3])  # value (px)
-            nodes[..., 1:3] = rng.uniform(-3, 3, nodes.shape[:3] + (2,))  # slope_x, slope_y (px per cell)
-            nodes[..., 3] = rng.uniform(-1, 1, nodes.shape[:3])  # twist
-            rows.append(nodes.ravel())
-        return grid, rows
-    if deformation_type == "linear":
-        return (1, 1), [rng.uniform(-0.01, 0.01, 3) for _ in range(n_tilts)]
-    if deformation_type == "Fourier":
-        grid = (4, 4)
-        # RELION copies (gx/2+1)*gy complex numbers per dim from the vector and reads the first n_freq of each
-        n = (grid[0] // 2 + 1) * grid[1] * 2 * 2
-        return grid, [rng.uniform(-3, 3, n) for _ in range(n_tilts)]
-    raise ValueError(deformation_type)
-
-
 def test_extract_deformation_equals_trajectory(tmp_path):
     # a spline with a constant value field shifts every crop by s pixels in every tilt; the same crop positions
     # follow from a per-tilt 3D trajectory v_t with P_t[:2, :3] v_t = s * pixel_size (least-norm solution)
     from zarr_particle_tools.core.forwardprojection import calculate_projection_matrix_from_starfile_df
 
     data_root = DATASET_CONFIGS["synthetic"]["data_root"]
-    names = _synthetic_names(data_root)
+    names = synthetic_names(data_root)
     tilt_df = starfile.read(data_root / "tiltseries" / "TS_1.star")
     pixel_size = float(starfile.read(data_root / "tomograms.star")["rlnTomoTiltSeriesPixelSize"].iloc[0])
     shift_px = np.array([6.3, -4.1])
     nodes = np.zeros((2, 3, 3, 4))
     nodes[0, :, :, 0], nodes[1, :, :, 0] = shift_px
-    _write_deformed_project(tmp_path / "deformed", data_root, "spline", (3, 3), [nodes.ravel()] * len(tilt_df), names)
+    write_deformed_project(tmp_path / "deformed", data_root, "spline", (3, 3), [nodes.ravel()] * len(tilt_df), names)
 
     trajectory = []
     for matrix in calculate_projection_matrix_from_starfile_df(tilt_df):
@@ -640,11 +613,7 @@ def test_extract_deformation_equals_trajectory(tmp_path):
 def test_extract_with_deformations_matches_relion(tmp_path, deformation_type):
     # per-tilt 2D deformations, extracted by RELION and by us from the same inputs
     data_root = DATASET_CONFIGS["synthetic"]["data_root"]
-    names = _synthetic_names(data_root)
-    n_tilts = len(starfile.read(data_root / "tiltseries" / "TS_1.star"))
-    rng = np.random.default_rng({"spline": 1, "linear": 2, "Fourier": 3}[deformation_type])
-    grid, rows = _random_deformation(deformation_type, n_tilts, (630, 630), rng)
-    _write_deformed_project(tmp_path, data_root, deformation_type, grid, rows, names)
+    names = deformed_project(tmp_path, data_root, deformation_type)
 
     relion_args = ["--p", "particles.star", "--t", "tomograms.star", "--o", "relion/"]
     relion_args += ["--b", "64", "--crop", "64", "--bin", "1", "--stack2d", "--j", "4"]
@@ -668,3 +637,164 @@ def test_extract_with_deformations_matches_relion(tmp_path, deformation_type):
         n_ignored_differ += relion.shape != ignored.shape or not np.allclose(relion, ignored, atol=tol)
     # the comparison is sensitive: without the deformation the same crops do not match RELION
     assert n_ignored_differ == len(names)
+
+
+class _Pick:
+    """A copick pick on run ``name`` holding the given synthetic particles."""
+
+    def __init__(self, name, particles):
+        self.run = type("Run", (), {"name": name})
+        self.particles = particles
+
+    def df(self, format):
+        return self.particles.drop(columns=["rlnTomoName", "rlnOpticsGroup"])
+
+
+def _pick_on_ts1(monkeypatch, particles):
+    monkeypatch.setattr(copick_generate, "get_copick_picks", lambda *args: [_Pick("session1_TS_1", particles)])
+
+
+COPICK = {"copick_config": None, "copick_name": "particle", "copick_session_id": "0", "copick_user_id": "user"}
+
+
+def _extract(kind, project, output_dir, monkeypatch, **kwargs):
+    """Extract ``project`` (its particles, or the same particles as copick picks on run session1_TS_1)."""
+    inputs = {"tiltseries_relative_dir": project, "tomograms_starfile": project / "tomograms.star"}
+    if kind == "local":
+        return parse_extract_local_subtomograms(
+            box_size=64, output_dir=output_dir, particles_starfile=project / "particles.star", **inputs, **kwargs
+        )
+    _pick_on_ts1(monkeypatch, starfile.read(project / "particles.star")["particles"])
+    return parse_extract_copick_local_subtomograms(
+        box_size=64, output_dir=output_dir, copick_run_names=["session1_TS_1"], **COPICK, **inputs, **kwargs
+    )
+
+
+def _bspline_project(project, data_root):
+    """The synthetic project declaring a deformation type RELION does not know."""
+    deformed_project(project, data_root, "linear")
+    tomograms = starfile.read(project / "tomograms.star", always_dict=True)
+    tomograms["global"]["rlnTomoDeformationType"] = "bspline"
+    starfile.write(tomograms, project / "tomograms.star")
+
+
+def _files(directory):
+    return {p.relative_to(directory): p.read_bytes() for p in directory.rglob("*") if p.is_file()}
+
+
+@pytest.mark.parametrize("damage", ["unknown deformation type", "missing tilt-series stack"])
+def test_copick_extraction_and_reconstruction_refuse_bad_inputs_before_writing(tmp_path, monkeypatch, damage):
+    data_root = DATASET_CONFIGS["synthetic"]["data_root"]
+    deformed_project(tmp_path, data_root, "linear")
+    if damage == "unknown deformation type":
+        tomograms = starfile.read(tmp_path / "tomograms.star", always_dict=True)
+        tomograms["global"]["rlnTomoDeformationType"] = "bspline"
+        starfile.write(tomograms, tmp_path / "tomograms.star")
+        column = "rlnTomoDeformationType"
+    else:
+        (tmp_path / "tiltseries" / "TS_1.mrcs").unlink()
+        column = "rlnMicrographName"
+    _pick_on_ts1(monkeypatch, starfile.read(tmp_path / "particles.star")["particles"])
+    copick = {
+        **COPICK,
+        "copick_run_names": ["session1_TS_1"],
+        "tiltseries_relative_dir": tmp_path,
+        "tomograms_starfile": tmp_path / "tomograms.star",
+    }
+    with pytest.raises(ValueError, match=column):
+        parse_extract_copick_local_subtomograms(box_size=64, output_dir=tmp_path / "extract", **copick)
+    with pytest.raises(ValueError, match=column):
+        reconstruct_copick_local(box_size=64, output_dir=tmp_path / "reconstruct", **copick)
+    for output_dir in (tmp_path / "extract", tmp_path / "reconstruct"):
+        assert not (output_dir / "particles.star").exists()
+        assert not (output_dir / "Subtomograms").exists()
+
+
+@pytest.mark.parametrize("overwrite", [True, False])
+@pytest.mark.parametrize("kind", ["local", "copick"])
+def test_refused_extraction_leaves_output_untouched(tmp_path, monkeypatch, kind, overwrite):
+    data_root = DATASET_CONFIGS["synthetic"]["data_root"]
+    _bspline_project(tmp_path / "bad", data_root)
+    output_dir = tmp_path / "out"
+    if overwrite:
+        _extract(kind, data_root, output_dir, monkeypatch)
+        before = _files(output_dir)
+        assert sum(path.suffix == ".mrcs" for path in before) == 25
+        with pytest.raises(ValueError, match="rlnTomoDeformationType"):
+            _extract(kind, tmp_path / "bad", output_dir, monkeypatch, overwrite=True)
+        assert _files(output_dir) == before
+    else:
+        with pytest.raises(ValueError, match="rlnTomoDeformationType"):
+            _extract(kind, tmp_path / "bad", output_dir, monkeypatch)
+        assert not (output_dir / "Subtomograms").exists()
+        _extract(kind, data_root, output_dir, monkeypatch)  # the fixed rerun needs no --overwrite
+
+
+@pytest.mark.parametrize("damage", ["missing stack", "unknown deformation type"])
+def test_copick_extraction_ignores_tomograms_without_picks(tmp_path, monkeypatch, damage):
+    # RELION skips a tomogram without particles before reading it, so nothing about session1_TS_2 is checked
+    data_root = DATASET_CONFIGS["synthetic"]["data_root"]
+    project = tmp_path / "project"
+    (project / "tiltseries").mkdir(parents=True)
+    stack = (data_root / "tiltseries" / "TS_1.mrcs").resolve()
+    (project / "tiltseries" / "TS_1.mrcs").symlink_to(stack)
+    tilts = starfile.read(data_root / "tiltseries" / "TS_1.star")
+    starfile.write({"TS_1": tilts}, project / "tiltseries" / "TS_1.star")
+    ts2_tilts = tilts.assign(rlnMicrographName=tilts["rlnMicrographName"].str.replace("TS_1", "TS_2"))
+    starfile.write({"TS_2": ts2_tilts}, project / "tiltseries" / "TS_2.star")
+    tomograms = starfile.read(data_root / "tomograms.star")
+    ts2 = tomograms.assign(rlnTomoName="session1_TS_2", rlnTomoTiltSeriesStarFile="tiltseries/TS_2.star")
+    if damage == "unknown deformation type":
+        (project / "tiltseries" / "TS_2.mrcs").symlink_to(stack)
+        ts2 = ts2.assign(rlnTomoDeformationGridSizeX=2, rlnTomoDeformationGridSizeY=2, rlnTomoDeformationType="bspline")
+    starfile.write({"global": pd.concat([tomograms, ts2], ignore_index=True)}, project / "tomograms.star")
+    _pick_on_ts1(monkeypatch, starfile.read(data_root / "particles.star")["particles"].iloc[:3])
+
+    parse_extract_copick_local_subtomograms(
+        box_size=64,
+        output_dir=tmp_path / "out",
+        copick_run_names=["session1_TS_1"],
+        tiltseries_relative_dir=project,
+        tomograms_starfile=project / "tomograms.star",
+        **COPICK,
+    )
+    assert len(list((tmp_path / "out" / "Subtomograms").rglob("*.mrcs"))) == 3
+
+
+def test_copick_dry_run_refuses_what_the_real_run_refuses(tmp_path, monkeypatch):
+    _bspline_project(tmp_path / "bad", DATASET_CONFIGS["synthetic"]["data_root"])
+    with pytest.raises(ValueError, match="rlnTomoDeformationType"):
+        _extract("copick", tmp_path / "bad", tmp_path / "out", monkeypatch, dry_run=True)
+    assert not (tmp_path / "out" / "particles.star").exists()
+
+
+def test_ignore_deformations_extracts_a_declaration_it_could_not_build_as_undeformed(tmp_path, monkeypatch):
+    data_root = DATASET_CONFIGS["synthetic"]["data_root"]
+    _bspline_project(tmp_path / "bad", data_root)
+    _extract("local", tmp_path / "bad", tmp_path / "ignored", monkeypatch, ignore_deformations=True)
+    _extract("local", data_root, tmp_path / "plain", monkeypatch)
+    ignored, plain = (
+        {p.relative_to(d): p for d in [tmp_path / name / "Subtomograms"] for p in d.rglob("*.mrcs")}
+        for name in ("ignored", "plain")
+    )
+    assert sorted(ignored) == sorted(plain) and len(plain) == 25
+    for name, path in plain.items():
+        np.testing.assert_array_equal(mrcfile.read(ignored[name]), mrcfile.read(path))
+
+
+def test_optimisation_set_names_absolute_paths(tmp_path, monkeypatch):
+    # extract into a project-relative job directory, then name the set from elsewhere
+    data_root = DATASET_CONFIGS["synthetic"]["data_root"].resolve()
+    monkeypatch.chdir(tmp_path)
+    parse_extract_local_subtomograms(
+        box_size=64,
+        output_dir=Path("Extract/job001"),
+        particles_starfile=data_root / "particles.star",
+        tiltseries_relative_dir=data_root,
+        tomograms_starfile=data_root / "tomograms.star",
+    )
+    (tmp_path / "home").mkdir()
+    monkeypatch.chdir(tmp_path / "home")
+    particles, tomograms, _ = read_optimisation_set(tmp_path / "Extract/job001/optimisation_set.star")
+    assert particles.is_absolute() and particles.samefile(tmp_path / "Extract/job001/particles.star")
+    assert tomograms.is_absolute() and tomograms.samefile(data_root / "tomograms.star")

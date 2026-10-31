@@ -1,7 +1,11 @@
+import atexit
 import logging
+import os
 import shutil
+import signal
 import struct
 import tempfile
+import threading
 import time
 from functools import cache
 from pathlib import Path
@@ -13,7 +17,7 @@ import pandas as pd
 import s3fs
 from dask.core import flatten
 
-from zarr_particle_tools.core.constants import TILTSERIES_URI_RELION_COLUMN
+from zarr_particle_tools.core.helpers import get_tiltseries_data_locator
 
 logger = logging.getLogger(__name__)
 
@@ -59,14 +63,44 @@ def _check_staging_dir(path: Path, required_bytes: int = 0) -> None:
         raise OSError(f"needs {required_bytes} bytes but only {free} bytes are free")
 
 
-def resolve_staging_dir(preferred: str | Path = "/dev/shm", required_bytes: int = 0) -> Path:
+RAM_FILESYSTEMS = ("tmpfs", "ramfs")
+
+
+def _fs_type(path: Path) -> str:
+    """Filesystem type of the mount containing `path` (longest matching /proc/mounts entry)."""
+    rp = os.path.realpath(str(path))
+    best_mp, best_fs = "", "?"
+    try:
+        with open("/proc/mounts") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) < 3:
+                    continue
+                mp_, fs = parts[1], parts[2]
+                if (rp == mp_ or rp.startswith(mp_.rstrip("/") + "/")) and len(mp_) >= len(best_mp):
+                    best_mp, best_fs = mp_, fs
+    except OSError:
+        pass
+    return best_fs
+
+
+def resolve_staging_dir(preferred: str | Path = "/dev/shm", required_bytes: int = 0, require_ram: bool = False) -> Path:
     """Return a usable staging directory, falling back to the system temp directory.
 
     The preferred directory is not trusted merely because it exists: a small file is created and
     removed, and its free space is checked. This makes the default safe on systems without a usable
-    ``/dev/shm`` (including macOS and constrained containers).
+    ``/dev/shm`` (including macOS and constrained containers). With ``require_ram`` there is no fallback:
+    the preferred directory must be usable and RAM-backed.
     """
     preferred = Path(preferred)
+    if require_ram:
+        try:
+            _check_staging_dir(preferred, required_bytes)
+        except OSError as exc:
+            raise RuntimeError(f"{preferred} unusable ({exc}); RAM staging required") from exc
+        if _fs_type(preferred) not in RAM_FILESYSTEMS:
+            raise RuntimeError(f"{preferred} is {_fs_type(preferred)}, not tmpfs; RAM staging required")
+        return preferred
     fallback = Path(tempfile.gettempdir())
     candidates = [preferred] if preferred == fallback else [preferred, fallback]
     failures = []
@@ -82,6 +116,52 @@ def resolve_staging_dir(preferred: str | Path = "/dev/shm", required_bytes: int 
     raise RuntimeError("No usable staging directory (" + "; ".join(failures) + ").")
 
 
+# Job-owned staging directories, removed at exit and on SIGTERM (SIGKILL is uncatchable).
+_STAGING_DIRS: set[str] = set()
+_sigterm_handler_installed = False
+
+
+def _remove_staging_dirs(*_) -> None:
+    for path in list(_STAGING_DIRS):
+        shutil.rmtree(path, ignore_errors=True)
+        _STAGING_DIRS.discard(path)
+
+
+atexit.register(_remove_staging_dirs)
+
+
+def _install_sigterm_handler() -> None:
+    global _sigterm_handler_installed
+    if _sigterm_handler_installed or threading.current_thread() is not threading.main_thread():
+        return
+
+    def on_sigterm(signum, _frame):
+        _remove_staging_dirs()
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+    try:
+        signal.signal(signal.SIGTERM, on_sigterm)
+        _sigterm_handler_installed = True
+    except (ValueError, OSError):
+        pass
+
+
+def make_staging_dir(root: str | Path, prefix: str = "zpt-") -> Path:
+    """Create a job-owned directory under ``root``; it is removed at exit or on SIGTERM unless released first."""
+    _install_sigterm_handler()
+    path = Path(tempfile.mkdtemp(prefix=f"{prefix}{os.getpid()}-", dir=root))
+    _STAGING_DIRS.add(str(path))
+    return path
+
+
+def release_staging_dir(path: str | Path, keep: bool = False) -> None:
+    """Remove a job-owned staging directory, or with ``keep`` stop tracking it and leave it in place."""
+    _STAGING_DIRS.discard(str(path))
+    if not keep:
+        shutil.rmtree(path, ignore_errors=True)
+
+
 class DataReader:
     """
     A reader for tiltseries data, generalized to handle both MRC files and Zarr stores.
@@ -95,6 +175,7 @@ class DataReader:
             - An S3 URI (s3://...) to an .mrc file.
             - An S3 URI (s3://...) to a .zarr store.
         staging_dir: Preferred directory for a temporary local copy of an S3 MRC.
+        require_ram: Copy an S3 MRC only to RAM-backed storage under ``staging_dir`` (see ``resolve_staging_dir``).
     """
 
     def __init__(
@@ -103,9 +184,11 @@ class DataReader:
         is_s3: bool = None,
         is_zarr: bool = None,
         staging_dir: str | Path | None = None,
+        require_ram: bool = False,
     ):
         self.locator = resource_locator
         self.staging_dir = Path(staging_dir) if staging_dir is not None else None
+        self.require_ram = require_ram
         self._s3fs = None
         self._mrc = None
         self._staged_mrc_dir = None
@@ -146,9 +229,11 @@ class DataReader:
                     logger.debug(f"Loading S3 MRC file: {self.locator}")
                     fs = self._get_s3fs()
                     preferred = self.staging_dir if self.staging_dir is not None else Path("/dev/shm")
-                    stage_root = resolve_staging_dir(preferred, required_bytes=int(fs.size(self.locator)))
-                    self._staged_mrc_dir = tempfile.TemporaryDirectory(prefix="zpt-s3-mrc-", dir=stage_root)
-                    local_path = Path(self._staged_mrc_dir.name) / Path(self.locator).name
+                    stage_root = resolve_staging_dir(
+                        preferred, required_bytes=int(fs.size(self.locator)), require_ram=self.require_ram
+                    )
+                    self._staged_mrc_dir = make_staging_dir(stage_root, prefix="zpt-s3-mrc-")
+                    local_path = self._staged_mrc_dir / Path(self.locator).name
                     try:
                         with fs.open(self.locator, "rb") as source, local_path.open("wb") as destination:
                             shutil.copyfileobj(source, destination)
@@ -176,7 +261,7 @@ class DataReader:
             self._mrc.close()
             self._mrc = None
         if self._staged_mrc_dir is not None:
-            self._staged_mrc_dir.cleanup()
+            release_staging_dir(self._staged_mrc_dir)
             self._staged_mrc_dir = None
 
     def __enter__(self):
@@ -358,24 +443,6 @@ def write_tiltseries_to_mrc(
     return out_path
 
 
-def get_tiltseries_data_locator(individual_tiltseries_df: pd.DataFrame, tiltseries_relative_dir: Path) -> str:
-    """Return the single tilt-series locator referenced by an individual tilt-series table."""
-    if TILTSERIES_URI_RELION_COLUMN in individual_tiltseries_df.columns:
-        tiltseries_data_locators = individual_tiltseries_df[TILTSERIES_URI_RELION_COLUMN].to_list()
-    else:
-        tiltseries_data_locators = (
-            individual_tiltseries_df["rlnMicrographName"].apply(lambda x: x.split("@", 1)[1]).to_list()
-        )
-    if len(set(tiltseries_data_locators)) != 1:
-        raise ValueError(
-            f"Multiple tiltseries data locators found: {set(tiltseries_data_locators)}. This is not supported."
-        )
-    tiltseries_data_locator = tiltseries_data_locators[0]
-    if not tiltseries_data_locator.startswith("s3://") and not tiltseries_data_locator.startswith("/"):
-        tiltseries_data_locator = tiltseries_relative_dir / tiltseries_data_locator
-    return str(tiltseries_data_locator)
-
-
 def read_s3_mrc_metadata(resource_locator: str) -> tuple[tuple[int, int, int], int]:
     """Range-read an S3 MRC header and return ``((nz, ny, nx), object_bytes)`` without downloading pixels."""
     try:
@@ -400,9 +467,10 @@ def get_tiltseries_datareader(
     individual_tiltseries_df: pd.DataFrame,
     tiltseries_relative_dir: Path,
     staging_dir: str | Path | None = None,
+    require_ram: bool = False,
 ) -> DataReader:
     """
     Given a tiltseries dataframe, returns a DataReader object for the tiltseries data.
     """
     locator = get_tiltseries_data_locator(individual_tiltseries_df, tiltseries_relative_dir)
-    return DataReader(locator, staging_dir=staging_dir)
+    return DataReader(locator, staging_dir=staging_dir, require_ram=require_ram)

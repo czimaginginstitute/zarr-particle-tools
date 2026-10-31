@@ -182,29 +182,46 @@ def has_deformations(tomogram_row: pd.Series) -> bool:
     return all(c in tomogram_row.index and pd.notna(tomogram_row[c]) for c in (GRID_X, GRID_Y))
 
 
+def declaration_problems(tomogram_row: pd.Series, tiltseries_df: pd.DataFrame) -> list[tuple[str, str]]:
+    """``(column, message)`` for each reason a tomogram's declared deformations cannot be built.
+
+    Empty if they can or none are declared; as in RELION, a declaration without coefficients applies none.
+    """
+    if not has_deformations(tomogram_row):
+        return []
+    name = tomogram_row.get("rlnTomoName", "?")
+    deformation_type = str(tomogram_row[TYPE]) if TYPE in tomogram_row.index else ""
+    if deformation_type not in TYPES:
+        return [
+            (TYPE, f"tomogram {name}: illegal deformation type '{deformation_type}' (RELION knows {', '.join(TYPES)})")
+        ]
+    if COEFFICIENTS not in tiltseries_df.columns:
+        return []
+    grid = (int(tomogram_row[GRID_X]), int(tomogram_row[GRID_Y]))
+    for coefficients in tiltseries_df[COEFFICIENTS].tolist():
+        try:  # the image size scales the field, not the number of coefficients
+            make_model(deformation_type, (1, 1), grid, coefficients)
+        except ValueError as exc:
+            return [(COEFFICIENTS, f"tomogram {name}: {exc}")]
+    return []
+
+
 def build_deformations(
     tomogram_row: pd.Series,
     tiltseries_df: pd.DataFrame,
     image_size: tuple[int, int],
     pixel_size: float,
 ) -> list[ImageDeformation] | None:
-    """Per-tilt deformations for one tilt series, in tilt-series-star row order; ``None`` if the project has none.
+    """Per-tilt deformations for one tilt series, in tilt-series-star row order; ``None`` if none are applied.
 
     ``image_size`` is ``(width, height)`` of the tilt-series stack in unbinned pixels.
     """
-    if not has_deformations(tomogram_row):
+    problems = declaration_problems(tomogram_row, tiltseries_df)
+    if problems:
+        raise ValueError("; ".join(f"{column}: {message}" for column, message in problems))
+    if not has_deformations(tomogram_row) or COEFFICIENTS not in tiltseries_df.columns:
         return None
-    deformation_type = str(tomogram_row[TYPE]) if TYPE in tomogram_row.index else ""
-    if deformation_type not in TYPES:
-        raise ValueError(
-            f"{tomogram_row.get('rlnTomoName', '?')}: illegal {TYPE} '{deformation_type}' "
-            f"(RELION knows {', '.join(TYPES)})"
-        )
-    if COEFFICIENTS not in tiltseries_df.columns:
-        raise ValueError(
-            f"{tomogram_row.get('rlnTomoName', '?')}: tomograms star declares {deformation_type} deformations but the "
-            f"tilt-series star has no {COEFFICIENTS} column"
-        )
+    deformation_type = str(tomogram_row[TYPE])
     grid = (int(tomogram_row[GRID_X]), int(tomogram_row[GRID_Y]))
     return [
         ImageDeformation(make_model(deformation_type, image_size, grid, coeffs), image_size, pixel_size)

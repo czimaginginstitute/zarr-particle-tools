@@ -12,6 +12,8 @@ from pipeliner.nodes import (
 from pipeliner.pipeliner_job import ExternalProgram, PipelinerCommand, PipelinerJob
 from pipeliner.results_display_objects import ResultsDisplayObject
 
+from zarr_particle_tools.pipeliner import _common
+
 
 class PythonRelionPseudoSubtomoJob(PipelinerJob):
     PROCESS_NAME = "zarrparticletools.pseudosubtomo"
@@ -31,7 +33,11 @@ class PythonRelionPseudoSubtomoJob(PipelinerJob):
         self.add_output_node("particles.star", NODE_PARTICLEGROUPMETADATA, ["relion", "tomo", "extract", "python"])
         self.add_output_node("optimisation_set.star", NODE_TOMOOPTIMISATIONSET, ["relion", "tomo", "extract", "python"])
 
+    def additional_joboption_validation(self):
+        return _common.validate(self, "extract")
+
     def get_commands(self):
+        _common.check_options(self, "extract")
         command = ["zarr-particle-extract", "local", "--overwrite"]
 
         optimisation_starfile = self.joboptions["in_optimisation"].get_string()
@@ -50,22 +56,8 @@ class PythonRelionPseudoSubtomoJob(PipelinerJob):
         if crop_size != "-1":
             command.extend(["--crop-size", crop_size])
 
-        max_dose = float(self.joboptions["max_dose"].get_string())
-        if max_dose > 0.0:
-            raise NotImplementedError("Max dose handling not implemented in the Python implementation")
-        if self.joboptions["min_nr_frames"].get_string() != "1":
-            raise NotImplementedError("Min frames handling not implemented in the Python implementation")
-
         if self.joboptions["do_float16"].get_boolean():
             command.extend(["--float16"])
-
-        if not self.joboptions["do_output_2dstacks"].get_boolean():
-            raise NotImplementedError("3D subtomogram extraction not implemented in the Python implementation")
-
-        if self.joboptions["do_extract_reproject"].get_boolean():
-            raise NotImplementedError(
-                "Reprojected 2D (real subtomogram) extraction not implemented in the Python implementation"
-            )
 
         return [PipelinerCommand(command)]
 

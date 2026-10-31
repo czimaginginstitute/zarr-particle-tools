@@ -1,4 +1,4 @@
-"""Unit tests for the shm-dir safeguards (fs-type detection, space preflight, cleanup registry)."""
+"""Unit tests for the shm-dir safeguards (fs-type detection, space preflight, staged-file cleanup)."""
 
 from pathlib import Path
 
@@ -11,7 +11,7 @@ from zarr_particle_tools import subtomo_relion_job as srj
 
 def test_fs_type_detects_disk_vs_tmpfs(tmp_path):
     # tmp_path is on a real filesystem (disk/network), never tmpfs/ramfs
-    assert srj._fs_type(tmp_path) not in ("tmpfs", "ramfs")
+    assert srj._fs_type(tmp_path) not in srj.RAM_FILESYSTEMS
     if Path("/dev/shm").is_dir():
         assert srj._fs_type(Path("/dev/shm")) == "tmpfs"
 
@@ -32,15 +32,6 @@ def test_slug_prevents_path_escape_and_normalization_collisions():
     escaped = srj._slug("../outside")
     assert "/" not in escaped and escaped not in ("", ".", "..")
     assert srj._slug("A/B") != srj._slug("A_B")
-
-
-def test_cleanup_shm_unlinks_registered_files(tmp_path):
-    f = tmp_path / "zpt_dummy.mrc"
-    f.write_bytes(b"x")
-    srj._ACTIVE_SHM.add(str(f))
-    srj._cleanup_shm()
-    assert not f.exists()
-    assert str(f) not in srj._ACTIVE_SHM
 
 
 class _FakeReader:
@@ -93,4 +84,3 @@ def test_materialize_write_failure_removes_partial_output(tmp_path, monkeypatch)
 
     assert reader.closed
     assert not list((tmp_path / "shm").glob("zpt_*.mrc"))
-    assert not any(str(tmp_path / "shm") in path for path in srj._ACTIVE_SHM)

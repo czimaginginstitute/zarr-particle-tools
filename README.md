@@ -266,11 +266,18 @@ zarr-particle-reconstruct local \
   --box-size 384 --crop-size 256
 ```
 
+Reconstruction applies 2D deformations as `relion_tomo_reconstruct_particle` does.
+
 ### CTF refinement and polishing
 
 - CTF refinement runs `relion_tomo_refine_ctf`; polishing runs `relion_tomo_align`.
-- Zarr tilt series are streamed into temporary MRC files for RELION to read. `/dev/shm` is used when
-  it is writable and has enough space; otherwise the system temp directory is used.
+- Zarr tilt series are streamed into temporary MRC files for RELION to read, in a job-owned directory under
+  `--shm-dir` (default `/dev/shm`) that is removed when the job ends, fails or receives SIGTERM (`--keep-shm`
+  keeps it). When `--shm-dir` is unusable the system temp directory is used, unless `--require-ram-staging` is
+  given: then the job fails before streaming unless `--shm-dir` is tmpfs with room for the staged stacks. This
+  also covers the temporary copies of S3-hosted MRC stacks. The pipeliner jobs require RAM staging by default
+  (`do_require_ram_staging`).
+- `--relion-args` passes additional arguments to every RELION call (the pipeliner jobs' `other_args`).
 - Both jobs require a refined `particles.star` and reference half-maps from a prior Refine3D job.
 - There is no `copick-local` variant because raw copick picks are not refined particles.
 - `--per-tomogram` is the default and uses a staging-bounded two-phase workflow. `--all-at-once`
@@ -397,19 +404,21 @@ OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 uv run --locked pytes
 
 If you would like to see a feature added, on or off this list, please open an issue.
 
+Local and copick jobs refuse, before reading tilt series, what they would not do as RELION does, naming the option
+or column and file. The pipeliner jobs report the same from `validate_joboptions()`. For extraction and
+reconstruction this covers the options listed below and a non-empty `other_args`; for every job, tilt series it
+cannot read. Particle reconstruction writes the maps only, like RELION's; the internal extraction it runs is removed
+with its star files.
+
 ### Extraction and reconstruction
 
-- Does not apply particle subtomogram orientations (`rlnTomoSubtomogramRot`,
-  `rlnTomoSubtomogramTilt`, `rlnTomoSubtomogramPsi`); extraction also lacks RELION's
-  `--apply_orientations` mode
-- Does not apply higher-order optical-aberration corrections from RELION optics metadata
-  (even-Zernike gamma offsets or odd-Zernike phase corrections)
+- Extraction does not rotate `rlnOrigin*Angst` offsets by the subtomogram orientations (`rlnTomoSubtomogramRot`,
+  `rlnTomoSubtomogramTilt`, `rlnTomoSubtomogramPsi`) and refuses particles with both; reconstruction does not
+  apply subtomogram orientations and refuses them. Extraction also lacks RELION's `--apply_orientations` mode
+- Does not apply higher-order optical aberrations: extraction refuses non-zero `rlnEvenZernike` in the optics table
+  when it applies the CTF (the only terms `relion_tomo_subtomo` uses); reconstruction refuses any non-zero
+  `rlnEvenZernike` or `rlnOddZernike`
 - Does not support whitening (power spectral flattening)
-- Does not support anisotropic magnification matrices (`EMDL_IMAGE_MAG_MATRIX_00`,
-  `EMDL_IMAGE_MAG_MATRIX_01`, `EMDL_IMAGE_MAG_MATRIX_10`, `EMDL_IMAGE_MAG_MATRIX_11`)
-- Does not support 2D deformations (`EMDL_TOMO_DEFORMATION_GRID_SIZE_X`,
-  `EMDL_TOMO_DEFORMATION_GRID_SIZE_Y`, `EMDL_TOMO_DEFORMATION_TYPE`,
-  `EMDL_TOMO_DEFORMATION_COEFFICIENTS`)
 - Does not support `--only_do_unfinished`
 
 ### Extraction
@@ -425,7 +434,7 @@ If you would like to see a feature added, on or off this list, please open an is
 - Does not support helical symmetry
 - Only reproduces RELION's `--no_circle_crop` mode; its default circle cropping is not implemented
 - Does not support `--dont_apply_offsets` (extraction supports `--dont-apply-offsets`)
-- Requires a single image size, pixel size, and binning across optics groups
+- Requires a single `rlnTomoTiltSeriesPixelSize` across optics groups
 - Does not support `weight_*.mrc` output files
 - Does not support RELION's reconstruction backup / `--no_backup` behavior
 

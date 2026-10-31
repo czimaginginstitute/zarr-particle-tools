@@ -11,10 +11,11 @@ from pipeliner.jobs.tomography.relion_tomo.tomo_reconstructparticle_job import (
 )
 from pipeliner.nodes import (
     NODE_DENSITYMAP,
-    NODE_TOMOOPTIMISATIONSET,
 )
 from pipeliner.pipeliner_job import ExternalProgram, PipelinerCommand, PipelinerJob
 from pipeliner.results_display_objects import ResultsDisplayObject
+
+from zarr_particle_tools.pipeliner import _common
 
 
 class PythonRelionSubtomoReconstructJob(PipelinerJob):
@@ -33,9 +34,12 @@ class PythonRelionSubtomoReconstructJob(PipelinerJob):
         self.add_output_node("merged.mrc", NODE_DENSITYMAP, ["relion", "tomo", "reconstruct", "python"])
         self.add_output_node("half1.mrc", NODE_DENSITYMAP, ["relion", "halfmap", "reconstruct", "python"])
         self.add_output_node("half2.mrc", NODE_DENSITYMAP, ["relion", "halfmap", "reconstruct", "python"])
-        self.add_output_node("optimisation_set.star", NODE_TOMOOPTIMISATIONSET, ["relion", "reconstruct", "python"])
+
+    def additional_joboption_validation(self):
+        return _common.validate(self, "reconstruct")
 
     def get_commands(self):
+        _common.check_options(self, "reconstruct")
         cmd = ["zarr-particle-reconstruct", "local", "--overwrite", "--debug"]
 
         optimisation_starfile = self.joboptions["in_optimisation"].get_string()

@@ -6,6 +6,7 @@ tomogram with trimmed tilts, trajectories, --mask / --fsc.
 """
 
 import json
+import shutil
 import sys
 
 import mrcfile
@@ -17,6 +18,7 @@ import zarr
 
 from tests.test_extract import DATASET_CONFIGS
 from zarr_particle_tools.core.constants import TILTSERIES_URI_RELION_COLUMN
+from zarr_particle_tools.core.data import _remove_staging_dirs
 from zarr_particle_tools.core.helpers import STAR_NAME_COLUMNS
 from zarr_particle_tools.subtomo_ctfrefine import run_ctf_refine
 from zarr_particle_tools.subtomo_polish import run_polish
@@ -163,3 +165,87 @@ def test_relion_handoff(tmp_path, monkeypatch, run_job, binary):
     assert not {"rlnTomoTiltSeriesName", "rlnTomoFrameCount"} & set(restored.columns)
     assert len(list((output_dir / "temp").iterdir())) == len(TOMOGRAMS) + 1
     assert not list(shm.iterdir())
+
+
+def _fake_relion(tmp_path, monkeypatch, binary="relion_tomo_refine_ctf"):
+    log = tmp_path / "calls"
+    log.mkdir()
+    fake = tmp_path / binary
+    fake.write_text(FAKE_RELION.format(python=sys.executable, names=STAR_NAME_COLUMNS))
+    fake.chmod(0o755)
+    monkeypatch.setenv("FAKE_RELION_LOG", str(log))
+    return fake, log
+
+
+def _calls(log):
+    return [json.loads((log / f"call_{i}" / "record.json").read_text()) for i in range(len(list(log.iterdir())))]
+
+
+def _mrc_project(root):
+    """The synthetic project as RELION holds it: relative ``N@tiltseries/TS_1.mrcs`` stacks, no tilt-series URI."""
+    (root / "tiltseries").mkdir(parents=True)
+    (root / "tiltseries" / "TS_1.mrcs").symlink_to((DATA / "tiltseries/TS_1.mrcs").resolve())
+    shutil.copy(DATA / "tiltseries/TS_1.star", root / "tiltseries")
+    shutil.copy(DATA / "tomograms.star", root)
+    particles_data = starfile.read(DATA / "particles.star")
+    particles = particles_data["particles"].iloc[:10]
+    particles = particles.assign(rlnTomoParticleName=[f"session1_TS_1/{i}" for i in range(1, 11)])
+    starfile.write({"optics": particles_data["optics"], "particles": particles}, root / "particles.star")
+    for f in ["ref1.mrc", "ref2.mrc"]:
+        (root / f).touch()
+
+
+def _ctf_refine(project, output_dir, fake, shm, **kwargs):
+    return run_ctf_refine(
+        output_dir=output_dir,
+        box_size=64,
+        ref1=project / "ref1.mrc",
+        ref2=project / "ref2.mrc",
+        particles_starfile=project / "particles.star",
+        tomograms_starfile=project / "tomograms.star",
+        tiltseries_relative_dir=project,
+        relion_bin=str(fake),
+        shm_dir=shm,
+        n_workers=1,
+        **kwargs,
+    )
+
+
+def test_stacks_under_the_relative_dir_reach_relion_from_another_directory(tmp_path, monkeypatch):
+    project, shm, elsewhere = tmp_path / "project", tmp_path / "shm", tmp_path / "elsewhere"
+    _mrc_project(project)
+    shm.mkdir()
+    elsewhere.mkdir()
+    fake, log = _fake_relion(tmp_path, monkeypatch)
+    monkeypatch.chdir(elsewhere)
+    _ctf_refine(project, tmp_path / "output", fake, shm)
+    (call,) = _calls(log)
+    assert call["particles"] == [f"session1_TS_1/{i}" for i in range(1, 11)]
+
+
+def test_relion_args_reach_every_relion_call(tmp_path, monkeypatch):
+    project, shm = tmp_path / "project", tmp_path / "shm"
+    _build_project(project)
+    shm.mkdir()
+    fake, log = _fake_relion(tmp_path, monkeypatch)
+    _ctf_refine(project, tmp_path / "output", fake, shm, relion_args="--extra_flag 3")
+    calls = _calls(log)
+    assert len(calls) == len(TOMOGRAMS) + 1
+    for call in calls:
+        assert call["argv"][call["argv"].index("--extra_flag") + 1] == "3"
+    assert "--only_do_unfinished" in calls[-1]["argv"]
+
+
+@pytest.mark.parametrize("keep_shm", [True, False])
+def test_keep_shm_leaves_the_staged_tilt_series_after_exit(tmp_path, monkeypatch, keep_shm):
+    project, shm = tmp_path / "project", tmp_path / "shm"
+    _mrc_project(project)
+    shm.mkdir()
+    fake, _ = _fake_relion(tmp_path, monkeypatch)
+    _ctf_refine(project, tmp_path / "output", fake, shm, keep_shm=keep_shm)
+    _remove_staging_dirs()  # what exit and SIGTERM run
+    kept = list(shm.glob("zpt-*"))
+    if keep_shm:
+        assert len(kept) == 1 and list(kept[0].rglob("*.mrc*"))
+    else:
+        assert kept == []
