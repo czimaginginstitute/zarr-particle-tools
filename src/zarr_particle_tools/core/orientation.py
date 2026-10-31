@@ -17,9 +17,7 @@ import numpy as np
 import pandas as pd
 
 from zarr_particle_tools.core.backprojection import get_rotation_matrix_from_euler
-
-SUBTOMOGRAM_ANGLES = ("rlnTomoSubtomogramRot", "rlnTomoSubtomogramTilt", "rlnTomoSubtomogramPsi")
-PARTICLE_ANGLES = ("rlnAngleRot", "rlnAngleTilt", "rlnAnglePsi")
+from zarr_particle_tools.core.constants import PARTICLE_ANGLES, SUBTOMOGRAM_ANGLES
 
 
 def _matrices(particles_df: pd.DataFrame, columns: tuple[str, str, str]) -> np.ndarray:

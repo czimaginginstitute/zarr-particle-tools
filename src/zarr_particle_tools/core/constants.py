@@ -19,6 +19,9 @@ DEFAULT_AMPLITUDE_CONTRAST = 0.07
 TOMO_HAND_DEFAULT_VALUE = -1
 # portal selection: "default" is each run's visualization default, the others match Tomogram.processing
 TOMOGRAM_TYPES = ("default", "raw", "filtered", "denoised")
+SUBTOMOGRAM_ANGLES = ("rlnTomoSubtomogramRot", "rlnTomoSubtomogramTilt", "rlnTomoSubtomogramPsi")
+PARTICLE_ANGLES = ("rlnAngleRot", "rlnAngleTilt", "rlnAnglePsi")
+ORIGIN_OFFSETS = ("rlnOriginXAngst", "rlnOriginYAngst", "rlnOriginZAngst")
 # TODO: actually validate against all these columns variables
 PARTICLES_DF_COLUMNS = [
     "rlnTomoName",

@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from cryoet_alignment.io.aretomo3 import AreTomo3ALN
 
+from zarr_particle_tools.core.constants import ORIGIN_OFFSETS
 from zarr_particle_tools.core.data import DataReader
 from zarr_particle_tools.core.orientation import subtomogram_matrices
 
@@ -318,9 +319,8 @@ def apply_offsets_to_coordinates(particles_df: pd.DataFrame) -> pd.DataFrame:
     The offsets are in the subtomogram frame, so the position is ``coordinate - A_sub · origin``
     (``ParticleSet::getPosition``); without rlnTomoSubtomogram* angles ``A_sub`` is the identity.
     """
-    origin_columns = ["rlnOriginXAngst", "rlnOriginYAngst", "rlnOriginZAngst"]
-    if all(column in particles_df.columns for column in origin_columns):
-        offsets = particles_df[origin_columns].to_numpy(dtype=float)
+    if all(column in particles_df.columns for column in ORIGIN_OFFSETS):
+        offsets = particles_df[list(ORIGIN_OFFSETS)].to_numpy(dtype=float)
         offsets = np.einsum("nij,nj->ni", subtomogram_matrices(particles_df), offsets)
         particles_df["rlnCenteredCoordinateXAngst"] -= offsets[:, 0]
         particles_df["rlnCenteredCoordinateYAngst"] -= offsets[:, 1]
