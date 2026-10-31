@@ -58,6 +58,12 @@ def extract_options():
         click.option("--no-circle-crop", is_flag=True, help="Disable circular cropping of the subtomograms."),
         click.option("--no-ic", is_flag=True, help="Do not invert contrast of the subtomograms."),
         click.option(
+            "--ignore-deformations",
+            is_flag=True,
+            help="Do not apply RELION-5 polish 2D image deformations (rlnTomoDeformation* columns); by default "
+            "they are applied whenever the tomograms star declares them, as relion_tomo_subtomo does.",
+        ),
+        click.option(
             "--write-fourier",
             is_flag=True,
             help="Also write Fourier space stacks (.npy); requires --no-circle-crop and crop-size == box-size.",

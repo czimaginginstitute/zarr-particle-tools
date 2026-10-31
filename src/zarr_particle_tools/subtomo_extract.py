@@ -24,6 +24,7 @@ import zarr_particle_tools.generate.cdp_generate_starfiles as cdp_generate
 from zarr_particle_tools.core.constants import OPTICS_DF_COLUMNS
 from zarr_particle_tools.core.ctf import calculate_ctf
 from zarr_particle_tools.core.data import get_tiltseries_datareader
+from zarr_particle_tools.core.deformation import build_deformations
 from zarr_particle_tools.core.dose import calculate_dose_weight_image
 from zarr_particle_tools.core.forwardprojection import (
     apply_offsets_to_coordinates,
@@ -103,6 +104,7 @@ def process_tiltseries(
     no_ic: bool,
     normalize_bin: bool,
     write_fourier: bool,
+    ignore_deformations: bool,
     output_dir: Path,
     filtered_particles_df: pd.DataFrame,
     filtered_trajectories_dict: dict,
@@ -147,8 +149,26 @@ def process_tiltseries(
     tiltseries_y = tiltseries_datareader.data.shape[1]
     logger.debug(f"Tiltseries data shape: {tiltseries_datareader.data.shape}, pixel size: {tiltseries_pixel_size}")
     projection_matrices = calculate_projection_matrix_from_starfile_df(individual_tiltseries_df)
+    # RELION-5 polish 2D deformations (Tomogram::projectPoint); applied unless --ignore-deformations
+    deformations = (
+        None
+        if ignore_deformations
+        else build_deformations(
+            tiltseries_row_entry, individual_tiltseries_df, (tiltseries_x, tiltseries_y), tiltseries_pixel_size
+        )
+    )
+    if deformations is not None:
+        logger.info(
+            f"{particles_tomo_name}: applying {tiltseries_row_entry['rlnTomoDeformationType']} "
+            f"{int(tiltseries_row_entry['rlnTomoDeformationGridSizeX'])}x{int(tiltseries_row_entry['rlnTomoDeformationGridSizeY'])} "
+            f"2D deformations to the {len(deformations)} tilt images"
+        )
     particles_to_tiltseries_coordinates = get_particles_to_tiltseries_coordinates(
-        filtered_particles_df, filtered_trajectories_dict, individual_tiltseries_df, projection_matrices
+        filtered_particles_df,
+        filtered_trajectories_dict,
+        individual_tiltseries_df,
+        projection_matrices,
+        deformations=deformations,
     )
     sections = individual_tiltseries_df["rlnMicrographName"].str.split("@").str[0].astype(int).tolist()
     section_to_section_index = {section: idx for idx, section in enumerate(sections)}
@@ -396,6 +416,7 @@ def extract_subtomograms(
     no_ic: bool = False,
     normalize_bin: bool = True,
     write_fourier: bool = False,
+    ignore_deformations: bool = False,
     crop_size: int = None,
     tiltseries_relative_dir: Path = None,
     trajectories_starfile: Path = None,
@@ -478,6 +499,7 @@ def extract_subtomograms(
         "no_ic": no_ic,
         "normalize_bin": normalize_bin,
         "write_fourier": write_fourier,
+        "ignore_deformations": ignore_deformations,
         "tiltseries_relative_dir": tiltseries_relative_dir,
         "output_dir": output_dir,
         "debug": debug,
@@ -543,6 +565,7 @@ def parse_extract_local_subtomograms(
     no_ic: bool = False,
     normalize_bin: bool = True,
     write_fourier: bool = False,
+    ignore_deformations: bool = False,
     crop_size: int = None,
     particles_starfile: Path = None,
     trajectories_starfile: Path = None,
@@ -590,6 +613,7 @@ def parse_extract_local_subtomograms(
         no_ic=no_ic,
         normalize_bin=normalize_bin,
         write_fourier=write_fourier,
+        ignore_deformations=ignore_deformations,
         output_dir=output_dir,
         particles_starfile=particles_starfile,
         trajectories_starfile=trajectories_starfile,
@@ -627,6 +651,7 @@ def parse_extract_copick_local_subtomograms(
     no_ic: bool = False,
     normalize_bin: bool = True,
     write_fourier: bool = False,
+    ignore_deformations: bool = False,
     copick_run_names: list[str] = None,
     crop_size: int = None,
     tiltseries_relative_dir: Path = None,
@@ -689,6 +714,7 @@ def parse_extract_copick_local_subtomograms(
         no_ic=no_ic,
         normalize_bin=normalize_bin,
         write_fourier=write_fourier,
+        ignore_deformations=ignore_deformations,
         dont_apply_offsets=dont_apply_offsets,
         output_dir=output_dir,
         particles_starfile=particles_path,
@@ -723,6 +749,7 @@ def parse_extract_data_portal_subtomograms(
     no_ic: bool = False,
     normalize_bin: bool = True,
     write_fourier: bool = False,
+    ignore_deformations: bool = False,
     crop_size: int = None,
     overwrite: bool = False,
     dry_run: bool = False,
@@ -787,6 +814,7 @@ def parse_extract_data_portal_subtomograms(
         no_ic=no_ic,
         normalize_bin=normalize_bin,
         write_fourier=write_fourier,
+        ignore_deformations=ignore_deformations,
         output_dir=output_dir,
         debug=debug,
     )
@@ -823,6 +851,7 @@ def parse_extract_data_portal_copick_subtomograms(
     no_ic: bool = False,
     normalize_bin: bool = True,
     write_fourier: bool = False,
+    ignore_deformations: bool = False,
     crop_size: int = None,
     overwrite: bool = False,
     dry_run: bool = False,
@@ -876,6 +905,7 @@ def parse_extract_data_portal_copick_subtomograms(
         no_ic=no_ic,
         normalize_bin=normalize_bin,
         write_fourier=write_fourier,
+        ignore_deformations=ignore_deformations,
         output_dir=output_dir,
         debug=debug,
     )
