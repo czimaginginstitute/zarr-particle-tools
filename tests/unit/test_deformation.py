@@ -105,7 +105,15 @@ def test_fourier_zero_is_identity_and_frequency_count():
     np.testing.assert_array_equal(m.shift(np.array([[1.0, 2.0], [300.0, 400.0]])), 0.0)
 
 
-def test_image_deformation_uses_relion_pixel_frame():
+def test_image_deformation_evaluates_the_field_about_the_crop_centre():
+    # odd sizes: centred (0, 0) is pixel (W / 2, H / 2), where the crop is cut and where a linear field is zero
+    odd = (629, 631)
+    d = ImageDeformation(LinearDeformation(odd, [0.01, 0.002, -0.003]), odd, 1.54)
+    np.testing.assert_array_equal(d(np.array([0.0, 0.0])), [0.0, 0.0])
+    np.testing.assert_allclose(d(np.array([100 * 1.54, 0.0])), [100 * 1.54 * 1.01, 100 * 1.54 * 0.002], rtol=1e-12)
+
+
+def test_image_deformation_uses_the_image_pixel_frame():
     # a spline whose x value grows linearly across the image: shift(px) = px.x / W * 10
     nodes = _spline_nodes()
     nodes[0, :, :, 0] = np.array([0.0, 5.0, 10.0])[None, :]
@@ -113,7 +121,7 @@ def test_image_deformation_uses_relion_pixel_frame():
     model = SplineDeformation(IMAGE, GRID, nodes.ravel())
     px = 1.54
     d = ImageDeformation(model, IMAGE, px)
-    # centred-Angstrom point (0, 0) is RELION pixel (W//2, H//2) -> shift 5 px in x
+    # centred-Angstrom point (0, 0) is pixel (W / 2, H / 2) -> shift 5 px in x
     out = d(np.array([0.0, 0.0]))
     np.testing.assert_allclose(out, [5.0 * px, 0.0], atol=1e-9)
     # a point one quarter image to the left: pixel W/4 -> shift 2.5 px
