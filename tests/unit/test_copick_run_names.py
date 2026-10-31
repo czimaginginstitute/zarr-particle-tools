@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 import starfile
 
 import zarr_particle_tools.generate.cdp_import_starfiles as cdp_import
@@ -22,17 +23,19 @@ class Pick:
         return pd.DataFrame({c: [1.0] for c in PARTICLES_DF_COLUMNS if c not in ("rlnTomoName", "rlnOpticsGroup")})
 
 
-def test_copick_local_maps_portal_run_ids_onto_a_two_run_import(tmp_path, monkeypatch):
+@pytest.mark.parametrize("naming", ["run id", "rlnTomoName"])
+def test_pipeline_and_extract_map_the_same_copick_runs(tmp_path, monkeypatch, naming):
     runs = [run(16848), run(16849)]
+    names = ["16848", "16849"] if naming == "run id" else [r.tomo_name for r in runs]
     tomograms = cdp_import.get_tomograms_df(runs, tmp_path / "Import")
     star = tmp_path / "tomograms.star"
     starfile.write({"global": tomograms}, star)
     optics = tomograms[OPTICS_DF_COLUMNS]
-    monkeypatch.setattr(copick_generate, "get_copick_picks", lambda *args: [Pick("16848"), Pick("16849")])
+    monkeypatch.setattr(copick_generate, "get_copick_picks", lambda *args: [Pick(n) for n in names])
 
     # zarr-particle-pipeline copick-local
-    portal = orch._uses_portal_run_naming(["16848", "16849"], optics)
-    particles = copick_generate.copick_picks_to_starfile(None, "p", "1", "u", ["16848", "16849"], optics, portal)
+    orch._check_copick_run_mapping(names, optics)
+    particles = copick_generate.copick_picks_to_starfile(None, "p", "1", "u", names, optics)
     assert particles["rlnTomoName"].tolist() == [r.tomo_name for r in runs]
     assert particles["rlnOpticsGroup"].tolist() == [1, 2]
 
@@ -45,7 +48,7 @@ def test_copick_local_maps_portal_run_ids_onto_a_two_run_import(tmp_path, monkey
         copick_name="p",
         copick_session_id="1",
         copick_user_id="u",
-        copick_run_names=["16848", "16849"],
+        copick_run_names=names,
         tomograms_starfile=star,
         dry_run=True,
     )
