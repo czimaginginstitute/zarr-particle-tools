@@ -154,6 +154,23 @@ def test_reconstruction_needs_one_tilt_series_pixel_size(tmp_path, monkeypatch):
     assert input_problems("extract", particles, tomograms) == []
 
 
+def test_reconstruction_takes_particles_of_mixed_extractions(tmp_path, monkeypatch):
+    """Box, pixel size and binning are re-extracted at one --box-size / --bin; only the tilt pixel size must agree."""
+    particles, tomograms = _project(tmp_path, monkeypatch)
+    optics = pd.DataFrame(
+        {
+            "rlnOpticsGroup": [1, 2],
+            "rlnOpticsGroupName": ["a", "b"],
+            "rlnImageSize": [64, 128],
+            "rlnImagePixelSize": [2.165, 4.33],
+            "rlnTomoSubtomogramBinning": [1, 2],
+            "rlnTomoTiltSeriesPixelSize": [2.165, 2.165],
+        }
+    )
+    starfile.write({"optics": optics, "particles": pd.DataFrame({"rlnTomoName": ["16848"]})}, particles)
+    assert input_problems("reconstruct", particles, tomograms) == []
+
+
 DEFORMED = {
     "rlnTomoDeformationGridSizeX": [2],
     "rlnTomoDeformationGridSizeY": [2],
