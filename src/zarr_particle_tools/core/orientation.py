@@ -43,11 +43,6 @@ def _matrices(particles_df: pd.DataFrame, columns: tuple[str, str, str]) -> np.n
     return euler_matrices(angles)
 
 
-def has_subtomogram_orientation(particles_df: pd.DataFrame) -> bool:
-    """Whether the particles carry a subtomogram frame (any of ``rlnTomoSubtomogram{Rot,Tilt,Psi}``)."""
-    return any(column in particles_df.columns for column in SUBTOMOGRAM_ANGLES)
-
-
 def subtomogram_matrices(particles_df: pd.DataFrame) -> np.ndarray:
     """``A_sub`` per particle, ``(N, 3, 3)`` (``ParticleSet::getSubtomogramMatrix``)."""
     return _matrices(particles_df, SUBTOMOGRAM_ANGLES)
