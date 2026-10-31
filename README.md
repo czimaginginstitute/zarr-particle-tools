@@ -406,15 +406,20 @@ If you would like to see a feature added, on or off this list, please open an is
 
 Local and copick jobs refuse, before reading tilt series, what they would not do as RELION does, naming the option
 or column and file. The pipeliner jobs report the same from `validate_joboptions()`. For extraction and
-reconstruction this covers the options listed below and a non-empty `other_args`; for every job, tilt series it
-cannot read. Particle reconstruction writes the maps only, like RELION's; the internal extraction it runs is removed
-with its star files.
+reconstruction this covers the options listed below, a non-empty `other_args` and angles left blank in some rows;
+for every job, tilt series it cannot read. Particle reconstruction writes the maps only, like RELION's; the
+internal extraction it runs is removed with its star files.
+
+Subtomogram orientations (`rlnTomoSubtomogramRot`, `rlnTomoSubtomogramTilt`, `rlnTomoSubtomogramPsi`, e.g.
+the filament frame of helical picks) are applied as RELION applies them. Extraction carries them, and every
+other particle column (helical tube IDs, track lengths, priors, flip ratios), through to `particles.star`; the
+2D stacks depend on them only through the origin offsets, which are rotated into the tomogram as
+`coordinate - A_sub · origin`. Reconstruction projects with `A_sub · A_part`.
 
 ### Extraction and reconstruction
 
-- Extraction does not rotate `rlnOrigin*Angst` offsets by the subtomogram orientations (`rlnTomoSubtomogramRot`,
-  `rlnTomoSubtomogramTilt`, `rlnTomoSubtomogramPsi`) and refuses particles with both; reconstruction does not
-  apply subtomogram orientations and refuses them. Extraction also lacks RELION's `--apply_orientations` mode
+- Extraction lacks RELION's `--apply_orientations` mode (writing `A_sub · A_part` into the subtomogram
+  angles and zeroing `rlnAngle*`); subtomogram orientations themselves are applied (see above)
 - Does not apply higher-order optical aberrations: extraction refuses non-zero `rlnEvenZernike` in the optics table
   when it applies the CTF (the only terms `relion_tomo_subtomo` uses); reconstruction refuses any non-zero
   `rlnEvenZernike` or `rlnOddZernike`

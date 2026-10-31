@@ -12,9 +12,10 @@ Where the model lives in the star files (``TomogramSet::loadTomogram``, tomogram
   columns are present.
 * tilt-series star, one row per tilt: ``rlnTomoDeformationCoefficients``, a bracketed comma-separated list.
 
-The 2D point is in RELION's image frame: unbinned tilt-image pixels with the origin at the image corner, i.e.
-``p_px = p_centred_angst / pixel_size + (int(width / 2), int(height / 2))``.  The returned shift is in the same
-pixels.  ``image_size`` is the tilt-series stack size (``stackSize.xy()``), never ``rlnTomoSizeX/Y``.
+The 2D point is in unbinned tilt-image pixels with the origin at the image corner, i.e.
+``p_px = p_centred_angst / pixel_size + (width / 2, height / 2)``, the centre the crops are cut about (RELION uses
+``int(width / 2)``: half a pixel apart along an odd dimension).  The returned shift is in the same pixels.
+``image_size`` is the tilt-series stack size (``stackSize.xy()``), never ``rlnTomoSizeX/Y``.
 
 Coefficient layouts (RELION ``RawImage`` is x-fastest, then y, then the third index):
 
@@ -155,8 +156,8 @@ class ImageDeformation:
     def __init__(self, model, image_size: tuple[int, int], pixel_size: float):
         self.model = model
         self.pixel_size = float(pixel_size)
-        # RELION's tilt_image_center: integer division (tomogram.cpp setProjectionMatrix)
-        self.origin_px = np.array([int(image_size[0] // 2), int(image_size[1] // 2)], dtype=float)
+        # the centre the crops are cut about (forwardprojection.get_particle_crop_and_visibility)
+        self.origin_px = np.array([image_size[0] / 2.0, image_size[1] / 2.0], dtype=float)
 
     def shift_px(self, points_px: np.ndarray) -> np.ndarray:
         return self.model.shift(points_px)

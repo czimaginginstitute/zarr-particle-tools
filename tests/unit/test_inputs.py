@@ -106,23 +106,46 @@ def test_clean_inputs_pass(tmp_path, monkeypatch):
         assert input_problems(program, particles, tomograms) == []
 
 
-def test_subtomogram_orientations_are_refused_for_extraction_only_with_offsets(tmp_path, monkeypatch):
-    angles = {"rlnTomoSubtomogramRot": [0.0, 12.0]}
-    offsets = {"rlnOriginXAngst": [0.0, 3.0], "rlnOriginYAngst": [0.0, 0.0], "rlnOriginZAngst": [0.0, 0.0]}
-    particles, tomograms = _project(tmp_path, monkeypatch, particles_extra=angles)
-    assert input_problems("extract", particles, tomograms) == []  # fresh picks: RELION extracts the same
-    assert _columns(input_problems("reconstruct", particles, tomograms)) == ["rlnTomoSubtomogramRot"]
-    particles.unlink()
+def test_subtomogram_orientations_are_honored(tmp_path, monkeypatch):
+    particles, tomograms = _project(tmp_path, monkeypatch)
     starfile.write(
         {
             "optics": pd.DataFrame({"rlnOpticsGroup": [1], "rlnOpticsGroupName": ["run_16848"]}),
-            "particles": pd.DataFrame({"rlnTomoName": ["16848"] * 2, **angles, **offsets}),
+            "particles": pd.DataFrame(
+                {"rlnTomoName": ["16848"] * 2, "rlnTomoSubtomogramRot": [0.0, 12.0], "rlnOriginXAngst": [0.0, 3.0]}
+            ),
         },
         particles,
     )
-    assert _columns(input_problems("extract", particles, tomograms)) == ["rlnTomoSubtomogramRot"]
+    for program in ("extract", "reconstruct", "relion"):
+        assert input_problems(program, particles, tomograms) == []
+
+
+NAN = float("nan")
+OFFSETS = {"rlnOriginXAngst": [1.0, 2.0], "rlnOriginYAngst": [0.0, 0.0], "rlnOriginZAngst": [0.0, 0.0]}
+
+
+@pytest.mark.parametrize(
+    "extra, readers",
+    [
+        ({"rlnTomoSubtomogramRot": [10.0, NAN]}, ("reconstruct",)),  # extraction has no offsets to rotate
+        ({"rlnTomoSubtomogramRot": [10.0, NAN], **OFFSETS}, ("extract", "reconstruct")),
+        ({"rlnAngleRot": [10.0, NAN]}, ("reconstruct",)),
+        ({"rlnAngleTilt": [10.0, NAN]}, ()),  # without rlnAngleRot, A_part is the identity
+    ],
+)
+def test_angles_left_blank_in_some_rows_are_refused_where_they_are_read(tmp_path, monkeypatch, extra, readers):
+    """A merged STAR leaves NaN where a source had no such column; that is not a rotation, so it is not guessed."""
+    particles, tomograms = _project(tmp_path, monkeypatch, particles_extra=extra)
+    blank = next(column for column, values in extra.items() if any(v != v for v in values))
+    for program in ("extract", "reconstruct", "relion"):
+        assert _columns(input_problems(program, particles, tomograms)) == ([blank] if program in readers else [])
+    # --dont-apply-offsets: extraction does not read A_sub
     assert input_problems("extract", particles, tomograms, apply_offsets=False) == []
-    assert input_problems("relion", particles, tomograms) == []
+    (tmp_path / "filled").mkdir()
+    filled = {column: [0.0 if v != v else v for v in values] for column, values in extra.items()}
+    particles, tomograms = _project(tmp_path / "filled", monkeypatch, particles_extra=filled)
+    assert input_problems("reconstruct", particles, tomograms) == []
 
 
 @pytest.mark.parametrize(
