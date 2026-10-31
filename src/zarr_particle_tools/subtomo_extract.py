@@ -608,6 +608,7 @@ def parse_extract_local_subtomograms(
             program,
             apply_ctf=not no_ctf,
             ignore_deformations=ignore_deformations,
+            apply_offsets=not dont_apply_offsets,
         ),
     )
 

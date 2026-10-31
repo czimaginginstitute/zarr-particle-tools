@@ -12,6 +12,7 @@ from rich.logging import RichHandler
 from zarr_particle_tools.core.constants import (
     NOISY_LOGGERS,
     OPTICS_DF_COLUMNS,
+    ORIGIN_OFFSETS,
     PARTICLE_ANGLES,
     SUBTOMOGRAM_ANGLES,
     TILTSERIES_URI_RELION_COLUMN,
@@ -461,11 +462,17 @@ def particle_problems(
     optics_df: pd.DataFrame,
     source: Path,
     apply_ctf: bool = True,
+    apply_offsets: bool = True,
 ) -> list[str]:
     """Particle and optics metadata the Python ``extract`` or ``reconstruct`` would not apply as RELION does."""
     problems = []
-    for column in SUBTOMOGRAM_ANGLES + (PARTICLE_ANGLES if program == "reconstruct" else ()):
-        blank = int(pd.to_numeric(particles_df[column], errors="coerce").isna().sum()) if column in particles_df else 0
+    # angles are read where a rotation is built (its Rot column exists) and used: A_sub and A_part in reconstruction,
+    # A_sub in extraction only to rotate the origin offsets it applies
+    read = [PARTICLE_ANGLES, SUBTOMOGRAM_ANGLES] if program == "reconstruct" else []
+    if program == "extract" and apply_offsets and all(c in particles_df for c in ORIGIN_OFFSETS):
+        read.append(SUBTOMOGRAM_ANGLES)
+    for column in (c for angles in read if angles[0] in particles_df for c in angles if c in particles_df):
+        blank = int(pd.to_numeric(particles_df[column], errors="coerce").isna().sum())
         if blank:
             problems.append(
                 f"{column} in {source}: {blank} of {len(particles_df)} particles have no value; fill them in "
@@ -502,6 +509,7 @@ def input_problems(
     apply_ctf: bool = True,
     ignore_deformations: bool = False,
     tomo_names: Collection[str] | None = None,
+    apply_offsets: bool = True,
 ) -> list[tuple[str, str]]:
     """``(input, message)`` for what ``program`` cannot honor in its inputs; ``input`` is ``particles``,
     ``tomograms`` or ``trajectories``.
@@ -525,7 +533,7 @@ def input_problems(
             problems.append(("particles", f"{particles}: {exc}"))
         else:
             with_particles = set(particles_df["rlnTomoName"].astype(str))
-            messages = particle_problems(program, particles_df, optics_df, particles, apply_ctf)
+            messages = particle_problems(program, particles_df, optics_df, particles, apply_ctf, apply_offsets)
             problems += [("particles", message) for message in messages]
 
     relative_dir = Path(tiltseries_relative_dir or "./")

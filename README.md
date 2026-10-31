@@ -407,8 +407,8 @@ If you would like to see a feature added, on or off this list, please open an is
 Local and copick jobs refuse, before reading tilt series, what they would not do as RELION does, naming the option
 or column and file. The pipeliner jobs report the same from `validate_joboptions()`. For extraction and
 reconstruction this covers the options listed below, a non-empty `other_args` and angles left blank in some rows;
-for every job, tilt series it cannot read. Particle reconstruction writes the maps only, like RELION's; the internal
-extraction it runs is removed with its star files.
+for every job, tilt series it cannot read. Particle reconstruction writes the maps only, like RELION's; the
+internal extraction it runs is removed with its star files.
 
 Subtomogram orientations (`rlnTomoSubtomogramRot`, `rlnTomoSubtomogramTilt`, `rlnTomoSubtomogramPsi`, e.g.
 the filament frame of helical picks) are applied as RELION applies them. Extraction carries them, and every
