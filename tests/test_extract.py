@@ -11,8 +11,8 @@ from click.testing import CliRunner
 
 import zarr_particle_tools.generate.copick_generate_starfiles as copick_generate
 from tests.helpers.compare import mrc_equal
-from tests.helpers.deformation import random_deformation, synthetic_names, write_deformed_project
-from zarr_particle_tools.core.helpers import STAR_NAME_COLUMNS
+from tests.helpers.deformation import deformed_project, synthetic_names, write_deformed_project
+from zarr_particle_tools.core.helpers import STAR_NAME_COLUMNS, read_optimisation_set
 from zarr_particle_tools.subtomo_extract import (
     cli,
     extract_subtomograms,
@@ -613,11 +613,7 @@ def test_extract_deformation_equals_trajectory(tmp_path):
 def test_extract_with_deformations_matches_relion(tmp_path, deformation_type):
     # per-tilt 2D deformations, extracted by RELION and by us from the same inputs
     data_root = DATASET_CONFIGS["synthetic"]["data_root"]
-    names = synthetic_names(data_root)
-    n_tilts = len(starfile.read(data_root / "tiltseries" / "TS_1.star"))
-    rng = np.random.default_rng({"spline": 1, "linear": 2, "Fourier": 3}[deformation_type])
-    grid, rows = random_deformation(deformation_type, n_tilts, (630, 630), rng)
-    write_deformed_project(tmp_path, data_root, deformation_type, grid, rows, names)
+    names = deformed_project(tmp_path, data_root, deformation_type)
 
     relion_args = ["--p", "particles.star", "--t", "tomograms.star", "--o", "relion/"]
     relion_args += ["--b", "64", "--crop", "64", "--bin", "1", "--stack2d", "--j", "4"]
@@ -643,12 +639,53 @@ def test_extract_with_deformations_matches_relion(tmp_path, deformation_type):
     assert n_ignored_differ == len(names)
 
 
+class _Pick:
+    """A copick pick on run ``name`` holding the given synthetic particles."""
+
+    def __init__(self, name, particles):
+        self.run = type("Run", (), {"name": name})
+        self.particles = particles
+
+    def df(self, format):
+        return self.particles.drop(columns=["rlnTomoName", "rlnOpticsGroup"])
+
+
+def _pick_on_ts1(monkeypatch, particles):
+    monkeypatch.setattr(copick_generate, "get_copick_picks", lambda *args: [_Pick("session1_TS_1", particles)])
+
+
+COPICK = {"copick_config": None, "copick_name": "particle", "copick_session_id": "0", "copick_user_id": "user"}
+
+
+def _extract(kind, project, output_dir, monkeypatch, **kwargs):
+    """Extract ``project`` (its particles, or the same particles as copick picks on run session1_TS_1)."""
+    inputs = {"tiltseries_relative_dir": project, "tomograms_starfile": project / "tomograms.star"}
+    if kind == "local":
+        return parse_extract_local_subtomograms(
+            box_size=64, output_dir=output_dir, particles_starfile=project / "particles.star", **inputs, **kwargs
+        )
+    _pick_on_ts1(monkeypatch, starfile.read(project / "particles.star")["particles"])
+    return parse_extract_copick_local_subtomograms(
+        box_size=64, output_dir=output_dir, copick_run_names=["session1_TS_1"], **COPICK, **inputs, **kwargs
+    )
+
+
+def _bspline_project(project, data_root):
+    """The synthetic project declaring a deformation type RELION does not know."""
+    deformed_project(project, data_root, "linear")
+    tomograms = starfile.read(project / "tomograms.star", always_dict=True)
+    tomograms["global"]["rlnTomoDeformationType"] = "bspline"
+    starfile.write(tomograms, project / "tomograms.star")
+
+
+def _files(directory):
+    return {p.relative_to(directory): p.read_bytes() for p in directory.rglob("*") if p.is_file()}
+
+
 @pytest.mark.parametrize("damage", ["unknown deformation type", "missing tilt-series stack"])
-def test_copick_extraction_and_reconstruction_refuse_bad_inputs_before_opening_the_project(tmp_path, damage):
+def test_copick_extraction_and_reconstruction_refuse_bad_inputs_before_writing(tmp_path, monkeypatch, damage):
     data_root = DATASET_CONFIGS["synthetic"]["data_root"]
-    n_tilts = len(starfile.read(data_root / "tiltseries" / "TS_1.star"))
-    grid, rows = random_deformation("linear", n_tilts, (630, 630), np.random.default_rng(2))
-    write_deformed_project(tmp_path, data_root, "linear", grid, rows, synthetic_names(data_root))
+    deformed_project(tmp_path, data_root, "linear")
     if damage == "unknown deformation type":
         tomograms = starfile.read(tmp_path / "tomograms.star", always_dict=True)
         tomograms["global"]["rlnTomoDeformationType"] = "bspline"
@@ -657,12 +694,10 @@ def test_copick_extraction_and_reconstruction_refuse_bad_inputs_before_opening_t
     else:
         (tmp_path / "tiltseries" / "TS_1.mrcs").unlink()
         column = "rlnMicrographName"
-    # the copick config does not exist: the refusal has to come before the project is opened
+    _pick_on_ts1(monkeypatch, starfile.read(tmp_path / "particles.star")["particles"])
     copick = {
-        "copick_config": tmp_path / "absent.json",
-        "copick_name": "ribosome",
-        "copick_session_id": "0",
-        "copick_user_id": "test",
+        **COPICK,
+        "copick_run_names": ["session1_TS_1"],
         "tiltseries_relative_dir": tmp_path,
         "tomograms_starfile": tmp_path / "tomograms.star",
     }
@@ -670,5 +705,96 @@ def test_copick_extraction_and_reconstruction_refuse_bad_inputs_before_opening_t
         parse_extract_copick_local_subtomograms(box_size=64, output_dir=tmp_path / "extract", **copick)
     with pytest.raises(ValueError, match=column):
         reconstruct_copick_local(box_size=64, output_dir=tmp_path / "reconstruct", **copick)
-    assert not (tmp_path / "extract" / "particles.star").exists()
-    assert not (tmp_path / "reconstruct" / "particles.star").exists()
+    for output_dir in (tmp_path / "extract", tmp_path / "reconstruct"):
+        assert not (output_dir / "particles.star").exists()
+        assert not (output_dir / "Subtomograms").exists()
+
+
+@pytest.mark.parametrize("overwrite", [True, False])
+@pytest.mark.parametrize("kind", ["local", "copick"])
+def test_refused_extraction_leaves_output_untouched(tmp_path, monkeypatch, kind, overwrite):
+    data_root = DATASET_CONFIGS["synthetic"]["data_root"]
+    _bspline_project(tmp_path / "bad", data_root)
+    output_dir = tmp_path / "out"
+    if overwrite:
+        _extract(kind, data_root, output_dir, monkeypatch)
+        before = _files(output_dir)
+        assert sum(path.suffix == ".mrcs" for path in before) == 25
+        with pytest.raises(ValueError, match="rlnTomoDeformationType"):
+            _extract(kind, tmp_path / "bad", output_dir, monkeypatch, overwrite=True)
+        assert _files(output_dir) == before
+    else:
+        with pytest.raises(ValueError, match="rlnTomoDeformationType"):
+            _extract(kind, tmp_path / "bad", output_dir, monkeypatch)
+        assert not (output_dir / "Subtomograms").exists()
+        _extract(kind, data_root, output_dir, monkeypatch)  # the fixed rerun needs no --overwrite
+
+
+@pytest.mark.parametrize("damage", ["missing stack", "unknown deformation type"])
+def test_copick_extraction_ignores_tomograms_without_picks(tmp_path, monkeypatch, damage):
+    # RELION skips a tomogram without particles before reading it, so nothing about session1_TS_2 is checked
+    data_root = DATASET_CONFIGS["synthetic"]["data_root"]
+    project = tmp_path / "project"
+    (project / "tiltseries").mkdir(parents=True)
+    stack = (data_root / "tiltseries" / "TS_1.mrcs").resolve()
+    (project / "tiltseries" / "TS_1.mrcs").symlink_to(stack)
+    tilts = starfile.read(data_root / "tiltseries" / "TS_1.star")
+    starfile.write({"TS_1": tilts}, project / "tiltseries" / "TS_1.star")
+    ts2_tilts = tilts.assign(rlnMicrographName=tilts["rlnMicrographName"].str.replace("TS_1", "TS_2"))
+    starfile.write({"TS_2": ts2_tilts}, project / "tiltseries" / "TS_2.star")
+    tomograms = starfile.read(data_root / "tomograms.star")
+    ts2 = tomograms.assign(rlnTomoName="session1_TS_2", rlnTomoTiltSeriesStarFile="tiltseries/TS_2.star")
+    if damage == "unknown deformation type":
+        (project / "tiltseries" / "TS_2.mrcs").symlink_to(stack)
+        ts2 = ts2.assign(rlnTomoDeformationGridSizeX=2, rlnTomoDeformationGridSizeY=2, rlnTomoDeformationType="bspline")
+    starfile.write({"global": pd.concat([tomograms, ts2], ignore_index=True)}, project / "tomograms.star")
+    _pick_on_ts1(monkeypatch, starfile.read(data_root / "particles.star")["particles"].iloc[:3])
+
+    parse_extract_copick_local_subtomograms(
+        box_size=64,
+        output_dir=tmp_path / "out",
+        copick_run_names=["session1_TS_1"],
+        tiltseries_relative_dir=project,
+        tomograms_starfile=project / "tomograms.star",
+        **COPICK,
+    )
+    assert len(list((tmp_path / "out" / "Subtomograms").rglob("*.mrcs"))) == 3
+
+
+def test_copick_dry_run_refuses_what_the_real_run_refuses(tmp_path, monkeypatch):
+    _bspline_project(tmp_path / "bad", DATASET_CONFIGS["synthetic"]["data_root"])
+    with pytest.raises(ValueError, match="rlnTomoDeformationType"):
+        _extract("copick", tmp_path / "bad", tmp_path / "out", monkeypatch, dry_run=True)
+    assert not (tmp_path / "out" / "particles.star").exists()
+
+
+def test_ignore_deformations_extracts_a_declaration_it_could_not_build_as_undeformed(tmp_path, monkeypatch):
+    data_root = DATASET_CONFIGS["synthetic"]["data_root"]
+    _bspline_project(tmp_path / "bad", data_root)
+    _extract("local", tmp_path / "bad", tmp_path / "ignored", monkeypatch, ignore_deformations=True)
+    _extract("local", data_root, tmp_path / "plain", monkeypatch)
+    ignored, plain = (
+        {p.relative_to(d): p for d in [tmp_path / name / "Subtomograms"] for p in d.rglob("*.mrcs")}
+        for name in ("ignored", "plain")
+    )
+    assert sorted(ignored) == sorted(plain) and len(plain) == 25
+    for name, path in plain.items():
+        np.testing.assert_array_equal(mrcfile.read(ignored[name]), mrcfile.read(path))
+
+
+def test_optimisation_set_names_absolute_paths(tmp_path, monkeypatch):
+    # extract into a project-relative job directory, then name the set from elsewhere
+    data_root = DATASET_CONFIGS["synthetic"]["data_root"].resolve()
+    monkeypatch.chdir(tmp_path)
+    parse_extract_local_subtomograms(
+        box_size=64,
+        output_dir=Path("Extract/job001"),
+        particles_starfile=data_root / "particles.star",
+        tiltseries_relative_dir=data_root,
+        tomograms_starfile=data_root / "tomograms.star",
+    )
+    (tmp_path / "home").mkdir()
+    monkeypatch.chdir(tmp_path / "home")
+    particles, tomograms, _ = read_optimisation_set(tmp_path / "Extract/job001/optimisation_set.star")
+    assert particles.is_absolute() and particles.samefile(tmp_path / "Extract/job001/particles.star")
+    assert tomograms.is_absolute() and tomograms.samefile(data_root / "tomograms.star")

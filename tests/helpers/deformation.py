@@ -31,7 +31,7 @@ def synthetic_names(data_root):
     return [f"session1_TS_1/{i}" for i in range(1, n + 1)]
 
 
-def random_deformation(deformation_type, n_tilts, image, rng):
+def random_deformation(deformation_type, n_tilts, rng):
     """(grid, per-tilt coefficient rows) with shifts of a few pixels, different in every tilt."""
     if deformation_type == "spline":
         grid = (3, 3)
@@ -51,3 +51,15 @@ def random_deformation(deformation_type, n_tilts, image, rng):
         n = (grid[0] // 2 + 1) * grid[1] * 2 * 2
         return grid, [rng.uniform(-3, 3, n) for _ in range(n_tilts)]
     raise ValueError(deformation_type)
+
+
+SEEDS = {"spline": 1, "linear": 2, "Fourier": 3}
+
+
+def deformed_project(project, data_root, deformation_type):
+    """The synthetic project with random per-tilt deformations of ``deformation_type``; returns the particle names."""
+    names = synthetic_names(data_root)
+    n_tilts = len(starfile.read(data_root / "tiltseries" / "TS_1.star"))
+    grid, rows = random_deformation(deformation_type, n_tilts, np.random.default_rng(SEEDS[deformation_type]))
+    write_deformed_project(project, data_root, deformation_type, grid, rows, names)
+    return names

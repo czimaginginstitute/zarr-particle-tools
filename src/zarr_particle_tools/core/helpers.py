@@ -2,6 +2,7 @@ import logging
 import math
 import os
 import shutil
+from collections.abc import Callable, Collection
 from pathlib import Path
 
 import pandas as pd
@@ -197,7 +198,10 @@ def validate_and_setup(
     overwrite: bool = False,
     dry_run: bool = False,
     copick_data_portal: bool = False,
+    check: Callable[[Path | None, Path | None, Path | None, Path | None], None] | None = None,
 ) -> tuple[Path, Path, Path, Path, Path, Path]:
+    """Validate and resolve the inputs and prepare ``output_dir``. ``check`` is called with the resolved
+    (particles, tomograms, trajectories, tiltseries_relative_dir) before anything is written, dry runs included."""
     if not dry_run and box_size is None:
         raise ValueError("Box size must be specified.")
 
@@ -250,6 +254,9 @@ def validate_and_setup(
         raise FileExistsError(
             f"Output directory {output_dir} already exists and is not empty. Use --overwrite to overwrite existing files."
         )
+
+    if check is not None:
+        check(particles_starfile, tomograms_starfile, trajectories_starfile, tiltseries_relative_dir)
 
     if not dry_run:
         if (output_dir / "Subtomograms").exists():
@@ -504,20 +511,22 @@ def input_problems(
     apply_ctf: bool = True,
     apply_offsets: bool = True,
     ignore_deformations: bool = False,
+    tomo_names: Collection[str] | None = None,
 ) -> list[tuple[str, str]]:
     """``(input, message)`` for what ``program`` cannot honor in its inputs; ``input`` is ``particles``,
     ``tomograms`` or ``trajectories``.
 
     ``program`` is ``extract`` or ``reconstruct`` (tilt series of tomograms with particles, tilt stars under
     ``tiltseries_relative_dir``), or ``relion`` (CTF refinement and polishing: every tomogram's tilt series is staged,
-    tilt stars found by :func:`resolve_path`). ``particles`` is ``None`` for copick picks.
+    tilt stars found by :func:`resolve_path`). ``particles`` is ``None`` for copick picks; ``tomo_names`` then names
+    the tomograms that have picks.
     """
     try:
         tomograms_data, tomograms_df = read_tomograms_starfile(tomograms)
     except (OSError, ValueError, KeyError) as exc:
         return [("tomograms", f"{tomograms}: {exc}")]
     problems = []
-    with_particles = None
+    with_particles = None if tomo_names is None else {str(name) for name in tomo_names}
     if particles is not None and program != "relion":
         try:
             particles_data = starfile.read(particles, parse_as_string=STAR_NAME_COLUMNS)

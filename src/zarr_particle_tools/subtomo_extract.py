@@ -9,6 +9,7 @@ import multiprocessing as mp
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import partial
 from pathlib import Path
 
 import click
@@ -602,16 +603,13 @@ def parse_extract_local_subtomograms(
         tiltseries_relative_dir=tiltseries_relative_dir,
         tomograms_starfile=tomograms_starfile,
         optimisation_set_starfile=optimisation_set_starfile,
-    )
-    check_inputs(
-        program,
-        particles_starfile,
-        tomograms_starfile,
-        trajectories_starfile,
-        tiltseries_relative_dir,
-        apply_ctf=not no_ctf,
-        apply_offsets=not dont_apply_offsets,
-        ignore_deformations=ignore_deformations,
+        check=partial(
+            check_inputs,
+            program,
+            apply_ctf=not no_ctf,
+            apply_offsets=not dont_apply_offsets,
+            ignore_deformations=ignore_deformations,
+        ),
     )
 
     particles_count, total_skipped_count, individual_tiltseries_count = extract_subtomograms(
@@ -675,32 +673,13 @@ def parse_extract_copick_local_subtomograms(
     program: str = "extract",
 ) -> tuple[Path, Path, Path, Path, Path]:
     """
-    Extracts subtomograms from local files using copick picks and the provided parameters. The tomograms star and
-    its tilt series are checked for ``program`` before the copick project is opened.
+    Extracts subtomograms from local files using copick picks and the provided parameters. The tilt series of the
+    picked tomograms are checked for ``program`` before anything is written.
 
     Returns:
         tuple: particles_starfile, trajectories_starfile, tiltseries_relative_dir, tomograms_starfile, optimisation_set_starfile
     """
     start_time = time.time()
-    output_dir, _, _, tiltseries_relative_dir, tomograms_starfile, _ = validate_and_setup(
-        box_size=box_size,
-        crop_size=crop_size,
-        overwrite=overwrite,
-        output_dir=output_dir,
-        tiltseries_relative_dir=tiltseries_relative_dir,
-        tomograms_starfile=tomograms_starfile,
-        dry_run=dry_run,
-    )
-    if not dry_run:
-        check_inputs(
-            program,
-            None,
-            tomograms_starfile,
-            tiltseries_relative_dir=tiltseries_relative_dir,
-            apply_ctf=not no_ctf,
-            ignore_deformations=ignore_deformations,
-        )
-
     if copick_run_names is None:
         picks = get_copick_picks(copick_config, copick_name, copick_session_id, copick_user_id, copick_run_names)
         copick_run_names = [p.run.name for p in picks]
@@ -716,6 +695,23 @@ def parse_extract_copick_local_subtomograms(
         data_portal_runs=False,
     )
     particles_df, optics_df = particles_and_optics(particles_df, tomograms_df)
+    output_dir, _, _, tiltseries_relative_dir, tomograms_starfile, _ = validate_and_setup(
+        box_size=box_size,
+        crop_size=crop_size,
+        overwrite=overwrite,
+        output_dir=output_dir,
+        tiltseries_relative_dir=tiltseries_relative_dir,
+        tomograms_starfile=tomograms_starfile,
+        dry_run=dry_run,
+        # only tomograms with picks: RELION skips tomograms without particles before reading them
+        check=partial(
+            check_inputs,
+            program,
+            apply_ctf=not no_ctf,
+            ignore_deformations=ignore_deformations,
+            tomo_names=set(particles_df["rlnTomoName"].astype(str)),
+        ),
+    )
     particles_path = output_dir / "particles.star"
     starfile.write({"optics": optics_df, "particles": particles_df}, particles_path)
     logger.info(f"Generated particles star file at {particles_path} with {len(particles_df)} particles.")

@@ -1,5 +1,6 @@
 """Copick runs named by portal run id map onto portal-named tomograms (rlnTomoName = get_tomo_name)."""
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
@@ -39,8 +40,13 @@ def test_pipeline_and_extract_map_the_same_copick_runs(tmp_path, monkeypatch, na
     assert particles["rlnTomoName"].tolist() == [r.tomo_name for r in runs]
     assert particles["rlnOpticsGroup"].tolist() == [1, 2]
 
-    # zarr-particle-extract copick-local (a dry run does not create its output dir)
+    # zarr-particle-extract copick-local (a dry run does not create its output dir, but checks the tilt series)
     (tmp_path / "extract").mkdir()
+    for _, row in tomograms.iterrows():
+        Path(row["rlnTomoTiltSeriesStarFile"]).parent.mkdir(parents=True, exist_ok=True)
+        starfile.write(
+            {row["rlnTomoName"]: pd.DataFrame({"rlnMicrographName": ["1@x.mrcs"]})}, row["rlnTomoTiltSeriesStarFile"]
+        )
     parse_extract_copick_local_subtomograms(
         box_size=None,
         output_dir=tmp_path / "extract",
