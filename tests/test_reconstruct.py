@@ -9,7 +9,7 @@ import starfile
 from click.testing import CliRunner
 
 from tests.helpers.compare import mrc_close_unmasked, mrc_headers_match
-from tests.helpers.deformation import random_deformation, synthetic_names, write_deformed_project
+from tests.helpers.deformation import deformed_project, synthetic_names, write_deformed_project
 from zarr_particle_tools.subtomo_reconstruct import cli, reconstruct_local
 
 # All cases pass at the float32 storage floor via the magnitude-aware unmasked comparator; measured
@@ -248,15 +248,6 @@ def test_reconstruct_keeps_zero_padded_names(tmp_path):
 
 
 # ----------------------------------------------------------------------------- RELION-5 2D deformations
-def _deformed_project(tmp_path, deformation_type):
-    """The synthetic project with random per-tilt deformations of ``deformation_type``."""
-    data_root = DATASET_CONFIGS["synthetic"]["data_root"]
-    n_tilts = len(starfile.read(data_root / "tiltseries" / "TS_1.star"))
-    rng = np.random.default_rng({"spline": 1, "linear": 2, "Fourier": 3}[deformation_type])
-    grid, rows = random_deformation(deformation_type, n_tilts, (630, 630), rng)
-    write_deformed_project(tmp_path, data_root, deformation_type, grid, rows, synthetic_names(data_root))
-
-
 def test_reconstruct_deformation_equals_trajectory(tmp_path):
     # reconstruct extracts through the same step as extract, so a constant spline shift of s pixels must give the
     # same map as the per-tilt 3D trajectory that moves every projection by s (see the extract version of this test)
@@ -321,7 +312,7 @@ def test_ignore_deformations_flag_only_on_local_commands(module):
 @pytest.mark.parametrize("deformation_type", ["spline", "linear", "Fourier"])
 def test_reconstruct_with_deformations_matches_relion(tmp_path, deformation_type):
     # per-tilt 2D deformations, reconstructed by RELION (as the baseline reference was) and by us from the same inputs
-    _deformed_project(tmp_path, deformation_type)
+    deformed_project(tmp_path, DATASET_CONFIGS["synthetic"]["data_root"], deformation_type)
     relion_args = ["--p", "particles.star", "--t", "tomograms.star", "--o", "relion/", "--b", "64", "--sym", "C1"]
     subprocess.run(
         ["relion_tomo_reconstruct_particle", *relion_args, "--j", "4"], cwd=tmp_path, check=True, capture_output=True
