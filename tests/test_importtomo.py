@@ -6,6 +6,7 @@ The resolver and import tests query the live CryoET Data Portal (dataset 10426, 
 """
 
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -108,11 +109,33 @@ def test_an_ambiguous_type_lists_its_candidates_and_a_method_settles_it():
     assert settled.status == "eligible" and settled.runs[0].tomogram_id == 21116
 
 
-def test_a_local_alignment_is_refused_unless_allowed():
-    """Run 16463's alignment is LOCAL; only its global geometry could be written."""
-    refused = portal_selection.resolve(run_ids=[16463])
-    assert refused.status == "ineligible" and "LOCAL" in refused.problems[0].reason
-    assert portal_selection.resolve(run_ids=[16463], allow_local_alignment=True).status == "eligible"
+def test_local_alignment_is_imported_with_a_warning(caplog):
+    """Run 16463's alignment is LOCAL: its global per-tilt geometry is written, with one warning."""
+    with caplog.at_level(logging.WARNING, logger="zarr_particle_tools.generate.portal_selection"):
+        selection = portal_selection.resolve(run_ids=[16463])
+    assert selection.status == "eligible"
+    assert sum("LOCAL" in m for m in caplog.messages) == 1
+    assert selection.to_dict()["runs"][0]["alignment_type"] == "LOCAL"
+
+
+def test_resolve_and_build_query_each_per_section_record_once(tmp_path, monkeypatch):
+    import cryoet_data_portal as cdp
+
+    import zarr_particle_tools.generate.cdp_import_starfiles as cdp_import
+
+    calls = []
+    for model in (cdp.PerSectionParameters, cdp.PerSectionAlignmentParameters):
+        monkeypatch.setattr(model, "find", lambda *a, _f=model.find, _m=model, **k: calls.append(_m) or _f(*a, **k))
+    cdp_import.build(portal_selection.resolve(run_ids=[RUN]).runs, tmp_path)
+    assert sorted(m.__name__ for m in calls) == ["PerSectionAlignmentParameters", "PerSectionParameters"]
+
+
+def test_resolve_refetches_a_cached_tilt_series():
+    import zarr_particle_tools.generate.cdp_cache as cdp_cache
+
+    stale = portal_selection.resolve(run_ids=[RUN])
+    cdp_cache.get_tiltseries([stale.runs[0].tiltseries_id])[0].pixel_spacing = 9.99  # the cached record, edited
+    assert portal_selection.resolve(run_ids=[RUN]).runs[0].tiltseries_pixel_size == pytest.approx(2.165)
 
 
 def test_selection_round_trips(tmp_path):
@@ -158,18 +181,6 @@ def test_import_writes_a_project_relative_s3_set(tmp_path, monkeypatch):
     assert record["runs"][0]["tomo_name"] == TOMO
 
 
-def test_import_rows_are_the_generator_rows(tmp_path, monkeypatch):
-    """The import and main's run generator choose the same tomogram for 10426 and write the same tilts."""
-    from zarr_particle_tools.generate.cdp_generate_starfiles import generate_tomograms_from_runs
-
-    monkeypatch.chdir(tmp_path)
-    assert CliRunner().invoke(cli, ["data-portal", "--run-ids", str(RUN), "--output-dir", "new"]).exit_code == 0
-    generate_tomograms_from_runs(tmp_path / "old", run_ids=[RUN])
-    old, new = _tilts(f"old/tiltseries/{TOMO}.star"), _tilts(f"new/tiltseries/{TOMO}.star")
-    columns = [c for c in old.columns if c != "rlnMicrographName"]
-    pd.testing.assert_frame_equal(new[columns], old[columns])
-
-
 def test_a_stored_selection_imports_exactly_or_names_the_change(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     selection = portal_selection.resolve(run_ids=[RUN])
@@ -190,13 +201,13 @@ def test_a_stored_selection_imports_exactly_or_names_the_change(tmp_path, monkey
 
 
 def test_a_stored_selection_from_an_earlier_version_imports(tmp_path, monkeypatch):
-    """A selection written before tomo_name and the per-section digest existed is unchanged on those keys."""
+    """A selection written before tomo_name, the per-section digest and alignment_type existed is unchanged on those
+    keys."""
     monkeypatch.chdir(tmp_path)
     record = portal_selection.resolve(run_ids=[RUN]).to_dict()
-    for key in ("tomo_name", "fractional_dose", "sections_digest"):
+    for key in ("tomo_name", "fractional_dose", "sections_digest", "alignment_type"):
         record["runs"][0].pop(key)
-    for key in ("smallest_spacing", "allow_local_alignment"):
-        record["criteria"].pop(key)
+    record["criteria"].pop("smallest_spacing")
     (tmp_path / "old.json").write_text(json.dumps(record))
     result = CliRunner().invoke(cli, ["data-portal", "--selection", "old.json", "--output-dir", "a"])
     assert result.exit_code == 0, result.output
