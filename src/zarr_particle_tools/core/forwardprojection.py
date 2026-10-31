@@ -9,7 +9,7 @@ import pandas as pd
 from cryoet_alignment.io.aretomo3 import AreTomo3ALN
 
 from zarr_particle_tools.core.data import DataReader
-from zarr_particle_tools.core.orientation import has_subtomogram_orientation, subtomogram_matrices
+from zarr_particle_tools.core.orientation import subtomogram_matrices
 
 
 def in_plane_rotation_to_tilt_axis_rotation(rotation_matrix: list[list[float]]) -> float:
@@ -186,6 +186,11 @@ def get_particles_to_tiltseries_coordinates(
     per-tilt 2D image deformations (``core.deformation.build_deformations``); each is applied to the projected 2D
     point exactly where ``Tomogram::projectPoint`` applies it, after the projection and the trajectory offset.
     """
+    # rlnOriginXAngst/YAngst/ZAngst are already included in the coordinates
+    coordinates = filtered_particles_df[
+        ["rlnCenteredCoordinateXAngst", "rlnCenteredCoordinateYAngst", "rlnCenteredCoordinateZAngst"]
+    ].to_numpy(dtype=float)
+
     particles_to_tiltseries_coordinates = {}
     for i, tilt in tiltseries_df.iterrows():
         section = int(tilt["rlnMicrographName"].split("@")[0])
@@ -194,14 +199,7 @@ def get_particles_to_tiltseries_coordinates(
 
         # match 1-indexing of RELION
         for default_particle_id, particle in enumerate(filtered_particles_df.itertuples(), start=1):
-            # rlnOriginXAngst/YAngst/ZAngst are already included in the coordinate
-            coordinate = np.array(
-                [
-                    particle.rlnCenteredCoordinateXAngst,
-                    particle.rlnCenteredCoordinateYAngst,
-                    particle.rlnCenteredCoordinateZAngst,
-                ]
-            )
+            coordinate = coordinates[default_particle_id - 1]
             particle_id = (
                 particle.rlnTomoParticleName
                 if "rlnTomoParticleName" in filtered_particles_df.columns and use_tomo_particle_name_for_id
@@ -323,8 +321,7 @@ def apply_offsets_to_coordinates(particles_df: pd.DataFrame) -> pd.DataFrame:
     origin_columns = ["rlnOriginXAngst", "rlnOriginYAngst", "rlnOriginZAngst"]
     if all(column in particles_df.columns for column in origin_columns):
         offsets = particles_df[origin_columns].to_numpy(dtype=float)
-        if has_subtomogram_orientation(particles_df):
-            offsets = np.einsum("nij,nj->ni", subtomogram_matrices(particles_df), offsets)
+        offsets = np.einsum("nij,nj->ni", subtomogram_matrices(particles_df), offsets)
         particles_df["rlnCenteredCoordinateXAngst"] -= offsets[:, 0]
         particles_df["rlnCenteredCoordinateYAngst"] -= offsets[:, 1]
         particles_df["rlnCenteredCoordinateZAngst"] -= offsets[:, 2]

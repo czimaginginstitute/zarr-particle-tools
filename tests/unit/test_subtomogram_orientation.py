@@ -80,7 +80,6 @@ def test_the_full_orientation_is_a_sub_times_a_part():
 def test_absent_columns_are_the_identity_and_a_missing_one_reads_as_zero():
     df = pd.DataFrame({"rlnTomoName": ["a", "b"]})
     np.testing.assert_array_equal(orientation.particle_to_tomogram_matrices(df), np.tile(np.eye(3), (2, 1, 1)))
-    assert not orientation.has_subtomogram_orientation(df)
     psi_only = pd.DataFrame({"rlnTomoSubtomogramPsi": [25.0]})
     np.testing.assert_allclose(orientation.subtomogram_matrices(psi_only)[0], relion_angles_to_matrix3(0, 0, 25))
 
