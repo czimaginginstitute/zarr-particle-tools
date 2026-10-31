@@ -8,7 +8,7 @@ RELION keeps two rotations per particle (``src/jaz/tomography/particle_set.cpp``
 - ``A_part``, from ``rlnAngle{Rot,Tilt,Psi}`` (``ParticleSet::getParticleMatrix``): the pose within that frame.
 
 Each is ``Euler::anglesToMatrix3`` of its angles (``src/jaz/math/Euler_angles_relion.h``), and the identity when its
-columns are absent. The particle's full orientation, the map from particle to tomogram coordinates, is
+Rot column is absent; with Rot present, a missing Tilt or Psi reads as 0. The particle's full orientation, the map from particle to tomogram coordinates, is
 ``A = A_sub · A_part`` (``ParticleSet::getMatrix3x3``). ``A_sub`` also takes the origin offsets into tomogram
 coordinates: the particle sits at ``coordinate - A_sub · origin`` (``ParticleSet::getPosition``).
 """
@@ -22,16 +22,11 @@ SUBTOMOGRAM_ANGLES = ("rlnTomoSubtomogramRot", "rlnTomoSubtomogramTilt", "rlnTom
 PARTICLE_ANGLES = ("rlnAngleRot", "rlnAngleTilt", "rlnAnglePsi")
 
 
-def euler_matrices(angles: np.ndarray) -> np.ndarray:
-    """RELION's ``Euler::anglesToMatrix3`` of ``(N, 3)`` (rot, tilt, psi) angles in degrees, as ``(N, 3, 3)``."""
-    angles = np.asarray(angles, dtype=float).reshape(-1, 3)
-    return get_rotation_matrix_from_euler(angles).reshape(-1, 3, 3)
-
-
 def _matrices(particles_df: pd.DataFrame, columns: tuple[str, str, str]) -> np.ndarray:
-    """One rotation per row from three angle columns; a missing column reads as 0, all three missing as identity."""
+    """One rotation per row from (rot, tilt, psi) columns: the identity without the rot column, as RELION gates it
+    (ParticleSet::getSubtomogramMatrix, getParticleMatrix); a missing tilt or psi reads as 0."""
     n = len(particles_df)
-    if not any(column in particles_df.columns for column in columns):
+    if columns[0] not in particles_df.columns:
         return np.tile(np.eye(3), (n, 1, 1))
     angles = np.stack(
         [
@@ -40,7 +35,7 @@ def _matrices(particles_df: pd.DataFrame, columns: tuple[str, str, str]) -> np.n
         ],
         axis=1,
     )
-    return euler_matrices(angles)
+    return get_rotation_matrix_from_euler(angles)
 
 
 def subtomogram_matrices(particles_df: pd.DataFrame) -> np.ndarray:
