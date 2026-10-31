@@ -546,9 +546,7 @@ def reconstruct(
         taper=taper,
     )
 
-    # remove the internal extraction: its subtomograms, and the particles.star / optimisation_set.star that point at
-    # them (a consumer binding those would read deleted images with the CTF-premultiplied flag of a no-CTF
-    # extraction). Like RELION's own particle reconstruction, the job's products are the maps.
+    # like relion_tomo_reconstruct_particle, keep only the maps
     subtomos_dir = Path(output_dir) / "Subtomograms"
     if subtomos_dir.exists() and subtomos_dir.is_dir():
         shutil.rmtree(subtomos_dir)

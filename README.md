@@ -266,9 +266,7 @@ zarr-particle-reconstruct local \
   --box-size 384 --crop-size 256
 ```
 
-Reconstruction cuts its particles with the extraction above, so polished projects' 2D deformations are applied
-as `relion_tomo_reconstruct_particle` applies them: to where each particle is cut from a tilt image and to whether
-it is visible there.
+Reconstruction applies 2D deformations as `relion_tomo_reconstruct_particle` does.
 
 ### CTF refinement and polishing
 
@@ -406,11 +404,11 @@ OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 uv run --locked pytes
 
 If you would like to see a feature added, on or off this list, please open an issue.
 
-Every job refuses, before it streams any tilt series, what it would not do as RELION does, naming the job option
-or the column and file. The pipeliner jobs report the same refusals from `validate_joboptions()`, the input ones
-once their inputs exist. For extraction and reconstruction this covers the options listed below and a non-empty
-`other_args`; for every job, tilt series it cannot read. Particle reconstruction writes the maps only, like
-RELION's; the internal extraction it runs is removed with its star files.
+Local and copick jobs refuse, before reading tilt series, what they would not do as RELION does, naming the option
+or column and file. The pipeliner jobs report the same from `validate_joboptions()`. For extraction and
+reconstruction this covers the options listed below and a non-empty `other_args`; for every job, tilt series it
+cannot read. Particle reconstruction writes the maps only, like RELION's; the internal extraction it runs is removed
+with its star files.
 
 ### Extraction and reconstruction
 
