@@ -219,8 +219,7 @@ def reconstruct_single_tiltseries(
     ctf_premultiplied = bool(optics_row["rlnCtfDataAreCtfPremultiplied"].iloc[0])
     if ctf_premultiplied:
         raise ValueError("CTF premultiplied particles are not supported for reconstruction.")
-    # A = A_sub · A_part, RELION's particle-to-tomogram rotation (ParticleSet::getMatrix3x3), which
-    # relion_tomo_reconstruct_particle composes into every tilt's projection (projCut · getMatrix4x4)
+    # A = A_sub · A_part (ParticleSet::getMatrix3x3)
     particle_rotation_matrices = particle_to_tomogram_matrices(filtered_particles_df)
 
     # tiltseries variables

@@ -9,9 +9,14 @@ import pandas as pd
 import starfile
 from rich.logging import RichHandler
 
-from zarr_particle_tools.core.constants import NOISY_LOGGERS, OPTICS_DF_COLUMNS, TILTSERIES_URI_RELION_COLUMN
+from zarr_particle_tools.core.constants import (
+    NOISY_LOGGERS,
+    OPTICS_DF_COLUMNS,
+    PARTICLE_ANGLES,
+    SUBTOMOGRAM_ANGLES,
+    TILTSERIES_URI_RELION_COLUMN,
+)
 from zarr_particle_tools.core.deformation import declaration_problems, parse_coefficients
-from zarr_particle_tools.core.orientation import PARTICLE_ANGLES, SUBTOMOGRAM_ANGLES
 
 logger = logging.getLogger(__name__)
 
