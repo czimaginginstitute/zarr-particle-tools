@@ -172,7 +172,7 @@ def test_other_args_reach_stock_relion(cls):
     job.joboptions["other_args"].value = "--some_relion_flag 2"
     cmd = _command(job)
     assert cmd[cmd.index("--relion-args") + 1] == "--some_relion_flag 2"
-    assert "--require-ram-staging" in cmd  # the pipeliner jobs require RAM staging by default
+    assert "--require-ram-staging" not in cmd  # like the CLIs, the jobs fall back from /dev/shm unless asked not to
 
 
 def test_set_and_direct_entries_together_are_refused(job):
@@ -226,6 +226,19 @@ def test_output_nodes_are_the_files_the_jobs_keep(job):
     polish.joboptions["do_shift_align"].value = "Yes"
     polish.create_output_nodes()
     assert {Path(n.name).name for n in polish.output_nodes} == {"tomograms.star", "optimisation_set.star"}
+
+
+@pytest.mark.parametrize("flag", ["--do_even_aberrations", "--do_odd_aberrations"])
+def test_ctf_refinement_of_aberrations_declares_its_particles(flag):
+    # relion_tomo_refine_ctf writes particles.star and points the optimisation set at it (ctf_refinement.cpp:298)
+    ctf = _relion_job(PythonRelionSubtomoCtfRefineJob)
+    ctf.joboptions["other_args"].value = f"{flag} --ne 4"
+    ctf.create_output_nodes()
+    assert {Path(n.name).name for n in ctf.output_nodes} == {
+        "particles.star",
+        "tomograms.star",
+        "optimisation_set.star",
+    }
 
 
 def test_wrappers_and_their_checks_import_without_the_extraction_stack(tmp_path):

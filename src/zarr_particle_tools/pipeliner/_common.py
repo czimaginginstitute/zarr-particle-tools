@@ -22,7 +22,7 @@ def add_staging_options(job) -> None:
     )
     job.joboptions["do_require_ram_staging"] = BooleanJobOption(
         label="Require RAM-backed staging?",
-        default_value=True,
+        default_value=False,
         help_text="Fail before streaming unless the staging directory is tmpfs with room for the staged stacks, "
         "instead of falling back to the system temp directory.",
     )
