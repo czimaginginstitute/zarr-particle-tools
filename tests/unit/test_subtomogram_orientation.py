@@ -58,8 +58,9 @@ ANGLES = [(0, 0, 0), (0, 90, 0), (30, 40, 50), (-120, 170, 33), (12.5, 0.0, -71.
 
 
 @pytest.mark.parametrize("angles", ANGLES)
-def test_euler_matrices_are_relions_angles_to_matrix3(angles):
-    np.testing.assert_allclose(orientation.euler_matrices([angles])[0], relion_angles_to_matrix3(*angles), atol=1e-12)
+def test_rotations_are_relions_angles_to_matrix3(angles):
+    df = pd.DataFrame([angles], columns=PART)
+    np.testing.assert_allclose(orientation.particle_matrices(df)[0], relion_angles_to_matrix3(*angles), atol=1e-12)
 
 
 def test_the_full_orientation_is_a_sub_times_a_part():
@@ -77,11 +78,20 @@ def test_the_full_orientation_is_a_sub_times_a_part():
     assert np.abs(got - swapped).max() > 0.1  # the order is observable: these rotations do not commute
 
 
-def test_absent_columns_are_the_identity_and_a_missing_one_reads_as_zero():
+def test_rotations_are_gated_on_the_rot_column_as_relion_does():
+    """No Rot column: the identity, whatever Tilt and Psi say. Rot present: a missing Tilt or Psi reads as 0."""
     df = pd.DataFrame({"rlnTomoName": ["a", "b"]})
     np.testing.assert_array_equal(orientation.particle_to_tomogram_matrices(df), np.tile(np.eye(3), (2, 1, 1)))
-    psi_only = pd.DataFrame({"rlnTomoSubtomogramPsi": [25.0]})
-    np.testing.assert_allclose(orientation.subtomogram_matrices(psi_only)[0], relion_angles_to_matrix3(0, 0, 25))
+    no_rot = pd.DataFrame({"rlnAngleTilt": [90.0], "rlnAnglePsi": [30.0], "rlnTomoSubtomogramPsi": [25.0]})
+    np.testing.assert_array_equal(orientation.particle_to_tomogram_matrices(no_rot), np.eye(3)[None])
+    rot_psi = pd.DataFrame({"rlnTomoSubtomogramRot": [10.0], "rlnTomoSubtomogramPsi": [25.0]})
+    np.testing.assert_allclose(orientation.subtomogram_matrices(rot_psi)[0], relion_angles_to_matrix3(10, 0, 25))
+
+
+def test_offsets_are_not_rotated_without_the_subtomogram_rot_column():
+    df = pd.DataFrame([[1.0, 2.0, 3.0, 4.0, -5.0, 6.0, 90.0, 30.0]], columns=XYZ + ORIGIN + SUB[1:])
+    got = apply_offsets_to_coordinates(df.copy())[XYZ].to_numpy()
+    np.testing.assert_array_equal(got, [[1.0 - 4.0, 2.0 + 5.0, 3.0 - 6.0]])
 
 
 def test_origin_offsets_are_rotated_by_the_subtomogram_frame():
