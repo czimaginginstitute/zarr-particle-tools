@@ -192,3 +192,27 @@ def test_validate_deformations_matches_build_checks():
     ts[COEFFICIENTS] = ["[" + ",".join(["0"] * 72) + "]"] * 2
     validate_deformations(row, ts)
     validate_deformations(pd.Series({"rlnTomoName": "t"}), ts.drop(columns=COEFFICIENTS))  # no deformations
+
+
+def test_spline_single_node_closed_form():
+    # Spline2DDeformationModel::computeShift with only node (0, 0) of dim 0 non-zero, written out from RELION's
+    # F matrix (vx^T F vy): value*b0(x)b0(y) + slope_x*b2(x)b0(y) + slope_y*b0(x)b2(y) + twist*b2(x)b2(y), where
+    # b0(t) = 1 - 3t^2 + 2t^3 and b2(t) = t - 2t^2 + t^3 and (x, y) are the fractional cell coordinates.
+    # Pins the DataPoint order (value, slope_x, slope_y, twist) and which Hermite basis each one multiplies.
+    value, slope_x, slope_y, twist = 7.0, 3.0, -2.0, 1.5
+    nodes = _spline_nodes()
+    nodes[0, 0, 0] = [value, slope_x, slope_y, twist]
+    m = SplineDeformation(IMAGE, GRID, nodes.ravel())
+    spacing = np.array([IMAGE[0] / (GRID[0] - 1), IMAGE[1] / (GRID[1] - 1)])
+    fx, fy = 0.3, 0.8
+    b0 = lambda t: 1 - 3 * t**2 + 2 * t**3  # noqa: E731
+    b2 = lambda t: t - 2 * t**2 + t**3  # noqa: E731
+    expected = value * b0(fx) * b0(fy) + slope_x * b2(fx) * b0(fy) + slope_y * b0(fx) * b2(fy) + twist * b2(fx) * b2(fy)
+    shift = m.shift(np.array([[fx * spacing[0], fy * spacing[1]]]))
+    np.testing.assert_allclose(shift, [[expected, 0.0]], rtol=1e-12, atol=1e-12)
+    # swapping slope_x and slope_y, or dropping the twist, gives a different number at this point
+    assert not np.isclose(
+        expected,
+        value * b0(fx) * b0(fy) + slope_y * b2(fx) * b0(fy) + slope_x * b0(fx) * b2(fy) + twist * b2(fx) * b2(fy),
+    )
+    assert not np.isclose(expected, expected - twist * b2(fx) * b2(fy))

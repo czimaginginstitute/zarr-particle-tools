@@ -301,3 +301,44 @@ def test_ignore_deformations_flag_only_on_local_commands(module):
     for name, command in group.commands.items():
         has_flag = any("--ignore-deformations" in param.opts for param in command.params)
         assert has_flag == (name in ("local", "copick-local")), name
+
+
+@pytest.mark.skipif(
+    shutil.which("relion_tomo_reconstruct_particle") is None, reason="relion_tomo_reconstruct_particle not on PATH"
+)
+@pytest.mark.parametrize("deformation_type", ["spline", "linear", "Fourier"])
+def test_reconstruct_with_deformations_matches_relion(tmp_path, deformation_type):
+    # per-tilt 2D deformations, reconstructed by RELION and by us from the same inputs (same command as the
+    # relion_output_baseline reference, see its note.txt)
+    import subprocess
+
+    from tests.test_extract import _random_deformation, _synthetic_names, _write_deformed_project
+
+    data_root = DATASET_CONFIGS["synthetic"]["data_root"]
+    names = _synthetic_names(data_root)
+    n_tilts = len(starfile.read(data_root / "tiltseries" / "TS_1.star"))
+    rng = np.random.default_rng({"spline": 1, "linear": 2, "Fourier": 3}[deformation_type])
+    grid, rows = _random_deformation(deformation_type, n_tilts, rng)
+    _write_deformed_project(tmp_path, data_root, deformation_type, grid, rows, names)
+
+    relion_args = ["--p", "particles.star", "--t", "tomograms.star", "--o", "relion/", "--b", "64", "--sym", "C1"]
+    subprocess.run(
+        ["relion_tomo_reconstruct_particle", *relion_args, "--j", "4"], cwd=tmp_path, check=True, capture_output=True
+    )
+    for name, ignore in (("ours", False), ("ignored", True)):
+        reconstruct_local(
+            box_size=64,
+            output_dir=tmp_path / name,
+            particles_starfile=tmp_path / "particles.star",
+            tiltseries_relative_dir=tmp_path,
+            tomograms_starfile=tmp_path / "tomograms.star",
+            ignore_deformations=ignore,
+        )
+
+    assert mrc_close_unmasked(
+        tmp_path / "relion" / "merged.mrc", tmp_path / "ours" / "merged.mrc", ulp_factor=DEFAULT_ULP_FACTOR
+    )
+    assert mrc_headers_match(tmp_path / "relion" / "merged.mrc", tmp_path / "ours" / "merged.mrc")
+    # the comparison is sensitive: without the deformation the same particles do not reproduce RELION's map
+    relion, ignored = _read_mrc(tmp_path / "relion" / "merged.mrc"), _read_mrc(tmp_path / "ignored" / "merged.mrc")
+    assert not np.allclose(relion, ignored, atol=1e-3 * np.abs(relion).max())

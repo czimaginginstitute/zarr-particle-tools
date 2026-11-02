@@ -242,8 +242,7 @@ position exactly as `relion_tomo_subtomo` does (spline, linear and Fourier model
 `--trajectories-starfile` motion; pass `--ignore-deformations` to extract without them. Skipping them on a
 project that was refined with them mis-centres the crops by the local field value, typically tens of Å.
 `zarr-particle-reconstruct local` / `copick-local` extract through the same step, so they apply deformations
-too and take the same flag (reconstruction parity against `relion_tomo_reconstruct_particle` on deformed data is
-not yet tested).
+too, matching `relion_tomo_reconstruct_particle`, and take the same flag.
 
 From the portal without first materializing the tilt series locally:
 
