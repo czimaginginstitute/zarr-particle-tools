@@ -189,7 +189,7 @@ def get_particles_to_tiltseries_coordinates(
     for i, tilt in tiltseries_df.iterrows():
         section = int(tilt["rlnMicrographName"].split("@")[0])
         projection_matrix = projection_matrices[i]
-        deformation = deformations[i] if deformations is not None else None
+        tilt_entries = []  # (particle_id, coordinate, projected_point) for this tilt
 
         # match 1-indexing of RELION
         for default_particle_id, particle in enumerate(filtered_particles_df.itertuples(), start=1):
@@ -224,13 +224,15 @@ def get_particles_to_tiltseries_coordinates(
                     )
 
             projected_point = project_3d_point_to_2d(projection_coordinate, projection_matrix)[:2]
-            if deformation is not None:
-                projected_point = deformation(projected_point)
+            tilt_entries.append((particle_id, coordinate, projected_point))
 
-            if particle_id not in particles_to_tiltseries_coordinates:
-                particles_to_tiltseries_coordinates[particle_id] = {}
+        if deformations is not None and tilt_entries:
+            # one field evaluation per tilt, on all of its particles at once
+            deformed = deformations[i](np.array([entry[2] for entry in tilt_entries]))
+            tilt_entries = [(pid, coord, point) for (pid, coord, _), point in zip(tilt_entries, deformed, strict=True)]
 
-            particles_to_tiltseries_coordinates[particle_id][section] = (coordinate, projected_point)
+        for particle_id, coordinate, projected_point in tilt_entries:
+            particles_to_tiltseries_coordinates.setdefault(particle_id, {})[section] = (coordinate, projected_point)
 
     return particles_to_tiltseries_coordinates
 

@@ -1,9 +1,7 @@
 """RELION-5 per-tilt 2D image deformations (tomo Bayesian polishing with ``--deformation``).
 
-RELION's ``Tomogram::projectPoint`` (src/jaz/tomography/tomogram.cpp) projects a 3D particle position into a
-tilt image and, when the tomogram set declares deformations, displaces the resulting 2D point by a smooth field
-evaluated at that point.  Every crop RELION takes from a tilt image goes through it, so an extraction that skips
-the field is mis-centred by the local field value (tens of Angstrom on polished data).
+RELION's ``Tomogram::projectPoint`` (src/jaz/tomography/tomogram.cpp) displaces each projected 2D particle position
+by a smooth per-tilt field evaluated at that position.
 
 Where the model lives in the star files (``TomogramSet::loadTomogram``, tomogram_set.cpp):
 
@@ -12,9 +10,10 @@ Where the model lives in the star files (``TomogramSet::loadTomogram``, tomogram
   columns are present.
 * tilt-series star, one row per tilt: ``rlnTomoDeformationCoefficients``, a bracketed comma-separated list.
 
-The 2D point is in RELION's image frame: unbinned tilt-image pixels with the origin at the image corner, i.e.
-``p_px = p_centred_angst / pixel_size + (int(width / 2), int(height / 2))``.  The returned shift is in the same
-pixels.  ``image_size`` is the tilt-series stack size (``stackSize.xy()``), never ``rlnTomoSizeX/Y``.
+The field is evaluated in unbinned tilt-image pixels with the origin at the image corner,
+``p_px = p_centred_angst / pixel_size + (width / 2, height / 2)``: the same float centre the crop step uses.  (RELION
+centres on ``int(width / 2)``; on odd-sized stacks that moves the evaluation point by 0.5 px of a smooth field.)
+The returned shift is in the same pixels.  ``image_size`` is the tilt-series stack size (``stackSize.xy()``), never ``rlnTomoSizeX/Y``.
 
 Coefficient layouts (RELION ``RawImage`` is x-fastest, then y, then the third index):
 
@@ -155,26 +154,23 @@ class ImageDeformation:
     def __init__(self, model, image_size: tuple[int, int], pixel_size: float):
         self.model = model
         self.pixel_size = float(pixel_size)
-        # RELION's tilt_image_center: integer division (tomogram.cpp setProjectionMatrix)
-        self.origin_px = np.array([int(image_size[0] // 2), int(image_size[1] // 2)], dtype=float)
+        # the float centre the crop step uses (forwardprojection.get_particle_crop_and_visibility)
+        self.origin_px = np.array([image_size[0] / 2.0, image_size[1] / 2.0], dtype=float)
 
-    def shift_px(self, points_px: np.ndarray) -> np.ndarray:
-        return self.model.shift(points_px)
+    def __call__(self, points_angst: np.ndarray) -> np.ndarray:
+        """Deformed point(s): ``(2,)`` -> ``(2,)`` or ``(N, 2)`` -> ``(N, 2)``, centred Angstrom in and out."""
+        points_angst = np.asarray(points_angst, dtype=float)
+        p = np.atleast_2d(points_angst)
+        shifted = p + self.model.shift(p / self.pixel_size + self.origin_px) * self.pixel_size
+        return shifted.reshape(points_angst.shape)
 
-    def __call__(self, point_angst: np.ndarray) -> np.ndarray:
-        point_angst = np.asarray(point_angst, dtype=float)
-        p_px = point_angst / self.pixel_size + self.origin_px
-        return point_angst + self.model.shift(p_px)[0] * self.pixel_size
 
-
-def make_model(deformation_type: str, image_size, grid_size, coefficients):
-    if deformation_type == "spline":
-        return SplineDeformation(image_size, grid_size, coefficients)
-    if deformation_type == "linear":
-        return LinearDeformation(image_size, coefficients)
-    if deformation_type == "Fourier":
-        return FourierDeformation(image_size, grid_size, coefficients)
-    raise ValueError(f"illegal deformation type '{deformation_type}' (RELION knows {', '.join(TYPES)})")
+_MODELS = {
+    "spline": SplineDeformation,
+    "linear": lambda image_size, grid_size, coefficients: LinearDeformation(image_size, coefficients),
+    "Fourier": FourierDeformation,
+}
+assert tuple(_MODELS) == TYPES
 
 
 def has_deformations(tomogram_row: pd.Series) -> bool:
@@ -207,6 +203,15 @@ def build_deformations(
         )
     grid = (int(tomogram_row[GRID_X]), int(tomogram_row[GRID_Y]))
     return [
-        ImageDeformation(make_model(deformation_type, image_size, grid, coeffs), image_size, pixel_size)
+        ImageDeformation(_MODELS[deformation_type](image_size, grid, coeffs), image_size, pixel_size)
         for coeffs in tiltseries_df[COEFFICIENTS].tolist()
     ]
+
+
+def validate_deformations(tomogram_row: pd.Series, tiltseries_df: pd.DataFrame) -> None:
+    """Raise ``ValueError`` if this tilt series' deformation columns are unusable; run before extraction starts.
+
+    Builds every model at a nominal image size: the size scales a valid field but never decides validity (type,
+    coefficient column and per-row coefficient count), so this runs exactly the checks extraction will run.
+    """
+    build_deformations(tomogram_row, tiltseries_df, image_size=(2, 2), pixel_size=1.0)

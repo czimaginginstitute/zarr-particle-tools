@@ -15,6 +15,7 @@ from zarr_particle_tools.core.deformation import (
     SplineDeformation,
     build_deformations,
     parse_coefficients,
+    validate_deformations,
 )
 
 IMAGE = (4096, 4096)
@@ -112,7 +113,7 @@ def test_image_deformation_uses_relion_pixel_frame():
     model = SplineDeformation(IMAGE, GRID, nodes.ravel())
     px = 1.54
     d = ImageDeformation(model, IMAGE, px)
-    # centred-Angstrom point (0, 0) is RELION pixel (W//2, H//2) -> shift 5 px in x
+    # centred-Angstrom point (0, 0) is pixel (W/2, H/2) -> shift 5 px in x
     out = d(np.array([0.0, 0.0]))
     np.testing.assert_allclose(out, [5.0 * px, 0.0], atol=1e-9)
     # a point one quarter image to the left: pixel W/4 -> shift 2.5 px
@@ -137,3 +138,57 @@ def test_build_deformations_follows_relion_rules():
     # NaN grid size = column absent for this row (pandas fills missing cells with NaN)
     nan_row = pd.Series({"rlnTomoName": "t", GRID_X: np.nan, GRID_Y: np.nan, TYPE: "spline"})
     assert build_deformations(nan_row, ts, IMAGE, 1.0) is None
+
+
+def test_linear_float_centre_on_odd_image():
+    # RELION's Linear2DDeformationModel centres on 0.5 * imageSize (a float), also for odd sizes
+    m = LinearDeformation((401, 201), [0.5, 0.25, -1.0])
+    np.testing.assert_allclose(m.shift(np.array([[200.5, 100.5]])), [[0.0, 0.0]])
+    # r = (10, 4): (0.5 * 10, 0.25 * 10 - 1.0 * 4)
+    np.testing.assert_allclose(m.shift(np.array([[210.5, 104.5]])), [[5.0, -1.5]])
+
+
+def test_fourier_frequency_list_matches_relion_order():
+    # Fourier2DDeformationModel's constructor for a 4 x 4 grid, written out by hand in units of (pi/W, pi/H):
+    # y=0: x=1..2; y=1: x=0..2; y=2 -> (y - 4) = -2: x=1..2; y=3 -> -1: x=1..2
+    w, h = 400, 200
+    m = FourierDeformation((w, h), (4, 4), np.zeros(4 * 9))
+    expected = [(1, 0), (2, 0), (0, 1), (1, 1), (2, 1), (1, -2), (2, -2), (1, -1), (2, -1)]
+    np.testing.assert_allclose(m.freqs, np.array(expected) * [np.pi / w, np.pi / h])
+
+
+def test_fourier_nonzero_coefficients_closed_form():
+    # 2 x 2 grid on a 400 x 200 image: frequencies f0 = (pi/400, 0), f1 = (pi/400, -pi/200), n_freq = 2.
+    # RELION reads the coefficients as RawImage<dComplex>(n_freq, 2): dim 0 = c[0:4], dim 1 = c[4:8], and adds
+    # real * cos(f.p) + imag * sin(f.p).  The trailing values pad RELION's (gx/2 + 1) * gy * 2 complex vector and
+    # must not be read (a (gx/2 + 1) * gy stride would put dim 1 at c[8:]).
+    c = np.arange(1.0, 17.0)  # 1..8 used, 9..16 padding
+    m = FourierDeformation((400, 200), (2, 2), c)
+    p = np.array([[100.0, 50.0]])  # t0 = pi/4, t1 = pi/4 - pi/4 = 0
+    r = np.sqrt(0.5)
+    expected = [[1 * r + 2 * r + 3, 5 * r + 6 * r + 7]]
+    np.testing.assert_allclose(m.shift(p), expected, rtol=1e-12)
+
+
+def test_image_deformation_float_centre_and_batched_points():
+    # odd-sized stack: (0, 0) centred Angstrom sits at pixel (W/2, H/2) = (200.5, 100.5), the crop step's centre
+    px = 2.0
+    d = ImageDeformation(LinearDeformation((401, 201), [0.5, 0.25, -1.0]), (401, 201), px)
+    np.testing.assert_allclose(d(np.array([0.0, 0.0])), [0.0, 0.0], atol=1e-12)
+    pts = np.array([[0.0, 0.0], [20.0, 8.0], [-300.0, 44.0]])  # Angstrom
+    batched = d(pts)
+    assert batched.shape == pts.shape
+    np.testing.assert_allclose(batched, np.array([d(q) for q in pts]))
+    # (20, 8) A = (10, 4) px off centre -> shift (5, -1.5) px = (10, -3) A
+    np.testing.assert_allclose(batched[1], [20.0 + 10.0, 8.0 - 3.0])
+
+
+def test_validate_deformations_matches_build_checks():
+    ts = pd.DataFrame({"rlnMicrographName": ["1@a.mrcs", "2@a.mrcs"]})
+    row = pd.Series({"rlnTomoName": "t", GRID_X: 3, GRID_Y: 3, TYPE: "spline"})
+    ts[COEFFICIENTS] = ["[" + ",".join(["0"] * 72) + "]", "[" + ",".join(["0"] * 71) + "]"]
+    with pytest.raises(ValueError, match="72 coefficients"):
+        validate_deformations(row, ts)
+    ts[COEFFICIENTS] = ["[" + ",".join(["0"] * 72) + "]"] * 2
+    validate_deformations(row, ts)
+    validate_deformations(pd.Series({"rlnTomoName": "t"}), ts.drop(columns=COEFFICIENTS))  # no deformations

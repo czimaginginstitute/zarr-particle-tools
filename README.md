@@ -241,6 +241,9 @@ Polished RELION-5 projects can carry per-tilt 2D image deformations (tomo Bayesi
 position exactly as `relion_tomo_subtomo` does (spline, linear and Fourier models), on top of any
 `--trajectories-starfile` motion; pass `--ignore-deformations` to extract without them. Skipping them on a
 project that was refined with them mis-centres the crops by the local field value, typically tens of Å.
+`zarr-particle-reconstruct local` / `copick-local` extract through the same step, so they apply deformations
+too and take the same flag (reconstruction parity against `relion_tomo_reconstruct_particle` on deformed data is
+not yet tested).
 
 From the portal without first materializing the tilt series locally:
 
@@ -374,9 +377,6 @@ If you would like to see a feature added, on or off this list, please open an is
 - Does not support whitening (power spectral flattening)
 - Does not support anisotropic magnification matrices (`EMDL_IMAGE_MAG_MATRIX_00`,
   `EMDL_IMAGE_MAG_MATRIX_01`, `EMDL_IMAGE_MAG_MATRIX_10`, `EMDL_IMAGE_MAG_MATRIX_11`)
-- Does not support 2D deformations (`EMDL_TOMO_DEFORMATION_GRID_SIZE_X`,
-  `EMDL_TOMO_DEFORMATION_GRID_SIZE_Y`, `EMDL_TOMO_DEFORMATION_TYPE`,
-  `EMDL_TOMO_DEFORMATION_COEFFICIENTS`)
 - Does not support `--only_do_unfinished`
 
 ### Extraction

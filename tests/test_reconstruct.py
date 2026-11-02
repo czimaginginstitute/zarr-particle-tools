@@ -243,3 +243,61 @@ def test_reconstruct_keeps_zero_padded_names(tmp_path):
 
     relion_dir = data_root / "Reconstruct/relion_output_baseline"
     assert mrc_close_unmasked(relion_dir / "merged.mrc", output_dir / "merged.mrc", ulp_factor=DEFAULT_ULP_FACTOR)
+
+
+def test_reconstruct_deformation_equals_trajectory(tmp_path):
+    # reconstruct extracts through the same step as extract, so a constant spline shift of s pixels must give the
+    # same map as the per-tilt 3D trajectory that moves every projection by s (see the extract version of this test)
+    from tests.test_extract import _synthetic_names, _write_deformed_project, _write_trajectories
+    from zarr_particle_tools.core.forwardprojection import calculate_projection_matrix_from_starfile_df
+
+    data_root = DATASET_CONFIGS["synthetic"]["data_root"]
+    names = _synthetic_names(data_root)
+    tilt_df = starfile.read(data_root / "tiltseries" / "TS_1.star")
+    pixel_size = float(starfile.read(data_root / "tomograms.star")["rlnTomoTiltSeriesPixelSize"].iloc[0])
+    shift_px = np.array([6.3, -4.1])
+    nodes = np.zeros((2, 3, 3, 4))
+    nodes[0, :, :, 0], nodes[1, :, :, 0] = shift_px
+    _write_deformed_project(tmp_path / "deformed", data_root, "spline", (3, 3), [nodes.ravel()] * len(tilt_df), names)
+
+    trajectory = []
+    for matrix in calculate_projection_matrix_from_starfile_df(tilt_df):
+        a = matrix[:2, :3]
+        trajectory.append(a.T @ np.linalg.solve(a @ a.T, shift_px * pixel_size))
+    _write_trajectories(tmp_path / "motion.star", names, [np.array(trajectory)] * len(names))
+
+    particles = tmp_path / "deformed" / "particles.star"
+    deformed = dict(
+        tiltseries_relative_dir=tmp_path / "deformed", tomograms_starfile=tmp_path / "deformed" / "tomograms.star"
+    )
+    undeformed = dict(tiltseries_relative_dir=data_root, tomograms_starfile=data_root / "tomograms.star")
+    reconstruct_local(box_size=64, output_dir=tmp_path / "deformation", particles_starfile=particles, **deformed)
+    reconstruct_local(
+        box_size=64, output_dir=tmp_path / "ignored", particles_starfile=particles, ignore_deformations=True, **deformed
+    )
+    reconstruct_local(
+        box_size=64,
+        output_dir=tmp_path / "trajectory",
+        particles_starfile=particles,
+        trajectories_starfile=tmp_path / "motion.star",
+        **undeformed,
+    )
+    reconstruct_local(box_size=64, output_dir=tmp_path / "plain", particles_starfile=particles, **undeformed)
+
+    maps = {
+        name: _read_mrc(tmp_path / name / "merged.mrc") for name in ("deformation", "ignored", "trajectory", "plain")
+    }
+    scale = np.abs(maps["trajectory"]).max()
+    np.testing.assert_allclose(maps["deformation"], maps["trajectory"], atol=1e-5 * scale)
+    np.testing.assert_array_equal(maps["ignored"], maps["plain"])
+    assert not np.allclose(maps["deformation"], maps["plain"], atol=1e-2 * scale)
+
+
+@pytest.mark.parametrize("module", ["subtomo_extract", "subtomo_reconstruct"])
+def test_ignore_deformations_flag_only_on_local_commands(module):
+    import importlib
+
+    group = importlib.import_module(f"zarr_particle_tools.{module}").cli
+    for name, command in group.commands.items():
+        has_flag = any("--ignore-deformations" in param.opts for param in command.params)
+        assert has_flag == (name in ("local", "copick-local")), name

@@ -547,7 +547,7 @@ def _synthetic_names(data_root):
     return [f"session1_TS_1/{i}" for i in range(1, n + 1)]
 
 
-def _random_deformation(deformation_type, n_tilts, image, rng):
+def _random_deformation(deformation_type, n_tilts, rng):
     """(grid, per-tilt coefficient rows) with shifts of a few pixels, different in every tilt."""
     if deformation_type == "spline":
         grid = (3, 3)
@@ -635,6 +635,28 @@ def test_extract_deformation_equals_trajectory(tmp_path):
     assert n_differ == len(names)
 
 
+def test_extract_validates_deformations_before_writing(tmp_path, monkeypatch):
+    # a malformed coefficient row fails the run before the worker pool starts, so no tomogram writes output
+    import zarr_particle_tools.subtomo_extract as subtomo_extract
+
+    def no_pool(*args, **kwargs):
+        raise AssertionError("worker pool started before the deformations were validated")
+
+    monkeypatch.setattr(subtomo_extract.mp, "get_context", no_pool)
+    data_root = DATASET_CONFIGS["synthetic"]["data_root"]
+    n_tilts = len(starfile.read(data_root / "tiltseries" / "TS_1.star"))
+    rows = [np.zeros(72)] * (n_tilts - 1) + [np.zeros(71)]  # 3x3 spline needs 72
+    _write_deformed_project(tmp_path / "deformed", data_root, "spline", (3, 3), rows, _synthetic_names(data_root))
+    with pytest.raises(ValueError, match="72 coefficients"):
+        extract_subtomograms(
+            box_size=64,
+            output_dir=tmp_path / "out",
+            particles_starfile=tmp_path / "deformed" / "particles.star",
+            tiltseries_relative_dir=tmp_path / "deformed",
+            tomograms_starfile=tmp_path / "deformed" / "tomograms.star",
+        )
+
+
 @pytest.mark.skipif(shutil.which("relion_tomo_subtomo") is None, reason="relion_tomo_subtomo not on PATH")
 @pytest.mark.parametrize("deformation_type", ["spline", "linear", "Fourier"])
 def test_extract_with_deformations_matches_relion(tmp_path, deformation_type):
@@ -643,7 +665,7 @@ def test_extract_with_deformations_matches_relion(tmp_path, deformation_type):
     names = _synthetic_names(data_root)
     n_tilts = len(starfile.read(data_root / "tiltseries" / "TS_1.star"))
     rng = np.random.default_rng({"spline": 1, "linear": 2, "Fourier": 3}[deformation_type])
-    grid, rows = _random_deformation(deformation_type, n_tilts, (630, 630), rng)
+    grid, rows = _random_deformation(deformation_type, n_tilts, rng)
     _write_deformed_project(tmp_path, data_root, deformation_type, grid, rows, names)
 
     relion_args = ["--p", "particles.star", "--t", "tomograms.star", "--o", "relion/"]
