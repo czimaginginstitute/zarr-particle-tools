@@ -412,25 +412,6 @@ def _optics_from_tomograms_star(tomograms_star: Path):
     return df[OPTICS_DF_COLUMNS].drop_duplicates().reset_index(drop=True)
 
 
-def _check_copick_run_mapping(
-    copick_run_names: list[str], optics_df, tomograms_label: str = "the tomograms.star"
-) -> None:
-    """Fail unless each copick run maps to its own optics row by ``copick_run_optics_rows``, the rule
-    ``copick_picks_to_starfile`` applies. A single optics row is applied to every run."""
-    if len(optics_df) == 1:
-        return
-    rows = {str(r): copick_generate.copick_run_optics_rows(optics_df, str(r)).index.tolist() for r in copick_run_names}
-    unresolved = [r for r, matched in rows.items() if len(matched) != 1]
-    claimed = [matched[0] for matched in rows.values() if len(matched) == 1]
-    shared = sorted(r for r, matched in rows.items() if len(matched) == 1 and claimed.count(matched[0]) > 1)
-    if unresolved or shared:
-        raise click.ClickException(
-            f"Cannot map copick run name(s) {(unresolved or shared)[:5]} onto the {len(optics_df)} optics row(s) in "
-            f"{tomograms_label}. Each run must match exactly one row, its own: by rlnOpticsGroupName or rlnTomoName, "
-            "or, for a Data Portal run ID, by the run_<id>_ prefix of rlnOpticsGroupName."
-        )
-
-
 def orchestrate_local(
     output_dir: Path,
     cfg: Py2RelyConfig,
@@ -479,15 +460,17 @@ def orchestrate_copick_local(
         copick_run_names = [p.run.name for p in picks]
 
     optics_df = _optics_from_tomograms_star(tomograms_star)
-    _check_copick_run_mapping(copick_run_names, optics_df, str(tomograms_star))
-    particles_df = copick_generate.copick_picks_to_starfile(
-        copick_config,
-        copick_name,
-        copick_session_id,
-        copick_user_id,
-        copick_run_names,
-        optics_df,
-    )
+    try:
+        particles_df = copick_generate.copick_picks_to_starfile(
+            copick_config,
+            copick_name,
+            copick_session_id,
+            copick_user_id,
+            copick_run_names,
+            optics_df,
+        )
+    except ValueError as exc:
+        raise click.ClickException(f"{tomograms_star}: {exc}") from exc
     particles_star = input_dir / "particles.star"
     starfile.write({"optics": optics_df, "particles": particles_df}, particles_star)
     logger.info("Generated %s with %d particles.", particles_star, len(particles_df))

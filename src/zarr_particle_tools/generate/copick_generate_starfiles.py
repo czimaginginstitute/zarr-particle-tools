@@ -85,6 +85,7 @@ def copick_picks_to_starfile(
     picks = get_copick_picks(copick_config, copick_name, copick_session_id, copick_user_id, copick_run_names)
 
     dfs = []
+    row_runs = {}  # optics row -> the run that maps to it
     for pick in picks:
         # particle coordinates/orientation columns are already provided, just need to add rlnTomoName, rlnOpticsGroupName, rlnOpticsGroup
         df = pick.df(format="relion")
@@ -101,6 +102,12 @@ def copick_picks_to_starfile(
                     f"Multiple matching optics groups found for {pick.run.name}: {optics_df_matches['rlnOpticsGroupName'].values}"
                 )
             optics_entry = optics_df_matches.iloc[0]
+            other = row_runs.setdefault(optics_df_matches.index[0], pick.run.name)
+            if other != pick.run.name:
+                raise ValueError(
+                    f"Copick runs {other} and {pick.run.name} both match optics group "
+                    f"{optics_entry['rlnOpticsGroupName']}; each run must match its own"
+                )
 
         df["rlnOpticsGroupName"] = optics_entry["rlnOpticsGroupName"]
         df["rlnOpticsGroup"] = optics_entry["rlnOpticsGroup"]
