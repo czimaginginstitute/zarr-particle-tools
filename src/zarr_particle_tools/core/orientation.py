@@ -7,10 +7,11 @@ RELION keeps two rotations per particle (``src/jaz/tomography/particle_set.cpp``
   particle is expressed in, e.g. the filament frame of a helical pick;
 - ``A_part``, from ``rlnAngle{Rot,Tilt,Psi}`` (``ParticleSet::getParticleMatrix``): the pose within that frame.
 
-Each is ``Euler::anglesToMatrix3`` of its angles (``src/jaz/math/Euler_angles_relion.h``), and the identity when its
-Rot column is absent; with Rot present, a missing Tilt or Psi reads as 0. The particle's full orientation, the map from particle to tomogram coordinates, is
-``A = A_sub · A_part`` (``ParticleSet::getMatrix3x3``). ``A_sub`` also takes the origin offsets into tomogram
-coordinates: the particle sits at ``coordinate - A_sub · origin`` (``ParticleSet::getPosition``).
+Each is ``Euler::anglesToMatrix3`` of its angles (``src/jaz/math/Euler_angles_relion.h``), and the identity when
+its Rot column is absent; with Rot present, a missing Tilt or Psi reads as 0. The particle's full orientation, the
+map from particle to tomogram coordinates, is ``A = A_sub · A_part`` (``ParticleSet::getMatrix3x3``). ``A_sub``
+also takes the origin offsets into tomogram coordinates: the particle sits at ``coordinate - A_sub · origin``
+(``ParticleSet::getPosition``).
 """
 
 import numpy as np

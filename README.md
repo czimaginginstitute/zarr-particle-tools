@@ -412,11 +412,9 @@ reconstruction this covers the options listed below, a non-empty `other_args` an
 for every job, tilt series it cannot read. Particle reconstruction writes the maps only, like RELION's; the
 internal extraction it runs is removed with its star files.
 
-Subtomogram orientations (`rlnTomoSubtomogramRot`, `rlnTomoSubtomogramTilt`, `rlnTomoSubtomogramPsi`, e.g.
-the filament frame of helical picks) are applied as RELION applies them. Extraction carries them, and every
-other particle column (helical tube IDs, track lengths, priors, flip ratios), through to `particles.star`; the
-2D stacks depend on them only through the origin offsets, which are rotated into the tomogram as
-`coordinate - A_sub · origin`. Reconstruction projects with `A_sub · A_part`.
+Subtomogram orientations (`rlnTomoSubtomogram*`, e.g. a filament frame) are applied as RELION applies them:
+extraction rotates the origin offsets by `A_sub` and carries every particle column through to `particles.star`;
+reconstruction projects with `A_sub · A_part`.
 
 ### Extraction and reconstruction
 
