@@ -114,17 +114,17 @@ def get_tomo_name(run_id: int, tiltseries_id: int, alignment_id: int, voxel_spac
     return f"run_{run_id}_tiltseries_{tiltseries_id}_alignment_{alignment_id}_spacing_{voxel_spacing_id}"
 
 
-def get_unbinned_tomo_size(binned_size: int, binning: float, is_z: bool = False) -> int:
+def get_tomo_size_at_tiltseries_pixel_size(binned_size: int, binning: float, is_z: bool = False) -> int:
     """
-    Bin-1 tomogram size in tilt-series pixels (rlnTomoSize*) for a tomogram dimension at the given binning.
+    rlnTomoSize* for one tomogram dimension: its voxel count rescaled to voxel spacing = tilt-series pixel size.
     Returns the even size that RELION's reconstruct bins back to binned_size (X/Y round, Z truncates), so
     RELION's int(size / 2) projection centre equals the size / 2.0 used for centred coordinates.
     The round trip is exact for binning >= 2.
     """
-    unbinned_size = binned_size * binning
+    size = binned_size * binning
     if is_z:
-        return 2 * math.ceil(unbinned_size / 2 - 1e-6)
-    return 2 * round(unbinned_size / 2)
+        return 2 * math.ceil(size / 2 - 1e-6)
+    return 2 * round(size / 2)
 
 
 # ====================== file validation, reading, data extraction helpers ======================

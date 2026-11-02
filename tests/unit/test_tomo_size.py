@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 import zarr_particle_tools.generate.cdp_generate_starfiles as cdp_generate
-from zarr_particle_tools.core.helpers import get_unbinned_tomo_size
+from zarr_particle_tools.core.helpers import get_tomo_size_at_tiltseries_pixel_size
 
 
 @pytest.mark.parametrize(
@@ -30,22 +30,22 @@ from zarr_particle_tools.core.helpers import get_unbinned_tomo_size
         (200, 10.0, 10.0, True, 200),
     ],
 )
-def test_unbinned_tomo_size(binned_size, voxel_spacing, tilt_pixel_size, is_z, expected):
-    assert get_unbinned_tomo_size(binned_size, voxel_spacing / tilt_pixel_size, is_z=is_z) == expected
+def test_tomo_size_at_tiltseries_pixel_size(binned_size, voxel_spacing, tilt_pixel_size, is_z, expected):
+    assert get_tomo_size_at_tiltseries_pixel_size(binned_size, voxel_spacing / tilt_pixel_size, is_z=is_z) == expected
 
 
 @pytest.mark.parametrize("binning", [2.0, 2.5, 3.0, 4.0, 10.012 / 1.54, 10.0 / 1.35, 8.0, 15.3])
-def test_unbinned_tomo_size_relion_round_trip(binning):
+def test_tomo_size_at_tiltseries_pixel_size_relion_round_trip(binning):
     """Even sizes that RELION's reconstruct (reconstruct_tomogram.cpp) bins back to the tomogram dims."""
     for n in range(1, 2000):
-        w = get_unbinned_tomo_size(n, binning)
-        d = get_unbinned_tomo_size(n, binning, is_z=True)
+        w = get_tomo_size_at_tiltseries_pixel_size(n, binning)
+        d = get_tomo_size_at_tiltseries_pixel_size(n, binning, is_z=True)
         assert w % 2 == 0 and d % 2 == 0
         assert int(w / binning + 0.5) == n  # w1 = w / spacing + 0.5
         assert int(d / binning) == n  # t1 = d / spacing
 
 
-def test_get_tomograms_df_writes_unbinned_sizes(monkeypatch):
+def test_get_tomograms_df_writes_sizes_at_tiltseries_pixel_size(monkeypatch):
     tomo_name = "run_16463_tiltseries_16106_alignment_17015_spacing_16666"
     optics_df = pd.DataFrame(
         [
