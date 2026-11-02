@@ -684,6 +684,10 @@ def parse_extract_copick_local_subtomograms(
         tuple: particles_starfile, trajectories_starfile, tiltseries_relative_dir, tomograms_starfile, optimisation_set_starfile
     """
     start_time = time.time()
+    if tomograms_starfile is None:
+        raise ValueError("Copick extraction needs a tomograms star file (--tomograms-starfile).")
+    if not Path(tomograms_starfile).exists():
+        raise FileNotFoundError(f"Tomograms star file {tomograms_starfile} does not exist.")
     if copick_run_names is None:
         picks = get_copick_picks(copick_config, copick_name, copick_session_id, copick_user_id, copick_run_names)
         copick_run_names = [p.run.name for p in picks]

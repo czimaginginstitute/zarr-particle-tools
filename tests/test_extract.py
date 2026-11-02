@@ -732,6 +732,25 @@ def test_copick_extraction_and_reconstruction_refuse_bad_inputs_before_writing(t
         assert not (output_dir / "Subtomograms").exists()
 
 
+def test_copick_without_tomograms_star_names_it(tmp_path):
+    # refused before the picks or the star are read
+    copick = {
+        "copick_config": tmp_path / "absent.json",
+        "copick_name": "ribosome",
+        "copick_session_id": "0",
+        "copick_user_id": "test",
+        "tomograms_starfile": None,
+    }
+    with pytest.raises(ValueError, match="tomograms star file"):
+        parse_extract_copick_local_subtomograms(box_size=64, output_dir=tmp_path / "extract", **copick)
+    with pytest.raises(ValueError, match="tomograms star file"):
+        reconstruct_copick_local(box_size=64, output_dir=tmp_path / "reconstruct", **copick)
+    with pytest.raises(FileNotFoundError, match="absent.star"):
+        parse_extract_copick_local_subtomograms(
+            box_size=64, output_dir=tmp_path / "extract", **{**copick, "tomograms_starfile": tmp_path / "absent.star"}
+        )
+
+
 @pytest.mark.parametrize("overwrite", [True, False])
 @pytest.mark.parametrize("kind", ["local", "copick"])
 def test_refused_extraction_leaves_output_untouched(tmp_path, monkeypatch, kind, overwrite):
