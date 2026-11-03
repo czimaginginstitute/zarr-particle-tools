@@ -13,7 +13,8 @@ Where the model lives in the star files (``TomogramSet::loadTomogram``, tomogram
 The field is evaluated in unbinned tilt-image pixels with the origin at the image corner,
 ``p_px = p_centred_angst / pixel_size + (width / 2, height / 2)``: the same float centre the crop step uses.  (RELION
 centres on ``int(width / 2)``; on odd-sized stacks that moves the evaluation point by 0.5 px of a smooth field.)
-The returned shift is in the same pixels.  ``image_size`` is the tilt-series stack size (``stackSize.xy()``), never ``rlnTomoSizeX/Y``.
+The returned shift is in the same pixels.  ``image_size`` is the tilt-series stack size (``stackSize.xy()``),
+never ``rlnTomoSizeX/Y``.
 
 Coefficient layouts (RELION ``RawImage`` is x-fastest, then y, then the third index):
 

@@ -428,6 +428,52 @@ def test_extract_copick_local_flattens_run_names_and_dispatches(tmp_path, monkey
     assert seen["box_size"] == 32
 
 
+@pytest.mark.parametrize("ignore", [False, True], ids=["default", "ignore"])
+@pytest.mark.parametrize("command", ["extract", "reconstruct"])
+def test_copick_local_forwards_ignore_deformations(tmp_path, monkeypatch, command, ignore):
+    """--ignore-deformations must reach extract_subtomograms from both copick-local commands; a dropped kwarg
+    on the way silently falls back to applying the deformations."""
+    import zarr_particle_tools.subtomo_reconstruct as reconstruct
+
+    out = tmp_path / "out"
+    out.mkdir()
+    tomograms = _write_tomograms_star(tmp_path / "tomograms.star", n=1, tomo_names=("tomo1",))
+    seen = {}
+    monkeypatch.setattr(
+        extract,
+        "validate_and_setup",
+        lambda **k: (out, None, None, k.get("tiltseries_relative_dir"), tomograms, None),
+    )
+    monkeypatch.setattr(extract, "copick_picks_to_starfile", lambda *a, **k: pd.DataFrame({"rlnTomoName": ["tomo1"]}))
+    monkeypatch.setattr(extract, "extract_subtomograms", lambda **k: seen.update(k) or (0, 0, 0))
+    monkeypatch.setattr(reconstruct, "reconstruct", lambda **k: None)
+
+    group = extract.cli if command == "extract" else reconstruct.cli
+    args = [
+        "copick-local",
+        "--copick-config",
+        str(_touch(tmp_path / "cfg.json")),
+        "--copick-name",
+        "ribosome",
+        "--copick-session-id",
+        "1",
+        "--copick-user-id",
+        "octopi",
+        "--copick-run-names",
+        "tomo1",
+        "--tomograms-starfile",
+        str(tomograms),
+        "--box-size",
+        "32",
+        "--output-dir",
+        str(out),
+    ] + (["--ignore-deformations"] if ignore else [])
+    result = CliRunner().invoke(group, args, catch_exceptions=False)
+
+    assert result.exit_code == 0, result.output
+    assert seen["ignore_deformations"] is ignore
+
+
 def test_extract_copick_data_portal_flattens_dataset_ids(tmp_path, monkeypatch):
     seen = {}
     monkeypatch.setattr(extract, "parse_extract_data_portal_copick_subtomograms", lambda **k: seen.update(k))
