@@ -10,7 +10,7 @@ import pytest
 
 import zarr_particle_tools.generate.cdp_cache as cdp_cache
 import zarr_particle_tools.generate.cdp_import_starfiles as cdp_import
-from zarr_particle_tools.core.helpers import get_tomo_name, get_unbinned_tomo_size, project_relative
+from zarr_particle_tools.core.helpers import get_tomo_name, project_relative
 from zarr_particle_tools.generate.portal_selection import (
     RunSelection,
     Section,
@@ -69,19 +69,6 @@ def test_tomograms_table(tmp_path, monkeypatch):
     assert row["tomoTomogramURI"] == "s3://b/16848/t.zarr"
     generator = cdp_import.get_tomograms_df([run(16848)], tmp_path / "proj" / "input", tmp_path / "proj")
     assert generator.iloc[0]["rlnTomoTiltSeriesStarFile"].startswith("input/tiltseries/")
-
-
-@pytest.mark.parametrize(
-    "binned, binning, is_z, expected",
-    [
-        (1022, 4.0, False, 4088),
-        (400, 4.0, True, 1600),
-        (630, 10.012 / 1.54, False, 4096),
-        (184, 10.012 / 1.54, True, 1198),
-    ],
-)
-def test_unbinned_tomo_size(binned, binning, is_z, expected):
-    assert get_unbinned_tomo_size(binned, binning, is_z) == expected
 
 
 def test_one_placeholder_per_image_size():
@@ -252,8 +239,8 @@ def test_settle_reports_null_portal_fields(monkeypatch, overrides, field):
     assert problem.status == "ineligible" and field in problem.reason
 
 
-def test_settle_writes_unbinned_tomo_size(monkeypatch):
-    """A 630 x 630 x 184 tomogram at 10.012 A over 1.54 A tilt pixels (RELION's unit: unbinned tilt pixels)."""
+def test_settle_writes_tomo_size_at_tiltseries_pixel_size(monkeypatch):
+    """A 630 x 630 x 184 tomogram at 10.012 A over 1.54 A tilt pixels, as #120's get_tomograms_df test."""
     chosen = _portal(
         monkeypatch,
         tomogram={"voxel_spacing": 10.012, "size_x": 630, "size_y": 630, "size_z": 184},

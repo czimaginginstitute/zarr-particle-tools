@@ -22,7 +22,7 @@ import cryoet_data_portal as cdp
 
 import zarr_particle_tools.generate.cdp_cache as cdp_cache
 from zarr_particle_tools.core.constants import TOMOGRAM_TYPES
-from zarr_particle_tools.core.helpers import get_tomo_name, get_unbinned_tomo_size
+from zarr_particle_tools.core.helpers import get_tomo_name, get_tomo_size_at_tiltseries_pixel_size
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,7 @@ class RunSelection:
     voltage_kv: float
     spherical_aberration_mm: float
     tomogram_size: tuple[int, int, int]  # voxels at ``voxel_spacing``
-    rln_tomo_size: tuple[int, int, int]  # unbinned tilt-series pixels (rlnTomoSizeX/Y/Z)
+    rln_tomo_size: tuple[int, int, int]  # at voxel spacing = tilt-series pixel size (rlnTomoSizeX/Y/Z)
     tiltseries_uri: str
     tomogram_uri: str
     sections: list[Section] = field(default_factory=list)
@@ -411,7 +411,8 @@ def _settle(chosen: list[tuple[cdp.Run, cdp.Tomogram]]) -> tuple[list[RunSelecti
                 spherical_aberration_mm=ts.spherical_aberration_constant,
                 tomogram_size=tomogram_size,
                 rln_tomo_size=tuple(
-                    get_unbinned_tomo_size(n, binning, is_z=(i == 2)) for i, n in enumerate(tomogram_size)
+                    get_tomo_size_at_tiltseries_pixel_size(n, binning, is_z=(i == 2))
+                    for i, n in enumerate(tomogram_size)
                 ),
                 tiltseries_uri=ts.s3_omezarr_dir,
                 tomogram_uri=tomogram.s3_omezarr_dir,

@@ -90,7 +90,7 @@ def test_resolve_one_run():
     assert selection.status == "eligible"
     (run,) = selection.runs
     assert (run.dataset_id, run.tomogram_id, run.alignment_id, run.voxel_spacing_id) == (10426, 21114, 17772, 17051)
-    # RELION's unit: unbinned tilt pixels (1022x1440x400 voxels at 8.66 A, tilt pixel 2.165 A)
+    # at voxel spacing = tilt-series pixel size (1022x1440x400 voxels at 8.66 A, tilt pixel 2.165 A)
     assert run.rln_tomo_size == (4088, 5760, 1600)
     assert run.tomogram_size == (1022, 1440, 400)
     assert run.tomo_name == TOMO

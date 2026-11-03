@@ -127,17 +127,6 @@ def get_tomo_size_at_tiltseries_pixel_size(binned_size: int, binning: float, is_
     return 2 * round(size / 2)
 
 
-def get_unbinned_tomo_size(binned_size: int, binning: float, is_z: bool = False) -> int:
-    """
-    Bin-1 tomogram size in tilt-series pixels (rlnTomoSize*) for a tomogram dimension at the given binning: the even
-    size that RELION's reconstruct bins back to ``binned_size`` (X/Y round, Z truncates).
-    """
-    unbinned_size = binned_size * binning
-    if is_z:
-        return 2 * math.ceil(unbinned_size / 2 - 1e-6)
-    return 2 * round(unbinned_size / 2)
-
-
 def project_relative(path: str | Path, project_dir: str | Path | None = None) -> str:
     """``path`` relative to ``project_dir`` (default: the working directory) when it is inside it, else absolute."""
     path = Path(path).absolute()

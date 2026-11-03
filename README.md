@@ -330,8 +330,8 @@ For each run the import resolves **one tomogram**, which fixes the alignment and
   `--tomogram-software`, `--reconstruction-method` and `--voxel-spacing`, or pinned with `--tomogram-ids`.
   A run with several matching tomograms is refused with the candidates listed.
 - The tables come from the same builder as `zarr-particle-tomograms`: `rlnTomoName` is
-  `run_<id>_tiltseries_<id>_alignment_<id>_spacing_<id>`, one optics group per tilt series, `rlnTomoSizeX/Y/Z` in
-  unbinned tilt-series pixels, `rlnTomoImportFractionalDose` from the portal's exposure dose and
+  `run_<id>_tiltseries_<id>_alignment_<id>_spacing_<id>`, one optics group per tilt series, `rlnTomoSizeX/Y/Z` at
+  voxel spacing = tilt-series pixel size, `rlnTomoImportFractionalDose` from the portal's exposure dose and
   `rlnTomoTomogramBinning`. STAR paths are relative to the working directory (the project).
 - A section that cannot be written (excluded by the alignment, e.g. an AreTomo dark frame, or with an incomplete
   CTF, alignment or dose record) keeps its source index in `N@placeholder` and is listed with its reason in
