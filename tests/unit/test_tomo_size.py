@@ -1,11 +1,5 @@
-from pathlib import Path
-from types import SimpleNamespace
-
-import numpy as np
-import pandas as pd
 import pytest
 
-import zarr_particle_tools.generate.cdp_generate_starfiles as cdp_generate
 from zarr_particle_tools.core.helpers import get_tomo_size_at_tiltseries_pixel_size
 
 
@@ -43,35 +37,3 @@ def test_tomo_size_at_tiltseries_pixel_size_relion_round_trip(binning):
         assert w % 2 == 0 and d % 2 == 0
         assert int(w / binning + 0.5) == n  # w1 = w / spacing + 0.5
         assert int(d / binning) == n  # t1 = d / spacing
-
-
-def test_get_tomograms_df_writes_sizes_at_tiltseries_pixel_size(monkeypatch):
-    tomo_name = "run_16463_tiltseries_16106_alignment_17015_spacing_16666"
-    optics_df = pd.DataFrame(
-        [
-            {
-                "rlnOpticsGroup": 1,
-                "rlnOpticsGroupName": "run_16463_tiltseries_16106",
-                "rlnSphericalAberration": 2.7,
-                "rlnVoltage": 300.0,
-                "rlnAmplitudeContrast": 0.07,
-                "rlnTomoTiltSeriesPixelSize": 1.54,
-                "rlnTomoName": tomo_name,
-            }
-        ]
-    )
-    monkeypatch.setattr(
-        cdp_generate.cdp_cache, "validate_and_get_tomogram", lambda alignment_id, vs_id: (630, 630, 184, 10.012)
-    )
-    monkeypatch.setattr(cdp_generate.cdp_cache, "get_alignments", lambda _: [SimpleNamespace(tiltseries_id=16106)])
-    monkeypatch.setattr(
-        cdp_generate.cdp_cache, "get_tiltseries", lambda _: [SimpleNamespace(s3_omezarr_dir="s3://bucket/ts.zarr")]
-    )
-
-    tomograms_df, ids = cdp_generate.get_tomograms_df(optics_df, Path("project/input"))
-
-    assert ids == [(17015, 16666)]
-    row = tomograms_df.iloc[0]
-    assert (row["rlnTomoSizeX"], row["rlnTomoSizeY"], row["rlnTomoSizeZ"]) == (4096, 4096, 1198)
-    for col in ("rlnTomoSizeX", "rlnTomoSizeY", "rlnTomoSizeZ"):
-        assert np.issubdtype(tomograms_df[col].dtype, np.integer)

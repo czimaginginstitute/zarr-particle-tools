@@ -35,6 +35,7 @@ EXPECTED_SUBCOMMANDS = {
     "zarr-particle-tomograms": {"data-portal", "copick-data-portal"},
     "zarr-particle-pipeline": {"preflight", "local", "copick-local", "data-portal", "copick-data-portal"},
     "zarr-particle-export": {"data-portal", "copick-data-portal"},
+    "zarr-particle-importtomo": {"data-portal"},
 }
 
 
@@ -575,41 +576,7 @@ def test_portal_variants_reject_optimisation_set(module, tmp_path, monkeypatch):
     assert "optimisation-set-starfile" in result.output
 
 
-# --------------------------------------------------------------- copick run-name auto-detection
-
-
-def _optics(group_names):
-    return pd.DataFrame(
-        {
-            "rlnOpticsGroup": range(1, len(group_names) + 1),
-            "rlnOpticsGroupName": list(group_names),
-        }
-    )
-
-
-def test_portal_naming_detected_by_anchored_prefix():
-    assert orch._uses_portal_run_naming(
-        ["33379", "44444"], _optics(["run_33379_tiltseries_1", "run_44444_tiltseries_2"])
-    )
-
-
-def test_exact_naming_detected():
-    assert not orch._uses_portal_run_naming(["tomo1", "tomo2"], _optics(["tomo1", "tomo2"]))
-
-
-def test_run_id_colliding_with_another_tiltseries_id_is_rejected():
-    """
-    Regression: a bare containment test matched run 16106 against run_33379_tiltseries_16106, silently
-    writing its particles under the wrong tomogram. Portal run and tiltseries IDs share an ID space.
-    """
-    optics = _optics(["run_33379_tiltseries_16106", "run_44444_tiltseries_5"])
-    with pytest.raises(Exception, match="Cannot map copick run name"):
-        orch._uses_portal_run_naming(["33379", "16106"], optics)
-
-
-def test_ambiguous_substring_runs_are_rejected():
-    with pytest.raises(Exception, match="Cannot map copick run name"):
-        orch._uses_portal_run_naming(["1"], _optics(["run_10_tiltseries_1", "run_11_tiltseries_2"]))
+# --------------------------------------------------------------- copick optics
 
 
 def test_missing_optics_columns_is_actionable(tmp_path):

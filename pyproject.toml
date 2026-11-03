@@ -69,6 +69,7 @@ zarr-particle-reconstruct = "zarr_particle_tools.subtomo_reconstruct:cli"
 zarr-particle-ctfrefine = "zarr_particle_tools.subtomo_ctfrefine:cli"
 zarr-particle-polish = "zarr_particle_tools.subtomo_polish:cli"
 zarr-particle-tomograms = "zarr_particle_tools.generate_tomograms:cli"
+zarr-particle-importtomo = "zarr_particle_tools.importtomo:cli"
 zarr-particle-pipeline = "zarr_particle_tools.orchestrate:cli"
 zarr-particle-export = "zarr_particle_tools.export_project:cli"
 
@@ -77,6 +78,7 @@ zarr-particle-export = "zarr_particle_tools.export_project:cli"
 "zarrparticletools.reconstruct" = "zarr_particle_tools.pipeliner.subtomo_reconstruct_pipeliner_job:PythonRelionSubtomoReconstructJob"
 "zarrparticletools.ctfrefine" = "zarr_particle_tools.pipeliner.subtomo_ctfrefine_pipeliner_job:PythonRelionSubtomoCtfRefineJob"
 "zarrparticletools.polish" = "zarr_particle_tools.pipeliner.subtomo_polish_pipeliner_job:PythonRelionSubtomoPolishJob"
+"zarrparticletools.importtomo" = "zarr_particle_tools.pipeliner.importtomo_pipeliner_job:PythonPortalImportTomoJob"
 
 [tool.hatch.version]
 path = "src/zarr_particle_tools/__init__.py"

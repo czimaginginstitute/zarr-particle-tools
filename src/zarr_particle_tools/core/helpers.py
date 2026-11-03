@@ -127,6 +127,15 @@ def get_tomo_size_at_tiltseries_pixel_size(binned_size: int, binning: float, is_
     return 2 * round(size / 2)
 
 
+def project_relative(path: str | Path, project_dir: str | Path | None = None) -> str:
+    """``path`` relative to ``project_dir`` (default: the working directory) when it is inside it, else absolute."""
+    path = Path(path).absolute()
+    try:
+        return str(path.relative_to(Path(project_dir or Path.cwd()).absolute()))
+    except ValueError:
+        return str(path)
+
+
 # ====================== file validation, reading, data extraction helpers ======================
 
 

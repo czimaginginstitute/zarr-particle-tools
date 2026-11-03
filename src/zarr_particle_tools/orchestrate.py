@@ -412,47 +412,6 @@ def _optics_from_tomograms_star(tomograms_star: Path):
     return df[OPTICS_DF_COLUMNS].drop_duplicates().reset_index(drop=True)
 
 
-def _uses_portal_run_naming(
-    copick_run_names: list[str], optics_df, tomograms_label: str = "the tomograms.star"
-) -> bool:
-    """
-    Decide how copick run names map onto rlnOpticsGroupName: exactly (a locally-written
-    tomograms.star) or by containment (portal naming, e.g. run 33379 -> run_33379_tiltseries_16106).
-
-    Deliberately strict: every run must resolve by exactly one of the two schemes, and portal naming
-    additionally requires all-numeric run names, or we fail rather than guess.
-    """
-    group_names = list(optics_df["rlnOpticsGroupName"].astype(str))
-    if len(optics_df) == 1:
-        return False  # a single optics group is applied to everything, so naming is irrelevant
-    runs = [str(r) for r in copick_run_names]
-    if all(r in group_names for r in runs):
-        logger.info("Matching %d copick run(s) to optics groups by exact name.", len(runs))
-        return False
-
-    # anchored on the run_<id>_ prefix the portal generator emits: a bare substring test would let a
-    # run ID collide with another tomogram's tiltseries ID (both are 5-digit portal IDs)
-    def portal_matches(run: str) -> list:
-        return [g for g in group_names if g.startswith(f"run_{run}_")]
-
-    portal_style = all(r.isdigit() for r in runs) and all(len(portal_matches(r)) == 1 for r in runs)
-    injective = len({portal_matches(r)[0] for r in runs}) == len(runs) if portal_style else False
-    if portal_style and injective:
-        logger.info(
-            "Matching %d copick run(s) to optics groups by Data Portal run-ID naming (e.g. %s -> %s).",
-            len(runs),
-            runs[0],
-            portal_matches(runs[0])[0],
-        )
-        return True
-    unresolved = [r for r in runs if r not in group_names and len(portal_matches(r)) != 1] or runs
-    raise click.ClickException(
-        f"Cannot map copick run name(s) {unresolved[:5]} onto the {len(group_names)} optics group(s) in "
-        f"{tomograms_label}. Run names must either equal an rlnOpticsGroupName exactly, or be Data Portal "
-        "run IDs each matching the run_<id>_ prefix of exactly one distinct optics group."
-    )
-
-
 def orchestrate_local(
     output_dir: Path,
     cfg: Py2RelyConfig,
@@ -501,15 +460,17 @@ def orchestrate_copick_local(
         copick_run_names = [p.run.name for p in picks]
 
     optics_df = _optics_from_tomograms_star(tomograms_star)
-    particles_df = copick_generate.copick_picks_to_starfile(
-        copick_config,
-        copick_name,
-        copick_session_id,
-        copick_user_id,
-        copick_run_names,
-        optics_df,
-        data_portal_runs=_uses_portal_run_naming(copick_run_names, optics_df, str(tomograms_star)),
-    )
+    try:
+        particles_df = copick_generate.copick_picks_to_starfile(
+            copick_config,
+            copick_name,
+            copick_session_id,
+            copick_user_id,
+            copick_run_names,
+            optics_df,
+        )
+    except ValueError as exc:
+        raise click.ClickException(f"{tomograms_star}: {exc}") from exc
     particles_star = input_dir / "particles.star"
     starfile.write({"optics": optics_df, "particles": particles_df}, particles_star)
     logger.info("Generated %s with %d particles.", particles_star, len(particles_df))
