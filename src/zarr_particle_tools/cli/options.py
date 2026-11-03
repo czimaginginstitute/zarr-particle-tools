@@ -72,6 +72,16 @@ def extract_options():
     return compose_options(opts)
 
 
+def ignore_deformations_option(f):
+    """Local commands only: Data Portal tomograms stars never carry deformation columns."""
+    return click.option(
+        "--ignore-deformations",
+        is_flag=True,
+        help="Do not apply RELION-5 polish 2D image deformations (rlnTomoDeformation* columns); by default "
+        "they are applied whenever the tomograms star declares them, as RELION does.",
+    )(f)
+
+
 def local_options():
     opts = [
         click.option(

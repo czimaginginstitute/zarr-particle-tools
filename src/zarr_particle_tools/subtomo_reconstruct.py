@@ -571,6 +571,7 @@ def reconstruct_local(
     tomograms_starfile: str | Path = None,
     optimisation_set_starfile: str | Path = None,
     overwrite: bool = False,
+    ignore_deformations: bool = False,
 ):
     """
     Reconstruct a particle map from local tiltseries using RELION particles.
@@ -599,6 +600,7 @@ def reconstruct_local(
         tomograms_starfile=tomograms_starfile,
         optimisation_set_starfile=optimisation_set_starfile,
         overwrite=overwrite,
+        ignore_deformations=ignore_deformations,
     )
 
     reconstruct(
@@ -635,6 +637,7 @@ def reconstruct_copick_local(
     tiltseries_relative_dir: Path = None,
     tomograms_starfile: Path = None,
     overwrite: bool = False,
+    ignore_deformations: bool = False,
 ):
     """
     Reconstruct a particle map from local tiltseries using copick particles.
@@ -665,6 +668,7 @@ def reconstruct_copick_local(
         tiltseries_relative_dir=tiltseries_relative_dir,
         tomograms_starfile=tomograms_starfile,
         overwrite=overwrite,
+        ignore_deformations=ignore_deformations,
     )
 
     reconstruct(
@@ -813,6 +817,7 @@ def cli():
 @cli_options.local_shared_options()
 @cli_options.common_options()
 @cli_options.reconstruct_options()
+@cli_options.ignore_deformations_option
 def cmd_local(**kwargs):
     setup_logging(kwargs.pop("debug", False))
     reconstruct_local(**kwargs)
@@ -823,6 +828,7 @@ def cmd_local(**kwargs):
 @cli_options.copick_options()
 @cli_options.common_options()
 @cli_options.reconstruct_options()
+@cli_options.ignore_deformations_option
 def cmd_copick_local(**kwargs):
     setup_logging(debug=kwargs.pop("debug", False))
     kwargs["copick_run_names"] = cli_options.flatten(kwargs["copick_run_names"])

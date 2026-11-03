@@ -24,6 +24,7 @@ import zarr_particle_tools.generate.cdp_generate_starfiles as cdp_generate
 from zarr_particle_tools.core.constants import OPTICS_DF_COLUMNS
 from zarr_particle_tools.core.ctf import calculate_ctf
 from zarr_particle_tools.core.data import get_tiltseries_datareader
+from zarr_particle_tools.core.deformation import GRID_X, GRID_Y, TYPE, build_deformations, validate_deformations
 from zarr_particle_tools.core.dose import calculate_dose_weight_image
 from zarr_particle_tools.core.forwardprojection import (
     apply_offsets_to_coordinates,
@@ -103,6 +104,7 @@ def process_tiltseries(
     no_ic: bool,
     normalize_bin: bool,
     write_fourier: bool,
+    ignore_deformations: bool,
     output_dir: Path,
     filtered_particles_df: pd.DataFrame,
     filtered_trajectories_dict: dict,
@@ -147,8 +149,26 @@ def process_tiltseries(
     tiltseries_y = tiltseries_datareader.data.shape[1]
     logger.debug(f"Tiltseries data shape: {tiltseries_datareader.data.shape}, pixel size: {tiltseries_pixel_size}")
     projection_matrices = calculate_projection_matrix_from_starfile_df(individual_tiltseries_df)
+    # RELION-5 polish 2D deformations (Tomogram::projectPoint); applied unless --ignore-deformations
+    deformations = (
+        None
+        if ignore_deformations
+        else build_deformations(
+            tiltseries_row_entry, individual_tiltseries_df, (tiltseries_x, tiltseries_y), tiltseries_pixel_size
+        )
+    )
+    if deformations is not None:
+        logger.info(
+            f"{particles_tomo_name}: applying {tiltseries_row_entry[TYPE]} "
+            f"{int(tiltseries_row_entry[GRID_X])}x{int(tiltseries_row_entry[GRID_Y])} "
+            f"2D deformations to the {len(deformations)} tilt images"
+        )
     particles_to_tiltseries_coordinates = get_particles_to_tiltseries_coordinates(
-        filtered_particles_df, filtered_trajectories_dict, individual_tiltseries_df, projection_matrices
+        filtered_particles_df,
+        filtered_trajectories_dict,
+        individual_tiltseries_df,
+        projection_matrices,
+        deformations=deformations,
     )
     sections = individual_tiltseries_df["rlnMicrographName"].str.split("@").str[0].astype(int).tolist()
     section_to_section_index = {section: idx for idx, section in enumerate(sections)}
@@ -400,6 +420,7 @@ def extract_subtomograms(
     tiltseries_relative_dir: Path = None,
     trajectories_starfile: Path = None,
     debug: bool = False,
+    ignore_deformations: bool = False,
 ) -> tuple[int, int, int]:
     """
     Extracts subtomograms from a provided particles *.star file, tiltseries *.star file, and set of *.aln files.
@@ -478,11 +499,16 @@ def extract_subtomograms(
         "no_ic": no_ic,
         "normalize_bin": normalize_bin,
         "write_fourier": write_fourier,
+        "ignore_deformations": ignore_deformations,
         "tiltseries_relative_dir": tiltseries_relative_dir,
         "output_dir": output_dir,
         "debug": debug,
     }
     args_list = [{**args, **constant_args} for args in args_list if args is not None]
+    if not ignore_deformations:
+        # fail on a malformed deformation row before any worker writes output
+        for args in args_list:
+            validate_deformations(args["tiltseries_row_entry"], args["individual_tiltseries_df"])
 
     # do actual subtomogram extraction & .mrcs file creation here
     total_skipped_count = 0
@@ -551,6 +577,7 @@ def parse_extract_local_subtomograms(
     optimisation_set_starfile: Path = None,
     overwrite: bool = False,
     debug: bool = False,
+    ignore_deformations: bool = False,
 ) -> tuple[Path, Path, Path, Path, Path]:
     """
     Extracts subtomograms from local files using the provided parameters.
@@ -590,6 +617,7 @@ def parse_extract_local_subtomograms(
         no_ic=no_ic,
         normalize_bin=normalize_bin,
         write_fourier=write_fourier,
+        ignore_deformations=ignore_deformations,
         output_dir=output_dir,
         particles_starfile=particles_starfile,
         trajectories_starfile=trajectories_starfile,
@@ -634,6 +662,7 @@ def parse_extract_copick_local_subtomograms(
     overwrite: bool = False,
     dry_run: bool = False,
     debug: bool = False,
+    ignore_deformations: bool = False,
 ) -> tuple[Path, Path, Path, Path, Path]:
     """
     Extracts subtomograms from local files using copick picks and the provided parameters.
@@ -689,6 +718,7 @@ def parse_extract_copick_local_subtomograms(
         no_ic=no_ic,
         normalize_bin=normalize_bin,
         write_fourier=write_fourier,
+        ignore_deformations=ignore_deformations,
         dont_apply_offsets=dont_apply_offsets,
         output_dir=output_dir,
         particles_starfile=particles_path,
@@ -904,6 +934,7 @@ def cli():
 @cli_options.local_shared_options()
 @cli_options.common_options()
 @cli_options.extract_options()
+@cli_options.ignore_deformations_option
 def cmd_local(**kwargs):
     setup_logging(debug=kwargs.get("debug", False))
     parse_extract_local_subtomograms(**kwargs)
@@ -914,6 +945,7 @@ def cmd_local(**kwargs):
 @cli_options.copick_options()
 @cli_options.common_options()
 @cli_options.extract_options()
+@cli_options.ignore_deformations_option
 @cli_options.dry_run_option
 def cmd_copick_local(**kwargs):
     setup_logging(debug=kwargs.get("debug", False))
