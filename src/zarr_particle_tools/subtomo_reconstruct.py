@@ -546,10 +546,12 @@ def reconstruct(
         taper=taper,
     )
 
-    # remove bulky intermediate subtomograms; keep the star files (optimisation_set.star is a pipeliner output)
+    # like relion_tomo_reconstruct_particle, keep only the maps
     subtomos_dir = Path(output_dir) / "Subtomograms"
     if subtomos_dir.exists() and subtomos_dir.is_dir():
         shutil.rmtree(subtomos_dir)
+    for internal in ("particles.star", "optimisation_set.star"):
+        (Path(output_dir) / internal).unlink(missing_ok=True)
 
     end_time = time.time()
     logger.info(f"Reconstructing particles took {end_time - start_time:.2f} seconds.")
@@ -601,6 +603,7 @@ def reconstruct_local(
         optimisation_set_starfile=optimisation_set_starfile,
         overwrite=overwrite,
         ignore_deformations=ignore_deformations,
+        program="reconstruct",
     )
 
     reconstruct(
@@ -669,6 +672,7 @@ def reconstruct_copick_local(
         tomograms_starfile=tomograms_starfile,
         overwrite=overwrite,
         ignore_deformations=ignore_deformations,
+        program="reconstruct",
     )
 
     reconstruct(

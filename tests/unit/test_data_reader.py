@@ -78,12 +78,16 @@ def test_s3_mrc_is_staged_mapped_and_cleaned_up(tmp_path, monkeypatch):
     monkeypatch.setattr(
         data_module,
         "resolve_staging_dir",
-        lambda preferred, required_bytes: selected.update(preferred=preferred, required=required_bytes) or stage_root,
+        lambda preferred, required_bytes, require_ram: selected.update(
+            preferred=preferred, required=required_bytes, ram=require_ram
+        )
+        or stage_root,
     )
 
-    reader = DataReader("s3://example/tilt-series.mrc", staging_dir=stage_root)
+    reader = DataReader("s3://example/tilt-series.mrc", staging_dir=stage_root, require_ram=True)
     assert np.array_equal(reader.data, stack)
-    assert selected == {"preferred": stage_root, "required": source.stat().st_size}
+    assert selected == {"preferred": stage_root, "required": source.stat().st_size, "ram": True}
+    assert str(next(stage_root.glob("zpt-s3-mrc-*"))) in data_module._STAGING_DIRS
     staged_dirs = list(stage_root.glob("zpt-s3-mrc-*"))
     assert len(staged_dirs) == 1
     assert (staged_dirs[0] / "tilt-series.mrc").exists()
@@ -152,3 +156,27 @@ def test_staging_dir_fails_when_preferred_and_fallback_are_unusable(tmp_path, mo
 
     with pytest.raises(RuntimeError, match="No usable staging directory"):
         resolve_staging_dir(preferred_blocker / "child", required_bytes=1)
+
+
+def test_required_ram_staging_never_falls_back(tmp_path, monkeypatch):
+    fallback = tmp_path / "system-temp"
+    monkeypatch.setattr(data_module.tempfile, "gettempdir", lambda: str(fallback))
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("x")
+    with pytest.raises(RuntimeError, match="unusable .*RAM staging required"):
+        resolve_staging_dir(blocker / "shm", require_ram=True)
+    with pytest.raises(RuntimeError, match="not tmpfs; RAM staging required"):
+        resolve_staging_dir(tmp_path / "disk", require_ram=True)  # tmp_path is never tmpfs
+    assert not fallback.exists()
+    monkeypatch.setattr(data_module, "_fs_type", lambda _: "tmpfs")
+    assert resolve_staging_dir(tmp_path / "ram", require_ram=True) == tmp_path / "ram"
+
+
+def test_staging_dirs_are_removed_at_exit_unless_kept(tmp_path):
+    removed, kept, released = (data_module.make_staging_dir(tmp_path) for _ in range(3))
+    data_module.release_staging_dir(kept, keep=True)
+    data_module.release_staging_dir(released)
+    assert not released.exists()
+    data_module._remove_staging_dirs()  # what atexit and SIGTERM run
+    assert not removed.exists() and kept.exists()
+    assert not {str(removed), str(kept), str(released)} & data_module._STAGING_DIRS

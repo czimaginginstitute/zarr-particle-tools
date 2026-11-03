@@ -14,6 +14,8 @@ from pipeliner.nodes import (
 from pipeliner.pipeliner_job import ExternalProgram, PipelinerCommand, PipelinerJob
 from pipeliner.results_display_objects import ResultsDisplayObject
 
+from zarr_particle_tools.pipeliner import _common
+
 
 class PythonRelionSubtomoPolishJob(PipelinerJob):
     PROCESS_NAME = "zarrparticletools.polish"
@@ -26,14 +28,21 @@ class PythonRelionSubtomoPolishJob(PipelinerJob):
         self.jobinfo.display_name = "Bayesian polishing / frame alignment (Python)."
         self.jobinfo.short_desc = "Polish tilt series stored as OME-Zarr using zarr-particle-polish and stock RELION."
         self.joboptions = copy.deepcopy(TomoRelionBayesPolishJob().joboptions)
+        _common.add_staging_options(self)
 
     def create_output_nodes(self):
-        self.add_output_node("motion.star", NODE_TOMOTRAJECTORYDATA, ["relion", "tomo", "polish", "python"])
+        # shift-only alignment refines tilt shifts (tomograms.star) and writes no trajectories or particles
+        if self.joboptions["do_motion"].get_boolean():
+            self.add_output_node("motion.star", NODE_TOMOTRAJECTORYDATA, ["relion", "tomo", "polish", "python"])
+            self.add_output_node("particles.star", NODE_PARTICLEGROUPMETADATA, ["relion", "tomo", "polish", "python"])
         self.add_output_node("tomograms.star", NODE_TOMOGRAMGROUPMETADATA, ["relion", "tomo", "polish", "python"])
-        self.add_output_node("particles.star", NODE_PARTICLEGROUPMETADATA, ["relion", "tomo", "polish", "python"])
         self.add_output_node("optimisation_set.star", NODE_TOMOOPTIMISATIONSET, ["relion", "tomo", "polish", "python"])
 
+    def additional_joboption_validation(self):
+        return _common.validate(self, "polish")
+
     def get_commands(self):
+        _common.check_options(self, "polish")
         cmd = ["zarr-particle-polish", "local"]
 
         optimisation_starfile = self.joboptions["in_optimisation"].get_string()
@@ -69,12 +78,10 @@ class PythonRelionSubtomoPolishJob(PipelinerJob):
             str(int(float(self.joboptions["max_error"].get_string()))),
         ]  # RELION --r is float; our CLI is int
 
-        # RELION requires exactly one of shift-only / motion
-        do_shift = self.joboptions["do_shift_align"].get_boolean()
-        do_motion = self.joboptions["do_motion"].get_boolean()
-        if do_shift and not do_motion:
+        # exactly one of shift-only / motion (check_options)
+        if self.joboptions["do_shift_align"].get_boolean():
             cmd += ["--shift-only", "--no-motion"]
-        elif do_motion and not do_shift:
+        else:
             cmd += [
                 "--do-motion",
                 "--s-vel",
@@ -82,10 +89,12 @@ class PythonRelionSubtomoPolishJob(PipelinerJob):
                 "--s-div",
                 self.joboptions["sigma_div"].get_string(),
             ]
-        else:
-            raise AssertionError("Per-particle motion and shift-only corrections cannot be applied simultaneously")
 
         cmd += ["--threads", self.joboptions["nr_threads"].get_string()]
+        cmd += _common.staging_args(self)
+        other_args = self.joboptions["other_args"].get_string().strip()
+        if other_args:
+            cmd += ["--relion-args", other_args]
 
         return [PipelinerCommand(cmd)]
 

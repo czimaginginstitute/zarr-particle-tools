@@ -7,6 +7,7 @@ them).
 """
 
 import logging
+import shlex
 from pathlib import Path
 
 import click
@@ -87,8 +88,10 @@ def run_ctf_refine(
     relion_bin: str = RELION_BIN,
     shm_dir: str | Path = "/dev/shm",
     keep_shm: bool = False,
+    require_ram_staging: bool = False,
     per_tomogram: bool = True,
     n_workers: int = 0,
+    relion_args: str = "",
 ) -> Path:
     """
     Orchestrate a RELION CTF-refinement run against zarr tilt series. Returns the output dir.
@@ -126,8 +129,10 @@ def run_ctf_refine(
         threads=threads,
         shm_dir=shm_dir,
         keep_shm=keep_shm,
+        require_ram_staging=require_ram_staging,
         per_tomogram=per_tomogram,
         n_workers=n_workers,
+        extra_args=shlex.split(relion_args),
     )
 
 

@@ -339,6 +339,21 @@ def split_copick_args(kwargs: dict) -> tuple[dict, dict]:
     return copick, kwargs
 
 
+require_ram_staging_option = click.option(
+    "--require-ram-staging",
+    is_flag=True,
+    help="Stage only on RAM-backed storage (tmpfs) at --shm-dir: fail before streaming instead of falling back to "
+    "the system temp dir.",
+)
+
+relion_args_option = click.option(
+    "--relion-args",
+    type=str,
+    default="",
+    help="Additional arguments passed to every RELION call, as one string (pipeliner's other_args).",
+)
+
+
 def ctfrefine_options():
     opts = [
         click.option(
@@ -404,6 +419,7 @@ def ctfrefine_options():
             show_default=True,
             help="Preferred staging dir for tilt-series MRCs; falls back to the system temp dir.",
         ),
+        require_ram_staging_option,
         click.option(
             "--per-tomogram/--all-at-once",
             default=True,
@@ -418,6 +434,7 @@ def ctfrefine_options():
             help="Parallel tomograms in phase 1 (0=auto: ~1/4 cores, capped 16).",
         ),
         click.option("--keep-shm", is_flag=True, help="Keep materialized staging MRCs (debug)."),
+        relion_args_option,
         click.option("--debug", is_flag=True, help="Enable debug logging."),
     ]
     return compose_options(opts)
@@ -499,6 +516,7 @@ def polish_options():
             show_default=True,
             help="Preferred staging dir for tilt-series MRCs; falls back to the system temp dir.",
         ),
+        require_ram_staging_option,
         click.option(
             "--per-tomogram/--all-at-once",
             default=True,
@@ -513,6 +531,7 @@ def polish_options():
             help="Parallel tomograms in phase 1 (0=auto: ~1/4 cores, capped 16).",
         ),
         click.option("--keep-shm", is_flag=True, help="Keep materialized staging MRCs (debug)."),
+        relion_args_option,
         click.option("--debug", is_flag=True, help="Enable debug logging."),
     ]
     return compose_options(opts)

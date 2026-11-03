@@ -1,4 +1,5 @@
 import shutil
+import subprocess
 from pathlib import Path
 
 import mrcfile
@@ -8,6 +9,7 @@ import starfile
 from click.testing import CliRunner
 
 from tests.helpers.compare import mrc_close_unmasked, mrc_headers_match
+from tests.helpers.deformation import deformed_project, synthetic_names, write_deformed_project
 from zarr_particle_tools.subtomo_reconstruct import cli, reconstruct_local
 
 # All cases pass at the float32 storage floor via the magnitude-aware unmasked comparator; measured
@@ -245,20 +247,21 @@ def test_reconstruct_keeps_zero_padded_names(tmp_path):
     assert mrc_close_unmasked(relion_dir / "merged.mrc", output_dir / "merged.mrc", ulp_factor=DEFAULT_ULP_FACTOR)
 
 
+# ----------------------------------------------------------------------------- RELION-5 2D deformations
 def test_reconstruct_deformation_equals_trajectory(tmp_path):
     # reconstruct extracts through the same step as extract, so a constant spline shift of s pixels must give the
     # same map as the per-tilt 3D trajectory that moves every projection by s (see the extract version of this test)
-    from tests.test_extract import _synthetic_names, _write_deformed_project, _write_trajectories
+    from tests.test_extract import _write_trajectories
     from zarr_particle_tools.core.forwardprojection import calculate_projection_matrix_from_starfile_df
 
     data_root = DATASET_CONFIGS["synthetic"]["data_root"]
-    names = _synthetic_names(data_root)
+    names = synthetic_names(data_root)
     tilt_df = starfile.read(data_root / "tiltseries" / "TS_1.star")
     pixel_size = float(starfile.read(data_root / "tomograms.star")["rlnTomoTiltSeriesPixelSize"].iloc[0])
     shift_px = np.array([6.3, -4.1])
     nodes = np.zeros((2, 3, 3, 4))
     nodes[0, :, :, 0], nodes[1, :, :, 0] = shift_px
-    _write_deformed_project(tmp_path / "deformed", data_root, "spline", (3, 3), [nodes.ravel()] * len(tilt_df), names)
+    write_deformed_project(tmp_path / "deformed", data_root, "spline", (3, 3), [nodes.ravel()] * len(tilt_df), names)
 
     trajectory = []
     for matrix in calculate_projection_matrix_from_starfile_df(tilt_df):
@@ -308,19 +311,8 @@ def test_ignore_deformations_flag_only_on_local_commands(module):
 )
 @pytest.mark.parametrize("deformation_type", ["spline", "linear", "Fourier"])
 def test_reconstruct_with_deformations_matches_relion(tmp_path, deformation_type):
-    # per-tilt 2D deformations, reconstructed by RELION and by us from the same inputs (same command as the
-    # relion_output_baseline reference, see its note.txt)
-    import subprocess
-
-    from tests.test_extract import _random_deformation, _synthetic_names, _write_deformed_project
-
-    data_root = DATASET_CONFIGS["synthetic"]["data_root"]
-    names = _synthetic_names(data_root)
-    n_tilts = len(starfile.read(data_root / "tiltseries" / "TS_1.star"))
-    rng = np.random.default_rng({"spline": 1, "linear": 2, "Fourier": 3}[deformation_type])
-    grid, rows = _random_deformation(deformation_type, n_tilts, rng)
-    _write_deformed_project(tmp_path, data_root, deformation_type, grid, rows, names)
-
+    # per-tilt 2D deformations, reconstructed by RELION (as the baseline reference was) and by us from the same inputs
+    deformed_project(tmp_path, DATASET_CONFIGS["synthetic"]["data_root"], deformation_type)
     relion_args = ["--p", "particles.star", "--t", "tomograms.star", "--o", "relion/", "--b", "64", "--sym", "C1"]
     subprocess.run(
         ["relion_tomo_reconstruct_particle", *relion_args, "--j", "4"], cwd=tmp_path, check=True, capture_output=True
@@ -334,11 +326,9 @@ def test_reconstruct_with_deformations_matches_relion(tmp_path, deformation_type
             tomograms_starfile=tmp_path / "tomograms.star",
             ignore_deformations=ignore,
         )
-
-    assert mrc_close_unmasked(
-        tmp_path / "relion" / "merged.mrc", tmp_path / "ours" / "merged.mrc", ulp_factor=DEFAULT_ULP_FACTOR
-    )
-    assert mrc_headers_match(tmp_path / "relion" / "merged.mrc", tmp_path / "ours" / "merged.mrc")
+    relion, ours = tmp_path / "relion" / "merged.mrc", tmp_path / "ours" / "merged.mrc"
+    assert mrc_close_unmasked(relion, ours, ulp_factor=DEFAULT_ULP_FACTOR)
+    assert mrc_headers_match(relion, ours)
     # the comparison is sensitive: without the deformation the same particles do not reproduce RELION's map
-    relion, ignored = _read_mrc(tmp_path / "relion" / "merged.mrc"), _read_mrc(tmp_path / "ignored" / "merged.mrc")
-    assert not np.allclose(relion, ignored, atol=1e-3 * np.abs(relion).max())
+    relion_map, ignored = _read_mrc(relion), _read_mrc(tmp_path / "ignored" / "merged.mrc")
+    assert not np.allclose(relion_map, ignored, atol=1e-3 * np.abs(relion_map).max())

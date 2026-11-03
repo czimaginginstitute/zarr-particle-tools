@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import re
+import shlex
 from collections.abc import Sequence
 
 from pipeliner.data_structure import TOMO_CTFREFINE_DIR
@@ -13,6 +14,8 @@ from pipeliner.nodes import (
 )
 from pipeliner.pipeliner_job import ExternalProgram, PipelinerCommand, PipelinerJob
 from pipeliner.results_display_objects import ResultsDisplayObject
+
+from zarr_particle_tools.pipeliner import _common
 
 
 class PythonRelionSubtomoCtfRefineJob(PipelinerJob):
@@ -28,17 +31,25 @@ class PythonRelionSubtomoCtfRefineJob(PipelinerJob):
             "CTF-refine tilt series stored as OME-Zarr using zarr-particle-ctfrefine and stock RELION."
         )
         self.joboptions = copy.deepcopy(TomoRelionCtfRefine().joboptions)
+        _common.add_staging_options(self)
 
     def create_output_nodes(self):
-        self.add_output_node(
-            "particles_ctf_refine.star", NODE_PARTICLEGROUPMETADATA, ["relion", "tomo", "ctfrefine", "python"]
-        )
+        # aberration refinement (only reachable through other_args) makes RELION write particles.star too
+        aberrations = {"--do_even_aberrations", "--do_odd_aberrations"}
+        if aberrations & set(shlex.split(self.joboptions["other_args"].get_string())):
+            self.add_output_node(
+                "particles.star", NODE_PARTICLEGROUPMETADATA, ["relion", "tomo", "ctfrefine", "python"]
+            )
         self.add_output_node("tomograms.star", NODE_TOMOGRAMGROUPMETADATA, ["relion", "tomo", "ctfrefine", "python"])
         self.add_output_node(
             "optimisation_set.star", NODE_TOMOOPTIMISATIONSET, ["relion", "tomo", "ctfrefine", "python"]
         )
 
+    def additional_joboption_validation(self):
+        return _common.validate(self, "ctfrefine")
+
     def get_commands(self):
+        _common.check_options(self, "ctfrefine")
         cmd = ["zarr-particle-ctfrefine", "local"]
 
         optimisation_starfile = self.joboptions["in_optimisation"].get_string()
@@ -85,15 +96,15 @@ class PythonRelionSubtomoCtfRefineJob(PipelinerJob):
                 cmd += ["--per-tomogram-scale"]
 
         cmd += ["--threads", self.joboptions["nr_threads"].get_string()]
+        cmd += _common.staging_args(self)
+        other_args = self.joboptions["other_args"].get_string().strip()
+        if other_args:
+            cmd += ["--relion-args", other_args]
 
         return [PipelinerCommand(cmd)]
 
     def create_results_display(self) -> Sequence[ResultsDisplayObject]:
-        return [
-            n.default_results_display(self.output_dir)
-            for n in self.output_nodes
-            if "particles_ctf_refine.star" in n.name
-        ]
+        return [n.default_results_display(self.output_dir) for n in self.output_nodes if "tomograms.star" in n.name]
 
 
 if __name__ == "__main__":
