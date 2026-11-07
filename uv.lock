@@ -854,11 +854,12 @@ wheels = [
 
 [[package]]
 name = "copick"
-version = "1.31.0"
+version = "1.32.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
     { name = "click" },
+    { name = "cryoet-alignment" },
     { name = "cryoet-data-portal" },
     { name = "distinctipy" },
     { name = "dynamotable" },
@@ -893,14 +894,14 @@ dependencies = [
     { name = "zarr", version = "2.18.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "zarr", version = "2.18.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8b/43/6ec07a1a6161e071994a689f464a1475d5ad984fab4d8e9a27ee86fb4b57/copick-1.31.0.tar.gz", hash = "sha256:b6495091150bb833e2b07ff8fee1dbec0cbf8e3939354f534ff3027c4036e475", size = 65909400, upload-time = "2026-10-19T18:32:05.644Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/07/44/fc1ba41a5bb44913dd314d576eaf2697fa1e69015713c51e0942051c104e/copick-1.32.0.tar.gz", hash = "sha256:83d6e4bcfec704bf735a5d04ff16949b271cb37e5613ad1e0f123ff8bf9e16dd", size = 66082089, upload-time = "2026-11-04T00:15:18.282Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/97/a3/a8ba531a615fef3690e9ddcfca39a4b5ebcff22b3eb24e48d85543489a9a/copick-1.31.0-py3-none-any.whl", hash = "sha256:7dcb488382d2a024550405363225de9ff61ecfd9432630d53bc960414904fe0a", size = 288300, upload-time = "2026-10-19T18:32:03.21Z" },
+    { url = "https://files.pythonhosted.org/packages/d7/bf/14ce07bf37fb6dbf34a0e228d751bc24eedd3a2a3f81b847a9f25e6393cf/copick-1.32.0-py3-none-any.whl", hash = "sha256:9814ec8dc7f11c417c21d5ca61a5656f57e8048a27f71f8a25623c08149dfbad", size = 376827, upload-time = "2026-11-04T00:15:04.944Z" },
 ]
 
 [[package]]
 name = "cryoet-alignment"
-version = "0.2.0"
+version = "0.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -913,12 +914,13 @@ dependencies = [
     { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "pandas", version = "3.0.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pydantic" },
+    { name = "pyyaml" },
     { name = "s3fs" },
     { name = "starfile" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c3/a8/75e756215c2f2d2757cbcaa23c7213601bd922a7ba5e8de8d9f741701758/cryoet_alignment-0.2.0.tar.gz", hash = "sha256:95d5e2eec82e3a02f3dbb1cbb5de78f56807831dac9cd37f5282a4f2f8006fd9", size = 256682, upload-time = "2026-09-01T05:06:27.578Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1c/28/827a5e5ebb8269cf7f9da89c42301f226050326be21e31bc93e58a67a04e/cryoet_alignment-0.3.0.tar.gz", hash = "sha256:61c26e0f984312021b317b23546e320e92696bc79e8a24b3607e04329b5b2d46", size = 337392, upload-time = "2026-11-03T21:37:04.711Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/12/6b/f096d4fbcb39cd0f90cee04d5cbb9b35682a39dfa792e1684e7c5199fe0f/cryoet_alignment-0.2.0-py3-none-any.whl", hash = "sha256:47ec211329fe649e321a23b9562ed08611eb8107f2ace9ebcd690c1f79b88132", size = 37689, upload-time = "2026-09-01T05:06:26.097Z" },
+    { url = "https://files.pythonhosted.org/packages/b8/77/be149bcd2a48ff238c3c3d5e457684e6a4ce9ee002643e732000b3d2e197/cryoet_alignment-0.3.0-py3-none-any.whl", hash = "sha256:e4ee7898763ec942366e08d1dc976003581a7d6088076b69cb81080ef9f37f2b", size = 100287, upload-time = "2026-11-03T21:37:03.113Z" },
 ]
 
 [[package]]
